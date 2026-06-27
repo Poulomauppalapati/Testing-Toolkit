@@ -1,3 +1,6 @@
 # Agent bundle ships via GitHub only - not deployed to Vercel CDN
 # (too large for Vercel static, users pull from GitHub directly)
 agent-bundle/
+
+# Large desktop app archives ship via GitHub (LFS) only - not deployed to Vercel
+*.zip
