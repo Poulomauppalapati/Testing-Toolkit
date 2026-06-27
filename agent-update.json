@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "ref": "project-deployment",
-  "generatedAt": "2026-06-27T19:51:33.555Z",
+  "generatedAt": "2026-06-27T20:11:08.551Z",
   "files": [
     {
       "path": "ado/__init__.py",
@@ -81,7 +81,7 @@
     {
       "path": "agent/server.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/server.py?ref=project-deployment",
-      "hash": "0362e99c2fae3eb1893941a3d187b324ab0b49ca199c761b9522576f835cd407"
+      "hash": "06d78ce0f75e0f7ab6561f957ea4a2f559d1dec78ffbb7adafad5923ec8f66d4"
     },
     {
       "path": "agent/updater.py",
@@ -91,7 +91,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=project-deployment",
-      "hash": "04699ab4efb7e410714cfd6f1e49b1eef205fbc31d4db66a4bc27b218662dba4"
+      "hash": "ae40cfbcf0e83c450e0a1304e74d5bfc84293b6bc23a7548e163412207a49885"
     },
     {
       "path": "core/__init__.py",
