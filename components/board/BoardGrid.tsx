@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type MouseEvent } from "react";
 import { RefreshCw, PanelRightOpen, PanelRightClose } from "lucide-react";
 import { useAppState } from "@/lib/app-state";
 import { usePreferences, getPreferences, setSizePref } from "@/lib/preferences";
@@ -32,8 +32,24 @@ export function BoardGrid() {
     toggleSelected,
   } = useAppState();
 
-  const { prefs, togglePanel } = usePreferences();
+  const { prefs, togglePanel, setPanel } = usePreferences();
   const detailVisible = prefs.panels.detail;
+
+  // Clicking a work item activates it and auto-opens the detail panel.
+  const activateRow = (id: number) => {
+    setActiveWiId(id);
+    setPanel("detail", true);
+  };
+
+  // Clicking an empty area of the grid clears the active item and hides the
+  // detail panel. Only fires when the click lands on the container itself
+  // (empty space below the rows), not on a row/cell.
+  const clearOnEmptyClick = (e: MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      setActiveWiId(null);
+      setPanel("detail", false);
+    }
+  };
   const [detailWidth, setDetailWidth] = useState(
     () => getPreferences().sizes.detailWidth
   );
@@ -181,7 +197,10 @@ export function BoardGrid() {
         </div>
 
         {/* Grid */}
-        <div className="min-h-0 flex-1 overflow-auto rounded-[10px] border border-[#2d313c] bg-[#13161d]">
+        <div
+          className="min-h-0 flex-1 overflow-auto rounded-[10px] border border-[#2d313c] bg-[#13161d]"
+          onClick={clearOnEmptyClick}
+        >
           {boardLoading ? (
             <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
               <RefreshCw className="h-4 w-4 animate-spin" /> Loading work items...
@@ -224,7 +243,7 @@ export function BoardGrid() {
                       activeWiId={activeWiId}
                       onToggleLane={(on) => toggleLane(laneRows, on)}
                       onToggleRow={toggleSelected}
-                      onActivate={setActiveWiId}
+                      onActivate={activateRow}
                     />
                   );
                 })}
