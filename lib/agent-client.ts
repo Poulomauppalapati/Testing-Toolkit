@@ -6,8 +6,6 @@
  * so the web GUI is a faithful 1:1 of the PySide6 desktop experience.
  */
 
-import * as demo from "./demo-data";
-
 const AGENT_URL = "http://127.0.0.1:7842";
 
 // ---------------------------------------------------------------------------
@@ -154,31 +152,6 @@ export interface ArtifactFile {
 
 export type AgentStatus = "connected" | "offline" | "connecting";
 
-// ---------------------------------------------------------------------------
-// Demo mode: when the local agent is unavailable (e.g. the hosted Vercel app),
-// the user can opt into sample data to explore the full GUI.
-// ---------------------------------------------------------------------------
-const DEMO_KEY = "tt_demo_mode";
-let _demo = false;
-
-export function isDemoMode(): boolean {
-  if (_demo) return true;
-  if (typeof window !== "undefined") {
-    _demo = window.localStorage.getItem(DEMO_KEY) === "1";
-  }
-  return _demo;
-}
-
-export function setDemoMode(on: boolean): void {
-  _demo = on;
-  if (typeof window !== "undefined") {
-    if (on) window.localStorage.setItem(DEMO_KEY, "1");
-    else window.localStorage.removeItem(DEMO_KEY);
-  }
-}
-
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 async function agentFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${AGENT_URL}${path}`, {
     ...options,
@@ -196,12 +169,10 @@ async function agentFetch<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const agent = {
   async health(): Promise<HealthResponse> {
-    if (isDemoMode()) return demo.demoHealth;
     return agentFetch<HealthResponse>("/health");
   },
 
   async checkConnection(): Promise<AgentStatus> {
-    if (isDemoMode()) return "connected";
     try {
       await this.health();
       return "connected";
@@ -212,15 +183,10 @@ export const agent = {
 
   // -- Settings --
   async getSettings(): Promise<SettingsResponse> {
-    if (isDemoMode()) return demo.demoSettings;
     return agentFetch<SettingsResponse>("/settings");
   },
 
   async saveSettings(payload: SaveSettingsPayload): Promise<void> {
-    if (isDemoMode()) {
-      await delay(400);
-      return;
-    }
     await agentFetch("/settings", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -229,34 +195,18 @@ export const agent = {
 
   // -- ADO --
   async verifyPat(): Promise<{ ok: boolean; detail: string }> {
-    if (isDemoMode()) {
-      await delay(500);
-      return { ok: true, detail: "Connected as demo@pwc (sample data)" };
-    }
     return agentFetch("/ado/verify");
   },
 
   async listProjects(): Promise<string[]> {
-    if (isDemoMode()) {
-      await delay(300);
-      return demo.demoProjects;
-    }
     return agentFetch<string[]>("/ado/projects");
   },
 
   async listBoards(project: string): Promise<Board[]> {
-    if (isDemoMode()) {
-      await delay(300);
-      return demo.demoBoards();
-    }
     return agentFetch<Board[]>(`/ado/boards/${encodeURIComponent(project)}`);
   },
 
   async boardView(project: string, board: Board): Promise<BoardView> {
-    if (isDemoMode()) {
-      await delay(450);
-      return demo.demoBoardView();
-    }
     return agentFetch<BoardView>("/ado/board-view", {
       method: "POST",
       body: JSON.stringify({
@@ -268,10 +218,6 @@ export const agent = {
   },
 
   async workItemDetail(project: string, wiId: number): Promise<WorkItemDetail> {
-    if (isDemoMode()) {
-      await delay(300);
-      return demo.demoWorkItemDetail(wiId);
-    }
     return agentFetch<WorkItemDetail>(
       `/ado/workitem/${encodeURIComponent(project)}/${wiId}`
     );
@@ -279,15 +225,6 @@ export const agent = {
 
   // -- KB --
   async kbStatus(project: string): Promise<KbStatus> {
-    if (isDemoMode()) {
-      return {
-        project,
-        documents: ["requirements_v1.pdf", "requirements_v2.pdf", "glossary.docx"],
-        indexed: true,
-        n_chunks: 412,
-        n_documents: 3,
-      };
-    }
     return agentFetch<KbStatus>(`/kb/status/${encodeURIComponent(project)}`);
   },
 
@@ -296,10 +233,6 @@ export const agent = {
     query: string,
     topK = 32
   ): Promise<RetrievedChunk[]> {
-    if (isDemoMode()) {
-      await delay(500);
-      return demo.demoChunks(query).slice(0, topK);
-    }
     const res = await agentFetch<{ chunks: RetrievedChunk[] }>("/kb/retrieve", {
       method: "POST",
       body: JSON.stringify({ project, query, top_k: topK }),
@@ -310,10 +243,6 @@ export const agent = {
   async kbIndex(
     project: string
   ): Promise<{ n_chunks: number; n_documents: number }> {
-    if (isDemoMode()) {
-      await delay(900);
-      return { n_chunks: 412, n_documents: 3 };
-    }
     return agentFetch("/kb/index", {
       method: "POST",
       body: JSON.stringify({ project }),
@@ -321,10 +250,6 @@ export const agent = {
   },
 
   async kbUpload(project: string, file: File): Promise<void> {
-    if (isDemoMode()) {
-      await delay(600);
-      return;
-    }
     const formData = new FormData();
     formData.append("file", file);
     const res = await fetch(
@@ -336,10 +261,6 @@ export const agent = {
 
   // -- Artifacts (generated outputs browser) --
   async listArtifacts(project: string): Promise<ArtifactFile[]> {
-    if (isDemoMode()) {
-      await delay(250);
-      return demo.demoArtifacts();
-    }
     return agentFetch<ArtifactFile[]>(
       `/artifacts/${encodeURIComponent(project)}`
     );
@@ -352,13 +273,6 @@ export const agent = {
     tc_type: TcType | "";
     feedback?: string;
   }): Promise<{ xlsx_path: string; n_test_cases: number }> {
-    if (isDemoMode()) {
-      await delay(1500);
-      return {
-        xlsx_path: `outputs/${payload.project}/testcases/testcases_review_${payload.tc_type || "Implementation"}.xlsx`,
-        n_test_cases: payload.wi_ids.length * 6,
-      };
-    }
     return agentFetch("/testgen/generate", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -369,13 +283,6 @@ export const agent = {
     project: string;
     wi_ids: number[];
   }): Promise<{ output_dir: string; n_pdfs: number }> {
-    if (isDemoMode()) {
-      await delay(1200);
-      return {
-        output_dir: `outputs/${payload.project}/packets`,
-        n_pdfs: payload.wi_ids.length,
-      };
-    }
     return agentFetch("/tools/package", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -386,10 +293,6 @@ export const agent = {
     project: string;
     xlsx_path: string;
   }): Promise<{ created: number; skipped: number }> {
-    if (isDemoMode()) {
-      await delay(1200);
-      return { created: 18, skipped: 2 };
-    }
     return agentFetch("/ado/upload", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -400,13 +303,6 @@ export const agent = {
     project: string;
     files: string[];
   }): Promise<{ review_xlsx: string; n_defects: number }> {
-    if (isDemoMode()) {
-      await delay(1400);
-      return {
-        review_xlsx: `outputs/${payload.project}/defects/defects_review.xlsx`,
-        n_defects: payload.files.length * 4,
-      };
-    }
     return agentFetch("/defects/parse", {
       method: "POST",
       body: JSON.stringify(payload),

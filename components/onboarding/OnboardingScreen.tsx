@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { useAgent } from "@/lib/agent-context";
-import { setDemoMode } from "@/lib/agent-client";
 
 function getOS(): "windows" | "mac" | "linux" {
   if (typeof navigator === "undefined") return "windows";
@@ -14,13 +12,12 @@ function getOS(): "windows" | "mac" | "linux" {
 }
 
 const INSTALLER_MAP = {
-  windows: { file: "install-agent.cmd", label: "Windows" },
-  mac: { file: "install-agent.sh", label: "macOS" },
-  linux: { file: "install-agent.sh", label: "Linux" },
+  windows: { label: "Windows" },
+  mac: { label: "macOS" },
+  linux: { label: "Linux" },
 } as const;
 
 export function OnboardingScreen() {
-  const { status, retry } = useAgent();
   const [os, setOS] = useState<"windows" | "mac" | "linux">("windows");
   const [downloaded, setDownloaded] = useState(false);
 
@@ -30,16 +27,12 @@ export function OnboardingScreen() {
 
   const installer = INSTALLER_MAP[os];
 
-  function handleExploreDemo() {
-    setDemoMode(true);
-    retry();
-  }
-
   function handleDownload() {
-    // Trigger download of the installer script from Vercel static assets
+    // Download the production installer generated server-side by /api/installer.
+    // The route embeds a read-only token and streams a tiny launcher that pulls
+    // the agent bundle from GitHub at install time.
     const link = document.createElement("a");
-    link.href = `/agent/${installer.file}`;
-    link.download = installer.file;
+    link.href = `/api/installer?os=${os}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -148,30 +141,6 @@ export function OnboardingScreen() {
             </div>
           </motion.div>
         )}
-
-        {/* Demo / explore entry point */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-          className="flex flex-col items-center gap-2"
-        >
-          <div className="flex items-center gap-3 text-xs text-muted-foreground/50">
-            <span className="h-px w-12 bg-border" />
-            or
-            <span className="h-px w-12 bg-border" />
-          </div>
-          <button
-            onClick={handleExploreDemo}
-            className="text-sm font-medium text-primary underline-offset-4 transition-colors hover:underline"
-          >
-            Explore the app with sample data
-          </button>
-          <p className="max-w-xs text-xs text-muted-foreground/60">
-            Browse the full interface using a sample Azure DevOps project. No
-            install or connection required.
-          </p>
-        </motion.div>
       </motion.div>
     </div>
   );
