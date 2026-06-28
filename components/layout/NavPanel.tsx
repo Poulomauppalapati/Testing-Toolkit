@@ -95,6 +95,7 @@ export function NavPanel() {
       <div className="flex items-center gap-1">
         <Dropdown
           align="left"
+          direction="up"
           items={[
             { label: "Bulk Defects...", onClick: () => openDialog("defects") },
             { label: "Retrieval preview...", onClick: () => openDialog("retrieval") },
@@ -112,6 +113,7 @@ export function NavPanel() {
         />
         <Dropdown
           align="left"
+          direction="up"
           items={[
             { label: "View log", onClick: () => setLogVisible(true) },
             { label: "About", separatorBefore: true, onClick: () => openDialog("settings") },

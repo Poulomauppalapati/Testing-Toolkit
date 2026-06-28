@@ -184,9 +184,9 @@ function DetailContent({
           <h4 className="text-xs font-bold uppercase tracking-wide text-[#7abaff]">
             Attachments
           </h4>
-          {detail.attachments.map((a) => (
+          {detail.attachments.map((a, i) => (
             <a
-              key={a.url}
+              key={`${a.name}-${i}`}
               href={a.url}
               target="_blank"
               rel="noopener noreferrer"
@@ -203,9 +203,9 @@ function DetailContent({
           <h4 className="text-xs font-bold uppercase tracking-wide text-[#7abaff]">
             Links
           </h4>
-          {detail.hyperlinks.map(([label, url]) => (
+          {detail.hyperlinks.map(([label, url], i) => (
             <a
-              key={url}
+              key={`${label}-${i}`}
               href={url}
               target="_blank"
               rel="noopener noreferrer"

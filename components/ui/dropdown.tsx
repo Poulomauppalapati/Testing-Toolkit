@@ -21,9 +21,15 @@ interface DropdownProps {
   }) => ReactNode;
   items: MenuItem[];
   align?: "left" | "right";
+  direction?: "down" | "up";
 }
 
-export function Dropdown({ trigger, items, align = "left" }: DropdownProps) {
+export function Dropdown({
+  trigger,
+  items,
+  align = "left",
+  direction = "down",
+}: DropdownProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -48,9 +54,9 @@ export function Dropdown({ trigger, items, align = "left" }: DropdownProps) {
       {open && (
         <div
           ref={menuRef}
-          className={`tt-dialog absolute z-50 mt-1 min-w-[180px] overflow-hidden p-1.5 shadow-2xl ${
+          className={`tt-dialog absolute z-50 min-w-[180px] overflow-hidden p-1.5 shadow-2xl ${
             align === "right" ? "right-0" : "left-0"
-          }`}
+          } ${direction === "up" ? "bottom-full mb-1" : "top-full mt-1"}`}
         >
           {items.map((item, i) => (
             <div key={item.label}>

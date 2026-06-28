@@ -54,6 +54,7 @@ export function ActivityBar() {
 
       <Dropdown
         align="left"
+        direction="up"
         items={[
           { label: "Bulk Defects...", onClick: () => openDialog("defects") },
           { label: "Retrieval preview...", onClick: () => openDialog("retrieval") },
@@ -72,6 +73,7 @@ export function ActivityBar() {
       />
       <Dropdown
         align="left"
+        direction="up"
         items={[
           { label: "View log", onClick: () => setLogVisible(true) },
           { label: "About", separatorBefore: true, onClick: () => openDialog("settings") },
