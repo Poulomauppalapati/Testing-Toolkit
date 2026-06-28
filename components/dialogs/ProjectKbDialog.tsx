@@ -87,17 +87,29 @@ function UploadRow({ item }: { item: UploadItem }) {
 }
 
 export function ProjectKbDialog({ onClose }: { onClose: () => void }) {
-  const { currentProject, displayName, pushLog } = useAppState();
+  const { currentProject, displayName, pushLog, kbDirty, kbState, indexKb } =
+    useAppState();
   const projectLabel = currentProject ? displayName(currentProject) : "";
+
+  // When the window is closed after documents were added/removed, kick off
+  // indexing automatically. It runs at app level (see indexKb) so it keeps
+  // going with the window gone — progress shows in the status bar.
+  const handleClose = () => {
+    if (kbDirty && currentProject && kbState !== "indexing") {
+      pushLog("INFO", "Documents changed — indexing knowledge base...");
+      void indexKb(currentProject);
+    }
+    onClose();
+  };
 
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={handleClose}
       title={`Knowledge base${projectLabel ? ` - ${projectLabel}` : ""}`}
       width={780}
       footer={
-        <button className="tt-btn-ghost" onClick={onClose}>
+        <button className="tt-btn-ghost" onClick={handleClose}>
           Close
         </button>
       }
@@ -121,6 +133,7 @@ function DocumentsSection({
   project: string;
   pushLog: (l: "INFO" | "SUCCESS" | "WARN" | "ERROR", t: string) => void;
 }) {
+  const { markKbDirty, clearKbDirty } = useAppState();
   const [status, setStatus] = useState<KbStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [indexing, setIndexing] = useState(false);
@@ -200,8 +213,9 @@ function DocumentsSection({
     setSelectedDocs(new Set());
     pushLog(
       okCount ? "SUCCESS" : "WARN",
-      `Removed ${okCount}/${names.length} KB document(s). Rebuild the index to apply.`
+      `Removed ${okCount}/${names.length} KB document(s). The index will rebuild on close.`
     );
+    if (okCount > 0) markKbDirty();
     refresh();
     setBusy(false);
   };
@@ -253,6 +267,10 @@ function DocumentsSection({
     refresh();
     setBusy(false);
 
+    // Any successful upload means the index is now stale — flag it so closing
+    // the window kicks off indexing automatically.
+    if (okCount > 0) markKbDirty();
+
     // Auto-dismiss the progress list shortly after a fully successful batch;
     // keep it on screen if anything failed so the user can read the error.
     if (okCount === fileArr.length) {
@@ -301,6 +319,7 @@ function DocumentsSection({
       );
       setIndexProgress("");
       setIndexPct(null);
+      clearKbDirty(); // freshly rebuilt — no auto-index needed on close
       pushLog("SUCCESS", `Indexed ${r.n_documents} doc(s), ${r.n_chunks} chunk(s).`);
       refresh();
     } catch (e) {

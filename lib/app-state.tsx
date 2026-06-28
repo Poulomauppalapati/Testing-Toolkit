@@ -92,6 +92,16 @@ interface AppStateValue {
   // kb
   kbState: KbState;
   kbMessage: string;
+  /** 0..1 index progress for the global bar, or null when indeterminate. */
+  kbProgress: number | null;
+  /** True when docs were added/removed since the last index (needs reindex). */
+  kbDirty: boolean;
+  /** Flag the current project's KB as needing a (re)index. */
+  markKbDirty: () => void;
+  /** Clear the dirty flag (e.g. after a manual rebuild completes). */
+  clearKbDirty: () => void;
+  /** Index a project's KB at app level so it survives dialogs closing. */
+  indexKb: (project: string) => Promise<void>;
   /** Re-index every project's KB sequentially (used after a reinstall). */
   reindexAllKbs: () => Promise<void>;
 
@@ -146,6 +156,11 @@ export function AppStateProvider({
 
   const [kbState, setKbState] = useState<KbState>("none");
   const [kbMessage, setKbMessage] = useState("KB: no project selected");
+  const [kbProgress, setKbProgress] = useState<number | null>(null);
+  const [kbDirty, setKbDirty] = useState(false);
+
+  const markKbDirty = useCallback(() => setKbDirty(true), []);
+  const clearKbDirty = useCallback(() => setKbDirty(false), []);
 
   const [navVisible, setNavVisibleState] = useState<boolean>(
     () => getPreferences().panels.nav
@@ -279,6 +294,7 @@ export function AppStateProvider({
     async (project: string) => {
       setKbState("indexing");
       setKbMessage("KB indexing... starting");
+      setKbProgress(null);
       const start = Date.now();
       const fmtDuration = (secs: number) => {
         const s = Math.max(0, Math.floor(secs));
@@ -291,6 +307,7 @@ export function AppStateProvider({
         if (!status.documents || status.documents.length === 0) {
           setKbState("none");
           setKbMessage("KB: no files uploaded");
+          setKbProgress(null);
           return;
         }
         const res = await agent.kbIndex(project, {
@@ -299,10 +316,12 @@ export function AppStateProvider({
             const { current: done, total, stage } = p;
             if (!total || total <= 0) {
               setKbMessage("KB indexing... scanning");
+              setKbProgress(null);
               return;
             }
             if (done >= total) {
               setKbMessage("KB indexing... finalizing");
+              setKbProgress(1);
               return;
             }
             const elapsed = (Date.now() - start) / 1000;
@@ -313,6 +332,7 @@ export function AppStateProvider({
                 ? `${fmtDuration(elapsed)} / ${fmtDuration(remaining)} - ${pct}%`
                 : `${fmtDuration(elapsed)} / -- - ${pct}%`;
             const name = stage && stage !== "indexing" ? ` (${stage})` : "";
+            setKbProgress(done / total);
             setKbMessage(`KB indexing ${done}/${total}${name} | ${timing}`);
           },
         });
@@ -325,12 +345,27 @@ export function AppStateProvider({
           setKbState("none");
           setKbMessage("KB: no files uploaded");
         }
+        setKbProgress(null);
+        setKbDirty(false);
       } catch {
         setKbState("error");
         setKbMessage("KB index error (see log)");
+        setKbProgress(null);
       }
     },
     [pushLog]
+  );
+
+  // App-level KB index trigger. Lives in the provider (not the dialog) so an
+  // in-flight index keeps running after the KB window is closed. No-ops while
+  // an index is already running.
+  const indexKb = useCallback(
+    async (project: string) => {
+      if (!project) return;
+      setKbDirty(false);
+      await kickKbIndex(project);
+    },
+    [kickKbIndex]
   );
 
   const reindexAllKbs = useCallback(async () => {
@@ -435,6 +470,11 @@ export function AppStateProvider({
       setLogVisible,
       kbState,
       kbMessage,
+      kbProgress,
+      kbDirty,
+      markKbDirty,
+      clearKbDirty,
+      indexKb,
       reindexAllKbs,
       navVisible,
       setNavVisible,
@@ -468,6 +508,11 @@ export function AppStateProvider({
       logVisible,
       kbState,
       kbMessage,
+      kbProgress,
+      kbDirty,
+      markKbDirty,
+      clearKbDirty,
+      indexKb,
       reindexAllKbs,
       navVisible,
       dialog,
