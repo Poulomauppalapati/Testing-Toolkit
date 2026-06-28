@@ -42,6 +42,25 @@ export interface HealthResponse {
   tls_mode?: string;
 }
 
+export interface GpuMetrics {
+  name: string;
+  in_use: boolean;
+  util_percent: number | null;
+  mem_used_mb: number | null;
+  mem_total_mb: number | null;
+}
+
+/** Live system resource usage from the agent's `/metrics` endpoint. Any field
+ * may be null when the host can't report it. */
+export interface MetricsResponse {
+  cpu_percent: number | null;
+  ram_used_mb: number | null;
+  ram_total_mb: number | null;
+  ram_percent: number | null;
+  proc_mem_mb: number | null;
+  gpu: GpuMetrics | null;
+}
+
 export interface SettingsResponse {
   configured: boolean;
   has_api_key: boolean;
@@ -366,6 +385,12 @@ export const agent = {
   // -- Health --
   async health(): Promise<HealthResponse> {
     return agentFetch<HealthResponse>("/health");
+  },
+
+  /** Live CPU/RAM/GPU usage. Present on agent >= 1.8.0; older agents 404 here,
+   * so callers should treat a thrown error as "metrics unavailable". */
+  async metrics(): Promise<MetricsResponse> {
+    return agentFetch<MetricsResponse>("/metrics");
   },
 
   async checkConnection(): Promise<AgentStatus> {

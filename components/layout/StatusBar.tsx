@@ -2,6 +2,31 @@
 
 import { useAgent } from "@/lib/agent-context";
 import { useAppState, type KbState } from "@/lib/app-state";
+import { useMetrics } from "@/lib/use-metrics";
+
+/** Format a megabyte value as GB when large enough, else MB. */
+function fmtMem(mb: number | null): string {
+  if (mb === null || Number.isNaN(mb)) return "--";
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+}
+
+/** A compact metric readout: label + value, no status dot. */
+function Metric({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+}) {
+  return (
+    <span className="flex items-center gap-1" title={title}>
+      <span className="text-[#8a8f99]">{label}</span>
+      <span className="font-medium tabular-nums text-[#c7ccd6]">{value}</span>
+    </span>
+  );
+}
 
 function Dot({ color, pulse }: { color: string; pulse?: boolean }) {
   return (
@@ -51,6 +76,8 @@ export function StatusBar() {
     kbProgress,
     boardLoading,
     projectsLoading,
+    logVisible,
+    setLogVisible,
   } = useAppState();
 
   const hasOrg = !!settings?.organization;
@@ -59,12 +86,32 @@ export function StatusBar() {
   const working = boardLoading || projectsLoading;
   const hasTls = !!health?.tls_mode;
 
+  // Live CPU/RAM/GPU usage (agent >= 1.8.0; gracefully absent on older agents).
+  const metrics = useMetrics(connected);
+  const gpu = metrics?.gpu ?? null;
+
+  const toggleLogs = () => setLogVisible(!logVisible);
+
   // Left side: activity label + KB status (green when ready), matching desktop.
   const activity = working ? "Working" : "Idle";
   const kbReady = kbState === "ready";
 
   return (
-    <footer className="tt-statusbar flex h-7 items-center justify-between px-3">
+    <footer
+      role="button"
+      tabIndex={0}
+      aria-pressed={logVisible}
+      aria-label={logVisible ? "Hide logs" : "Show logs"}
+      title="Click to toggle logs"
+      onClick={toggleLogs}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggleLogs();
+        }
+      }}
+      className="tt-statusbar flex h-7 cursor-pointer items-center justify-between px-3 outline-none focus-visible:ring-1 focus-visible:ring-[#3b82f6]"
+    >
       <div className="flex items-center gap-2">
         <span className="text-[#8a8f99]">{activity}</span>
         <span
@@ -93,6 +140,53 @@ export function StatusBar() {
         )}
       </div>
       <div className="flex items-center gap-4">
+        {metrics && (
+          <div className="flex items-center gap-3 border-r border-[#2d313c] pr-4">
+            {metrics.cpu_percent !== null && (
+              <Metric
+                label="CPU"
+                value={`${metrics.cpu_percent}%`}
+                title="CPU usage"
+              />
+            )}
+            {metrics.ram_percent !== null && (
+              <Metric
+                label="RAM"
+                value={`${metrics.ram_percent}%`}
+                title={`Memory: ${fmtMem(metrics.ram_used_mb)} / ${fmtMem(
+                  metrics.ram_total_mb
+                )} used`}
+              />
+            )}
+            {metrics.proc_mem_mb !== null && (
+              <Metric
+                label="Mem"
+                value={fmtMem(metrics.proc_mem_mb)}
+                title="Memory used by the Testing Toolkit agent"
+              />
+            )}
+            {gpu?.in_use && (
+              <Metric
+                label="GPU"
+                value={
+                  gpu.util_percent !== null
+                    ? `${gpu.util_percent}%`
+                    : gpu.mem_used_mb !== null
+                      ? fmtMem(gpu.mem_used_mb)
+                      : "on"
+                }
+                title={
+                  `${gpu.name}` +
+                  (gpu.mem_used_mb !== null && gpu.mem_total_mb !== null
+                    ? ` — ${fmtMem(gpu.mem_used_mb)} / ${fmtMem(
+                        gpu.mem_total_mb
+                      )} VRAM`
+                    : "")
+                }
+              />
+            )}
+          </div>
+        )}
         <Chip
           label="App"
           ok={connected}
