@@ -270,6 +270,9 @@ async def delete_document(project: str, name: str) -> dict:
     """Delete a single document from the project's kb/ folder and invalidate
     the stored index so the next rebuild reflects the change. Mirrors the
     desktop project KB dialog's "Remove selected" action."""
+    import shutil
+    from core.project_store import ProjectPaths
+
     project_dir = PROJECTS_DIR / project
     kb_dir = (project_dir / "kb").resolve()
     target = (kb_dir / name).resolve()
@@ -279,11 +282,22 @@ async def delete_document(project: str, name: str) -> dict:
     if not target.exists() or not target.is_file():
         raise HTTPException(404, f"Document not found: {name}")
     target.unlink()
-    # Drop the index so status shows "not indexed" until a rebuild runs.
-    index_file = project_dir / "kb_index.json"
+
+    # Removing a document must also remove it from the index — not just the
+    # file. Drop the cached chunk index AND the built hybrid index (BM25 +
+    # dense vectors + chunks). Otherwise deleting the last document would leave
+    # stale vectors on disk that retrieval still treats as "ready" and could
+    # serve content from the deleted file. A follow-up reindex rebuilds these
+    # from the remaining documents; if none remain, the KB is correctly empty.
+    paths = ProjectPaths.for_name(project)
     try:
-        if index_file.exists():
-            index_file.unlink()
+        if paths.index_path.exists():
+            paths.index_path.unlink()
+    except OSError:
+        pass
+    try:
+        if paths.hybrid_dir.exists():
+            shutil.rmtree(paths.hybrid_dir, ignore_errors=True)
     except OSError:
         pass
     return {"ok": True}
