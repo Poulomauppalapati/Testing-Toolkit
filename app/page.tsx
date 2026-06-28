@@ -7,9 +7,32 @@ import { AppStateProvider } from "@/lib/app-state";
 import { OnboardingScreen } from "@/components/onboarding/OnboardingScreen";
 import { AppShell } from "@/components/layout/AppShell";
 import { FirstRunGate } from "@/components/onboarding/FirstRunGate";
+import { getPreferences, setPendingReinstallPref } from "@/lib/preferences";
 
 export default function Home() {
   const { status } = useAgent();
+  // Read the persisted reinstall flag once on mount. When set, we force the
+  // Step 1 download/install screen even if the old agent is still connected.
+  const [reinstalling, setReinstalling] = useState(false);
+  useEffect(() => {
+    setReinstalling(getPreferences().pendingReinstall);
+  }, []);
+
+  if (reinstalling) {
+    return (
+      <OnboardingScreen
+        reinstall
+        onReinstallComplete={() => {
+          setPendingReinstallPref(false);
+          setReinstalling(false);
+        }}
+        onReinstallCancel={() => {
+          setPendingReinstallPref(false);
+          setReinstalling(false);
+        }}
+      />
+    );
+  }
 
   if (status === "connecting") return <LoadingScreen label="Connecting to agent..." />;
   if (status === "offline") return <OnboardingScreen />;

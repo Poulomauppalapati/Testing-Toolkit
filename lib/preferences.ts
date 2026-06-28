@@ -34,6 +34,13 @@ export interface UiPreferences {
    * finishes. (A reinstall keeps settings, fetched models and these prefs.)
    */
   pendingReindex: boolean;
+  /**
+   * Set by the Reinstall flow. While true the app forces the Step 1
+   * download/install onboarding screen (even if the old agent is still
+   * connected) so the user re-downloads and re-runs the installer. Cleared once
+   * the freshly reinstalled agent reconnects and the user continues.
+   */
+  pendingReinstall: boolean;
 }
 
 const KEY = "tt.ui.prefs.v2";
@@ -45,6 +52,7 @@ const DEFAULTS: UiPreferences = {
   sizes: { navWidth: 224, detailWidth: 440, logHeight: 180 },
   tourCompleted: false,
   pendingReindex: false,
+  pendingReinstall: false,
 };
 
 let cache: UiPreferences = DEFAULTS;
@@ -62,6 +70,7 @@ function load(): UiPreferences {
       sizes: { ...DEFAULTS.sizes, ...(parsed.sizes ?? {}) },
       tourCompleted: !!parsed.tourCompleted,
       pendingReindex: !!parsed.pendingReindex,
+      pendingReinstall: !!parsed.pendingReinstall,
     };
   } catch {
     return DEFAULTS;
@@ -136,6 +145,12 @@ export function setPendingReindexPref(value: boolean) {
   persist({ ...cache, pendingReindex: value });
 }
 
+/** Non-hook setter for the pending-reinstall flag (always persisted). */
+export function setPendingReinstallPref(value: boolean) {
+  ensureLoaded();
+  persist({ ...cache, pendingReinstall: value });
+}
+
 export function usePreferences() {
   const prefs = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
@@ -160,6 +175,10 @@ export function usePreferences() {
     setPendingReindexPref(value);
   }, []);
 
+  const setPendingReinstall = useCallback((value: boolean) => {
+    setPendingReinstallPref(value);
+  }, []);
+
   return {
     prefs,
     setPanel,
@@ -167,5 +186,6 @@ export function usePreferences() {
     setSize,
     setTourCompleted,
     setPendingReindex,
+    setPendingReinstall,
   };
 }

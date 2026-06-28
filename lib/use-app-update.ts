@@ -14,7 +14,6 @@
 
 import { useCallback, useState } from "react";
 import { agent, type UpdateStatus } from "./agent-client";
-import { setTourCompletedPref, setPendingReindexPref } from "./preferences";
 
 type Pushed = (level: "INFO" | "SUCCESS" | "WARN" | "ERROR", text: string) => void;
 
@@ -23,7 +22,6 @@ export type UpdatePhase =
   | "checking"
   | "applying"
   | "restarting"
-  | "reinstalling"
   | "done";
 
 export function useAppUpdate(pushLog?: Pushed) {
@@ -117,77 +115,11 @@ export function useAppUpdate(pushLog?: Pushed) {
     }
   }, [log, waitForReconnect]);
 
-  /**
-   * Full reinstall (distinct from apply/refresh). Marks onboarding to run again
-   * and flags a KB re-index for after the restart, then reinstalls the agent
-   * and reloads. Settings, fetched models and UI preferences are kept; only the
-   * guided tour is reset and the vector indexes are rebuilt on next launch.
-   */
-  const reinstall = useCallback(async (): Promise<boolean> => {
-    setPhase("reinstalling");
-    log("INFO", "Reinstalling the Testing Toolkit agent...");
-    // Persist the post-restart intentions BEFORE the agent goes down so they
-    // survive the reload even if the connection drops mid-flight.
-    setTourCompletedPref(false);
-    setPendingReindexPref(true);
-    // Undo the pre-staged intentions when a reinstall doesn't actually start,
-    // so we don't re-run onboarding or re-index on the next reload.
-    const abort = () => {
-      setTourCompletedPref(true);
-      setPendingReindexPref(false);
-      setPhase("idle");
-    };
-    try {
-      const r = await agent.reinstall();
-      if (r.status === "not_configured") {
-        log(
-          "WARN",
-          "Reinstall isn't available on this agent build (no update routes). " +
-            "Nothing was changed."
-        );
-        abort();
-        return false;
-      }
-      if (r.status === "unreachable") {
-        log("WARN", "Could not reach the install server. Check your connection.");
-        abort();
-        return false;
-      }
-      if (r.status === "failed") {
-        log("ERROR", "Reinstall failed. The agent kept the current version.");
-        abort();
-        return false;
-      }
-
-      log("INFO", "Agent reinstalled; restarting...");
-      setPhase("restarting");
-      const back = await waitForReconnect(120000);
-      setPhase("done");
-      if (back) {
-        log("SUCCESS", "Reinstall complete. Reloading the app...");
-        await new Promise((r) => setTimeout(r, 600));
-        if (typeof window !== "undefined") window.location.reload();
-      } else {
-        log(
-          "WARN",
-          "Reinstall applied, but the agent is taking a while to restart. " +
-            "Reload the page in a moment."
-        );
-      }
-      return true;
-    } catch (e) {
-      log("ERROR", `Reinstall failed: ${(e as Error).message}`);
-      abort();
-      return false;
-    }
-  }, [log, waitForReconnect]);
-
   return {
     phase,
     status,
     check,
     apply,
-    reinstall,
     busy: phase !== "idle" && phase !== "done",
   };
 }

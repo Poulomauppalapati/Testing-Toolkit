@@ -5,6 +5,11 @@ import { RefreshCw, AlertTriangle, RotateCcw } from "lucide-react";
 import { agent, type UpdateStatus } from "@/lib/agent-client";
 import { useAppUpdate } from "@/lib/use-app-update";
 import { useAppState } from "@/lib/app-state";
+import {
+  setTourCompletedPref,
+  setPendingReindexPref,
+  setPendingReinstallPref,
+} from "@/lib/preferences";
 
 /**
  * Installation & Updates panel for the Settings dialog.
@@ -13,7 +18,7 @@ import { useAppState } from "@/lib/app-state";
  */
 export function InstallationSection() {
   const { pushLog } = useAppState();
-  const { apply, reinstall, phase, busy } = useAppUpdate(pushLog);
+  const { apply, phase, busy } = useAppUpdate(pushLog);
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(true);
   const [confirmReinstall, setConfirmReinstall] = useState(false);
@@ -39,9 +44,20 @@ export function InstallationSection() {
     if (!applied) void refresh();
   };
 
-  const onReinstall = async () => {
+  const onReinstall = () => {
     setConfirmReinstall(false);
-    await reinstall();
+    pushLog("INFO", "Reinstall requested — returning to the installer step.");
+    // A reinstall in this app means re-downloading and re-running the installer
+    // (Step 1 onboarding). Persist the intentions so they survive the reload:
+    //  - pendingReinstall: force the Step 1 download/install screen.
+    //  - tourCompleted=false: run the quick tour again afterwards.
+    //  - pendingReindex: rebuild every KB once the fresh agent reconnects.
+    // Settings, fetched models, preferences and artifacts are retained; the
+    // fresh install clears transient caches and the reindex rebuilds vectors.
+    setPendingReinstallPref(true);
+    setTourCompletedPref(false);
+    setPendingReindexPref(true);
+    if (typeof window !== "undefined") window.location.reload();
   };
 
   const label =
@@ -50,13 +66,6 @@ export function InstallationSection() {
       : phase === "restarting"
         ? "Restarting agent..."
         : "Check for updates";
-
-  const reinstallLabel =
-    phase === "reinstalling"
-      ? "Reinstalling..."
-      : phase === "restarting"
-        ? "Restarting agent..."
-        : "Reinstall app";
 
   return (
     <div className="mt-5 border-t border-border pt-4">
@@ -150,11 +159,8 @@ export function InstallationSection() {
             onClick={() => setConfirmReinstall(true)}
             disabled={busy}
           >
-            <RotateCcw
-              className={`h-3.5 w-3.5 ${phase === "reinstalling" ? "animate-spin" : ""}`}
-              strokeWidth={2}
-            />
-            {reinstallLabel}
+            <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
+            Reinstall app
           </button>
         </div>
       </div>
@@ -204,8 +210,10 @@ function ReinstallConfirm({
             <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
             <span className="text-foreground">
               You&apos;ll go through{" "}
-              <b className="text-foreground">onboarding again</b> (download,
-              install and the quick tour).
+              <b className="text-foreground">onboarding again</b> — the app
+              returns to Step 1 so you{" "}
+              <b className="text-foreground">re-download and run the installer</b>
+              , then take the quick tour.
             </span>
           </li>
           <li className="flex gap-2">
@@ -239,8 +247,8 @@ function ReinstallConfirm({
           <li className="flex gap-2">
             <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
             <span className="text-muted-foreground">
-              The agent restarts and the app reloads during the process — don&apos;t
-              close it until it&apos;s back.
+              The app reloads to the installer step now — don&apos;t close it
+              until the fresh agent has reconnected.
             </span>
           </li>
         </ul>

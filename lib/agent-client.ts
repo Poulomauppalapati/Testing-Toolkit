@@ -846,43 +846,6 @@ export const agent = {
       throw e;
     }
   },
-
-  /**
-   * Full reinstall of the local agent (distinct from applyUpdate / refresh).
-   * Re-downloads and reinstalls the agent from scratch, then restarts it.
-   *
-   * Preserved: settings, fetched-model cache, KB source files, generated
-   * artifacts (outputs) and these UI prefs — they live in the workspace,
-   * outside the install dir.
-   * Removed: transient caches (vector indexes / KB embedding cache and any
-   * stale build cache) — signalled via clearCache. The vector indexes are then
-   * rebuilt afterwards by the app (pendingReindex).
-   *
-   * Flags are sent in the body so the agent performs the right cleanup. Falls
-   * back to /update/apply on agents that don't yet expose a reinstall route.
-   */
-  async reinstall(): Promise<UpdateApplyResult> {
-    try {
-      return await agentFetch<UpdateApplyResult>("/update/reinstall", {
-        method: "POST",
-        body: JSON.stringify({ preserveArtifacts: true, clearCache: true }),
-      });
-    } catch (e) {
-      // Older agents have no dedicated reinstall route — fall back to apply.
-      if (isAgent404(e)) {
-        try {
-          return await agentFetch<UpdateApplyResult>("/update/apply", {
-            method: "POST",
-          });
-        } catch (e2) {
-          // No update routes at all on this agent build.
-          if (isAgent404(e2)) return NOT_CONFIGURED_RESULT;
-          throw e2;
-        }
-      }
-      throw e;
-    }
-  },
 };
 
 /** True when an agent request failed because the route does not exist (404). */

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import { useAgent } from "@/lib/agent-context";
 
 function getOS(): "windows" | "mac" | "linux" {
   if (typeof navigator === "undefined") return "windows";
@@ -17,13 +18,48 @@ const INSTALLER_MAP = {
   linux: { label: "Linux" },
 } as const;
 
-export function OnboardingScreen() {
+/**
+ * Step 1 of onboarding: download & run the installer.
+ *
+ * Two modes:
+ *  - first run (default): shown while the agent is offline.
+ *  - reinstall (`reinstall` prop): forced on top of a connected agent so the
+ *    user re-downloads and re-runs the installer. A reinstall keeps settings,
+ *    fetched models, preferences and generated artifacts; it clears transient
+ *    caches and the KBs are re-indexed afterwards. We detect completion by
+ *    watching the agent drop (installer stops it) and reconnect, and also offer
+ *    a manual "Continue" once the agent is reachable again.
+ */
+export function OnboardingScreen({
+  reinstall = false,
+  onReinstallComplete,
+  onReinstallCancel,
+}: {
+  reinstall?: boolean;
+  onReinstallComplete?: () => void;
+  onReinstallCancel?: () => void;
+}) {
+  const { status } = useAgent();
   const [os, setOS] = useState<"windows" | "mac" | "linux">("windows");
   const [downloaded, setDownloaded] = useState(false);
+  // Did we observe the old agent drop after the user started the reinstall?
+  const sawDrop = useRef(false);
 
   useEffect(() => {
     setOS(getOS());
   }, []);
+
+  // Reinstall completion: once the user has downloaded the new installer, watch
+  // for the agent going offline (installer replacing/restarting it) and then
+  // coming back connected — that round-trip means the fresh agent is live.
+  useEffect(() => {
+    if (!reinstall || !downloaded) return;
+    if (status === "offline" || status === "connecting") {
+      sawDrop.current = true;
+    } else if (status === "connected" && sawDrop.current) {
+      onReinstallComplete?.();
+    }
+  }, [reinstall, downloaded, status, onReinstallComplete]);
 
   const installer = INSTALLER_MAP[os];
 
@@ -38,6 +74,13 @@ export function OnboardingScreen() {
     document.body.removeChild(link);
     setDownloaded(true);
   }
+
+  const stepLabel = reinstall
+    ? "Reinstall · Step 1 of 4"
+    : "Download & install · Step 1 of 4";
+  const downloadLabel = reinstall
+    ? `Re-download for ${installer.label}`
+    : `Download for ${installer.label}`;
 
   return (
     <div className="flex h-screen flex-col items-center justify-center bg-background px-6">
@@ -64,14 +107,45 @@ export function OnboardingScreen() {
               />
             </svg>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">Testing Toolkit</h1>
+          <h1 className="text-3xl font-bold tracking-tight">
+            {reinstall ? "Reinstall Testing Toolkit" : "Testing Toolkit"}
+          </h1>
           <p className="text-muted-foreground">
             AI-powered test case generation for Azure DevOps
           </p>
           <span className="mt-1 text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
-            Download &amp; install · Step 1 of 4
+            {stepLabel}
           </span>
         </div>
+
+        {/* Reinstall warning note */}
+        {reinstall && (
+          <div className="w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-left">
+            <p className="text-sm font-semibold text-amber-300">
+              You&apos;re reinstalling the agent
+            </p>
+            <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+              <li>
+                Re-download the installer below and run it — it replaces the
+                local agent and restarts it.
+              </li>
+              <li>
+                Your{" "}
+                <b className="text-foreground">
+                  settings, fetched models, preferences and artifacts are kept
+                </b>
+                .
+              </li>
+              <li>
+                Transient <b className="text-foreground">caches are cleared</b>{" "}
+                and your knowledge bases are{" "}
+                <b className="text-foreground">re-indexed automatically</b> after
+                the agent restarts.
+              </li>
+              <li>You&apos;ll run through the quick tour again.</li>
+            </ul>
+          </div>
+        )}
 
         {/* Action area */}
         {!downloaded ? (
@@ -82,7 +156,9 @@ export function OnboardingScreen() {
             className="flex flex-col items-center gap-4"
           >
             <p className="text-sm text-muted-foreground">
-              To get started, install the local compute agent on your machine.
+              {reinstall
+                ? "Download the installer to perform a clean reinstall."
+                : "To get started, install the local compute agent on your machine."}
             </p>
             <button
               onClick={handleDownload}
@@ -101,11 +177,19 @@ export function OnboardingScreen() {
                   d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
                 />
               </svg>
-              Download for {installer.label}
+              {downloadLabel}
             </button>
             <p className="text-xs text-muted-foreground/60">
               One file. Double-click to install. No admin rights needed.
             </p>
+            {reinstall && (
+              <button
+                onClick={onReinstallCancel}
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+              >
+                Cancel reinstall
+              </button>
+            )}
           </motion.div>
         ) : (
           <motion.div
@@ -133,15 +217,31 @@ export function OnboardingScreen() {
                 </svg>
               </motion.div>
               <p className="text-sm">
-                Run the downloaded file to complete setup
+                Run the downloaded file to{" "}
+                {reinstall ? "complete the reinstall" : "complete setup"}
               </p>
             </div>
 
             {/* Polling indicator */}
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <div className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
-              Waiting for agent to connect...
+              {reinstall
+                ? "Waiting for the agent to restart..."
+                : "Waiting for agent to connect..."}
             </div>
+
+            {/* Reinstall manual continue (enabled once the agent is back). */}
+            {reinstall && (
+              <button
+                onClick={onReinstallComplete}
+                disabled={status !== "connected"}
+                className="mt-1 inline-flex h-9 items-center rounded-lg border border-border bg-muted/40 px-4 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {status === "connected"
+                  ? "Continue to app"
+                  : "Continue (waiting for agent)"}
+              </button>
+            )}
           </motion.div>
         )}
       </motion.div>
