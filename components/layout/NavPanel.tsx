@@ -1,17 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import {
-  HelpCircle,
-  Settings,
-  Brain,
-  ChevronLeft,
-  RefreshCw,
-} from "lucide-react";
+import { HelpCircle, Settings, Brain, ChevronLeft } from "lucide-react";
 import { useAppState } from "@/lib/app-state";
 import { Dropdown } from "@/components/ui/dropdown";
 import { agent } from "@/lib/agent-client";
-import { useAppUpdate } from "@/lib/use-app-update";
 import { getPreferences, setSizePref } from "@/lib/preferences";
 import { ResizeHandle } from "@/components/ui/resizer";
 
@@ -35,14 +28,6 @@ export function NavPanel() {
   // Free-hand width — initialised once from saved prefs, persisted on commit.
   const [width, setWidth] = useState(() => getPreferences().sizes.navWidth);
 
-  const { apply: applyUpdate, phase: updatePhase, busy: updateBusy } =
-    useAppUpdate(pushLog);
-
-  async function onUpdateClick() {
-    setLogVisible(true);
-    await applyUpdate();
-  }
-
   async function openLogFolder() {
     setLogVisible(true);
     try {
@@ -52,13 +37,6 @@ export function NavPanel() {
       pushLog("WARN", `Could not locate the log folder: ${(e as Error).message}`);
     }
   }
-
-  const updateLabel =
-    updatePhase === "applying"
-      ? "Checking..."
-      : updatePhase === "restarting"
-        ? "Restarting..."
-        : "Update app";
 
   return (
     <>
@@ -174,20 +152,6 @@ export function NavPanel() {
             onClick={() => setNavVisible(false)}
           >
             <ChevronLeft className="h-[18px] w-[18px]" strokeWidth={2} />
-          </button>
-
-          {/* Update app — fills the remaining space on the bottom row */}
-          <button
-            className="tt-btn-ghost flex h-8 flex-1 items-center justify-center gap-2 !py-0 text-xs"
-            onClick={onUpdateClick}
-            disabled={updateBusy}
-            title="Check for and install the latest app patches, then reload"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${updateBusy ? "animate-spin" : ""}`}
-              strokeWidth={2}
-            />
-            {updateLabel}
           </button>
         </div>
       </div>
