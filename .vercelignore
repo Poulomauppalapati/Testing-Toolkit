@@ -4,3 +4,6 @@ agent-bundle/
 
 # Large desktop app archives ship via GitHub (LFS) only - not deployed to Vercel
 *.zip
+
+# Unzipped desktop app source - reference only for migration parity, never deployed
+/src/

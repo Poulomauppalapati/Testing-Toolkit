@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useAppState } from "@/lib/app-state";
 import { Dropdown } from "@/components/ui/dropdown";
+import { agent } from "@/lib/agent-client";
 
 export function NavPanel() {
   const {
@@ -24,7 +25,18 @@ export function NavPanel() {
     setNavVisible,
     openDialog,
     setLogVisible,
+    pushLog,
   } = useAppState();
+
+  async function openLogFolder() {
+    setLogVisible(true);
+    try {
+      const { dir, path } = await agent.recentLog(1);
+      pushLog("INFO", dir ? `Log folder: ${dir}` : `Log file: ${path}`);
+    } catch (e) {
+      pushLog("WARN", `Could not locate the log folder: ${(e as Error).message}`);
+    }
+  }
 
   return (
     <div className="tt-rail flex w-56 shrink-0 flex-col gap-2 p-2">
@@ -115,8 +127,9 @@ export function NavPanel() {
           align="left"
           direction="up"
           items={[
-            { label: "View log", onClick: () => setLogVisible(true) },
-            { label: "About", separatorBefore: true, onClick: () => openDialog("settings") },
+            { label: "Open log folder", onClick: () => openLogFolder() },
+            { label: "View recent log...", onClick: () => openDialog("viewlog") },
+            { label: "About", separatorBefore: true, onClick: () => openDialog("about") },
           ]}
           trigger={({ toggle, ref }) => (
             <button

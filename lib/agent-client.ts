@@ -352,6 +352,39 @@ export const agent = {
     });
   },
 
+  // -- System prompts (per project + phase scope) --
+  async getSystemPrompt(
+    project: string,
+    scope = ""
+  ): Promise<SystemPrompt> {
+    return agentFetch<SystemPrompt>(
+      `/settings/system-prompt?project=${encodeURIComponent(
+        project
+      )}&scope=${encodeURIComponent(scope)}`
+    );
+  },
+
+  async saveSystemPrompt(
+    project: string,
+    scope: string,
+    text: string
+  ): Promise<SystemPrompt> {
+    return agentFetch<SystemPrompt>("/settings/system-prompt", {
+      method: "POST",
+      body: JSON.stringify({ project, scope, text }),
+    });
+  },
+
+  async resetSystemPrompt(
+    project: string,
+    scope: string
+  ): Promise<SystemPrompt> {
+    return agentFetch<SystemPrompt>("/settings/system-prompt/reset", {
+      method: "POST",
+      body: JSON.stringify({ project, scope, text: "" }),
+    });
+  },
+
   // -- ADO --
   async verifyPat(): Promise<{ ok: boolean; detail: string }> {
     return agentFetch("/ado/verify");
@@ -442,12 +475,29 @@ export const agent = {
   },
 
   async kbIndex(
-    project: string
+    project: string,
+    handlers: JobHandlers = {}
   ): Promise<{ n_chunks: number; n_documents: number; has_dense?: boolean }> {
-    return agentFetch("/kb/index", {
+    // Background job mirroring the desktop _kick_kb_index worker: returns a job
+    // id we poll for live per-file progress + logs, then read the final result.
+    const { job_id } = await agentFetch<{ job_id: string }>("/kb/index", {
       method: "POST",
       body: JSON.stringify({ project }),
     });
+    const snap = await pollJob(job_id, handlers);
+    if (snap.state === "error") {
+      throw new Error(snap.error || "KB indexing failed");
+    }
+    const r = snap.result as {
+      n_chunks?: number;
+      n_documents?: number;
+      has_dense?: boolean;
+    };
+    return {
+      n_chunks: r.n_chunks ?? 0,
+      n_documents: r.n_documents ?? 0,
+      has_dense: r.has_dense,
+    };
   },
 
   async kbUpload(project: string, file: File): Promise<void> {
@@ -689,10 +739,32 @@ export const agent = {
     });
   },
 
-  async listModels(): Promise<string[]> {
-    return agentFetch<string[]>("/llm/models");
+  async listModels(): Promise<ModelInfo[]> {
+    return agentFetch<ModelInfo[]>("/llm/models");
+  },
+
+  async recentLog(maxBytes = 60000): Promise<RecentLog> {
+    return agentFetch<RecentLog>(`/tools/log?max_bytes=${maxBytes}`);
   },
 };
+
+export interface ModelInfo {
+  id: string;
+  provider: string;
+  label: string;
+}
+
+export interface RecentLog {
+  text: string;
+  path: string;
+  dir: string;
+}
+
+export interface SystemPrompt {
+  project: string;
+  scope: string;
+  text: string;
+}
 
 // ---------------------------------------------------------------------------
 // Display helpers (core/app_config.py display_project_name)

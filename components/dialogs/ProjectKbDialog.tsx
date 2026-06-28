@@ -28,7 +28,7 @@ export function ProjectKbDialog({ onClose }: { onClose: () => void }) {
         </h3>
         <DocumentsSection project={currentProject} pushLog={pushLog} />
         <TemplatesSection project={currentProject} pushLog={pushLog} />
-        <PromptsSection />
+        <PromptsSection project={currentProject} pushLog={pushLog} />
       </div>
     </Modal>
   );
@@ -44,6 +44,7 @@ function DocumentsSection({
   const [status, setStatus] = useState<KbStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [indexing, setIndexing] = useState(false);
+  const [indexProgress, setIndexProgress] = useState("");
   const [selectedDoc, setSelectedDoc] = useState<string>("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -76,12 +77,39 @@ function DocumentsSection({
   const reindex = async () => {
     if (!project) return;
     setIndexing(true);
+    setIndexProgress("Starting...");
     pushLog("INFO", "Rebuilding KB index...");
+    const start = Date.now();
+    const fmt = (s: number) => {
+      const v = Math.max(0, Math.floor(s));
+      return v < 60 ? `${v}s` : `${Math.floor(v / 60)}m ${String(v % 60).padStart(2, "0")}s`;
+    };
     try {
-      const r = await agent.kbIndex(project);
+      const r = await agent.kbIndex(project, {
+        onProgress: (p) => {
+          const { current: done, total, stage } = p;
+          if (!total || total <= 0) {
+            setIndexProgress("Scanning...");
+            return;
+          }
+          if (done >= total) {
+            setIndexProgress("Finalizing...");
+            return;
+          }
+          const elapsed = (Date.now() - start) / 1000;
+          const pct = Math.round((100 * done) / Math.max(total, 1));
+          const remaining = done > 0 ? (elapsed / done) * (total - done) : 0;
+          const name = stage && stage !== "indexing" ? ` (${stage})` : "";
+          setIndexProgress(
+            `${done}/${total}${name} | ${fmt(elapsed)} / ${fmt(remaining)} - ${pct}%`
+          );
+        },
+      });
+      setIndexProgress("");
       pushLog("SUCCESS", `Indexed ${r.n_documents} doc(s), ${r.n_chunks} chunk(s).`);
       refresh();
     } catch (e) {
+      setIndexProgress("");
       pushLog("ERROR", `Index failed: ${(e as Error).message}`);
     } finally {
       setIndexing(false);
@@ -156,7 +184,13 @@ function DocumentsSection({
         )}
       </div>
 
-      {status && (
+      {indexing && (
+        <p className="font-mono text-xs leading-relaxed text-[#d69e2e]">
+          KB indexing {indexProgress}
+        </p>
+      )}
+
+      {status && !indexing && (
         <p className="text-xs leading-relaxed text-[#1aab5c]">
           {status.indexed
             ? `Indexing ${status.n_documents ?? status.documents.length} document(s), ${
@@ -215,29 +249,135 @@ function TemplatesSection({
   );
 }
 
-function PromptsSection() {
+const PROMPT_SCOPES: { value: string; label: string }[] = [
+  { value: "", label: "General (manual mode / default)" },
+  { value: "implementation", label: "Implementation phase" },
+  { value: "sit", label: "SIT phase" },
+  { value: "uat", label: "UAT phase" },
+];
+
+function PromptsSection({
+  project,
+  pushLog,
+}: {
+  project: string;
+  pushLog: (l: "INFO" | "SUCCESS" | "WARN" | "ERROR", t: string) => void;
+}) {
+  const [scope, setScope] = useState("");
   const [text, setText] = useState("");
+  const [loaded, setLoaded] = useState("");
   const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
+
+  const load = (sc: string) => {
+    if (!project) return;
+    setBusy(true);
+    agent
+      .getSystemPrompt(project, sc)
+      .then((r) => {
+        setText(r.text);
+        setLoaded(r.text);
+        setEditing(false);
+        setStatus("");
+      })
+      .catch((e) => setStatus(`Could not load prompt: ${(e as Error).message}`))
+      .finally(() => setBusy(false));
+  };
+
+  // Load the General prompt when the dialog opens for this project.
+  useEffect(() => {
+    if (project) load(scope);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project]);
+
+  const changeScope = (sc: string) => {
+    if (editing && text !== loaded) {
+      const ok = window.confirm(
+        "You have unsaved changes to the current prompt. Discard them and switch?"
+      );
+      if (!ok) return;
+    }
+    setScope(sc);
+    load(sc);
+  };
+
+  const scopeLabel =
+    PROMPT_SCOPES.find((s) => s.value === scope)?.label ?? "General";
+
+  const save = async () => {
+    if (!project) return;
+    if (!text.trim()) {
+      setStatus(
+        "The system prompt cannot be empty. Use Reset to default to restore the standard prompt."
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await agent.saveSystemPrompt(project, scope, text);
+      setLoaded(r.text);
+      setText(r.text);
+      setEditing(false);
+      setStatus(`System prompt saved (${scopeLabel}).`);
+      pushLog("SUCCESS", `System prompt saved (${scopeLabel}).`);
+    } catch (e) {
+      setStatus(`Save failed: ${(e as Error).message}`);
+      pushLog("ERROR", `System prompt save failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async () => {
+    if (!project) return;
+    const ok = window.confirm(
+      `Replace the ${scopeLabel} prompt with the standard default?`
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const r = await agent.resetSystemPrompt(project, scope);
+      setText(r.text);
+      setLoaded(r.text);
+      setStatus(`Reset to default (${scopeLabel}).`);
+      pushLog("INFO", `System prompt reset to default (${scopeLabel}).`);
+    } catch (e) {
+      setStatus(`Reset failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <h4 className="text-sm font-bold text-[#edf0f5]">System prompt</h4>
         <label className="ml-2 text-sm text-[#bfc4cc]">Scope:</label>
-        <select className="tt-input w-56 cursor-pointer text-sm" defaultValue="general">
-          <option value="general">General (manual mode / default)</option>
-          <option value="implementation">Implementation</option>
-          <option value="sit">SIT</option>
-          <option value="uat">UAT</option>
+        <select
+          className="tt-input w-56 cursor-pointer text-sm"
+          value={scope}
+          disabled={busy || !project}
+          onChange={(e) => changeScope(e.target.value)}
+        >
+          {PROMPT_SCOPES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
         </select>
         <div className="flex-1" />
         <button
           className="tt-btn-ghost !px-3 !py-1.5 text-xs"
+          title="Show prompt (read-only)"
           onClick={() => setEditing(false)}
         >
           View
         </button>
         <button
           className="tt-btn-ghost !px-3 !py-1.5 text-xs"
+          title="Edit the system prompt"
+          disabled={!project}
           onClick={() => setEditing(true)}
         >
           Edit
@@ -247,16 +387,24 @@ function PromptsSection() {
         className="tt-input min-h-40 resize-y font-mono text-xs"
         placeholder="System prompt (extends the canonical strict TC contract)..."
         value={text}
-        disabled={!editing}
+        readOnly={!editing}
         onChange={(e) => setText(e.target.value)}
       />
+      {status && (
+        <p className="text-xs text-muted-foreground">{status}</p>
+      )}
       <div className="flex items-center justify-end gap-2">
-        <button className="tt-btn-ghost !px-3 !py-1.5 text-xs" disabled={!editing}>
+        <button
+          className="tt-btn-ghost !px-3 !py-1.5 text-xs"
+          disabled={!editing || busy}
+          onClick={reset}
+        >
           Reset to default
         </button>
         <button
           className="tt-btn-primary !px-4 !py-1.5 text-sm"
-          disabled={!editing}
+          disabled={!editing || busy}
+          onClick={save}
         >
           Save prompt
         </button>

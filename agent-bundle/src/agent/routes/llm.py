@@ -33,6 +33,7 @@ async def complete(req: CompleteRequest) -> CompleteResponse:
     """Single-shot LLM completion via the locally-stored API key."""
     from core.settings_store import get_setting, load_api_key, KEY_BASE_URL, KEY_MODEL
     from core.anthropic_client import AnthropicClient
+    from core.settings_store import build_runtime_config
 
     api_key = load_api_key()
     if not api_key:
@@ -41,7 +42,10 @@ async def complete(req: CompleteRequest) -> CompleteResponse:
     base_url = get_setting(KEY_BASE_URL)
     model = req.model or get_setting(KEY_MODEL)
 
-    client = AnthropicClient(api_key=api_key, base_url=base_url)
+    cfg = build_runtime_config()
+    client = AnthropicClient(
+        api_key=api_key, base_url=base_url, ssl_verify=cfg.build_ssl()
+    )
     try:
         result = await client.complete_async(
             model=model,
@@ -64,19 +68,41 @@ async def complete(req: CompleteRequest) -> CompleteResponse:
 
 
 @router.get("/models")
-async def list_models() -> list[str]:
-    """List available/working models from the configured API."""
+async def list_models() -> list[dict[str, str]]:
+    """List available/working models from the configured API, grouped by
+    provider (mirrors the desktop ConnectionFields.fetch_models)."""
     from core.settings_store import get_setting, load_api_key, KEY_BASE_URL
-    from core.anthropic_client import AnthropicClient
+    from core.anthropic_client import (
+        AnthropicClient,
+        group_models_by_provider,
+    )
+    from core.settings_store import build_runtime_config
 
     api_key = load_api_key()
     if not api_key:
         raise HTTPException(400, "No API key configured")
 
     base_url = get_setting(KEY_BASE_URL)
-    client = AnthropicClient(api_key=api_key, base_url=base_url)
+    # Use the app's TLS handling (combined CA bundle / truststore) so corporate
+    # self-signed proxy chains (Zscaler etc.) verify correctly. Without this the
+    # client falls back to plain certifi and raises CERTIFICATE_VERIFY_FAILED.
+    cfg = build_runtime_config()
+    client = AnthropicClient(
+        api_key=api_key, base_url=base_url, ssl_verify=cfg.build_ssl()
+    )
     try:
         models = await client.list_working_models_async()
     except Exception as e:
         raise HTTPException(502, f"Failed to list models: {e!r}")
-    return models
+
+    # Flatten into ordered [{id, provider, label}] so the web UI can render the
+    # same grouped dropdown the desktop builds with group_models_by_provider().
+    out: list[dict[str, str]] = []
+    for provider, items in group_models_by_provider(models):
+        for m in items:
+            out.append({
+                "id": m.id,
+                "provider": provider,
+                "label": getattr(m, "label", "") or m.id,
+            })
+    return out

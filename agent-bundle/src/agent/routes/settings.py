@@ -98,3 +98,57 @@ async def save_settings(req: SaveSettingsRequest) -> dict:
             raise HTTPException(500, "Failed to save PAT")
 
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Per-project system prompts (mirrors ProjectKbDialog's System prompt section)
+# ---------------------------------------------------------------------------
+class SystemPromptResponse(BaseModel):
+    project: str
+    scope: str          # "" = General/default, else implementation|sit|uat
+    text: str
+
+
+class SaveSystemPromptRequest(BaseModel):
+    project: str
+    scope: str = ""
+    text: str
+
+
+@router.get("/system-prompt", response_model=SystemPromptResponse)
+async def get_system_prompt(project: str, scope: str = "") -> SystemPromptResponse:
+    """Read the editable system prompt for a project + phase scope. An empty
+    scope returns the General/manual default prompt."""
+    import core.project_store as ps
+
+    text = ps.read_system_prompt(project, scope or None)
+    return SystemPromptResponse(project=project, scope=scope, text=text)
+
+
+@router.post("/system-prompt", response_model=SystemPromptResponse)
+async def save_system_prompt(req: SaveSystemPromptRequest) -> SystemPromptResponse:
+    """Persist the system prompt for a project + phase scope. Mirrors
+    ProjectKbDialog._save_prompt; an empty body is rejected like the desktop."""
+    import core.project_store as ps
+
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(
+            400,
+            "The system prompt cannot be empty. Use reset to restore the "
+            "standard prompt.",
+        )
+    if not ps.write_system_prompt(req.project, text, req.scope or None):
+        raise HTTPException(500, "Could not write the system prompt.")
+    return SystemPromptResponse(project=req.project, scope=req.scope, text=text)
+
+
+@router.post("/system-prompt/reset", response_model=SystemPromptResponse)
+async def reset_system_prompt(req: SaveSystemPromptRequest) -> SystemPromptResponse:
+    """Reset the system prompt for a project + phase scope to the standard
+    default (mirrors ProjectKbDialog._reset_prompt)."""
+    import core.project_store as ps
+
+    ps.reset_system_prompt(req.project, req.scope or None)
+    text = ps.read_system_prompt(req.project, req.scope or None)
+    return SystemPromptResponse(project=req.project, scope=req.scope, text=text)

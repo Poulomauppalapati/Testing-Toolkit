@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useAppState } from "@/lib/app-state";
 import { Dropdown } from "@/components/ui/dropdown";
+import { agent } from "@/lib/agent-client";
 
 function RailButton({
   icon: Icon,
@@ -42,8 +43,19 @@ export function ActivityBar() {
     setNavVisible,
     openDialog,
     currentProject,
+    pushLog,
     setLogVisible,
   } = useAppState();
+
+  async function openLogFolder() {
+    setLogVisible(true);
+    try {
+      const { dir, path } = await agent.recentLog(1);
+      pushLog("INFO", dir ? `Log folder: ${dir}` : `Log file: ${path}`);
+    } catch (e) {
+      pushLog("WARN", `Could not locate the log folder: ${(e as Error).message}`);
+    }
+  }
 
   return (
     <div className="tt-rail flex w-11 shrink-0 flex-col items-center gap-1 py-2">
@@ -75,8 +87,9 @@ export function ActivityBar() {
         align="left"
         direction="up"
         items={[
-          { label: "View log", onClick: () => setLogVisible(true) },
-          { label: "About", separatorBefore: true, onClick: () => openDialog("settings") },
+          { label: "Open log folder", onClick: () => openLogFolder() },
+          { label: "View recent log...", onClick: () => openDialog("viewlog") },
+          { label: "About", separatorBefore: true, onClick: () => openDialog("about") },
         ]}
         trigger={({ toggle, ref }) => (
           <button

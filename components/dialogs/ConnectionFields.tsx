@@ -1,13 +1,48 @@
 "use client";
 
-import { useState } from "react";
-import { agent, type SaveSettingsPayload } from "@/lib/agent-client";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import {
+  agent,
+  type ModelInfo,
+  type SaveSettingsPayload,
+} from "@/lib/agent-client";
 
+// Mirrors ConnectionFields._SEED_MODELS in the desktop app.
 const SEED_MODELS = [
   "bedrock.anthropic.claude-opus-4-6",
   "bedrock.anthropic.claude-sonnet-4-6",
   "bedrock.anthropic.claude-haiku-4-5",
 ];
+
+interface ModelGroup {
+  provider: string;
+  items: ModelInfo[];
+}
+
+/** Group a flat ModelInfo list into ordered provider sections, preserving the
+ *  server's ordering (the backend already sorts via group_models_by_provider). */
+function groupModels(list: ModelInfo[]): ModelGroup[] {
+  const order: string[] = [];
+  const map = new Map<string, ModelInfo[]>();
+  for (const m of list) {
+    if (!map.has(m.provider)) {
+      map.set(m.provider, []);
+      order.push(m.provider);
+    }
+    map.get(m.provider)!.push(m);
+  }
+  return order.map((provider) => ({ provider, items: map.get(provider)! }));
+}
+
+function seedGroups(): ModelGroup[] {
+  return [
+    {
+      provider: "Anthropic",
+      items: SEED_MODELS.map((id) => ({ id, provider: "Anthropic", label: id })),
+    },
+  ];
+}
 
 export interface ConnectionValues {
   api_key: string;
@@ -116,6 +151,101 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Editable model combobox that mirrors the desktop QComboBox built in
+ * ConnectionFields._populate_model_combos(): a free-text field plus a dropdown
+ * grouped by provider, with bold, non-selectable provider headers and an
+ * optional leading blank row (for fast/fallback "reuse primary" selection).
+ */
+function ModelCombo({
+  value,
+  onChange,
+  groups,
+  allowBlank,
+  placeholder,
+  title,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  groups: ModelGroup[];
+  allowBlank?: boolean;
+  placeholder?: string;
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const pick = (id: string) => {
+    onChange(id);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={ref} className="relative flex-1" title={title}>
+      <div className="flex">
+        <input
+          className="tt-input w-full !rounded-r-none"
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={() => setOpen(true)}
+        />
+        <button
+          type="button"
+          aria-label="Show models"
+          className="tt-btn-ghost shrink-0 !rounded-l-none !border-l-0 !px-2"
+          onClick={() => setOpen((o) => !o)}
+        >
+          <ChevronDown className="h-4 w-4" />
+        </button>
+      </div>
+      {open && (
+        <div className="tt-dialog absolute z-[60] mt-1 max-h-64 w-full overflow-auto rounded-md border border-[#1e2128] py-1 shadow-2xl">
+          {allowBlank && (
+            <button
+              type="button"
+              className="tt-list-item block w-full truncate text-left text-sm italic text-muted-foreground"
+              onClick={() => pick("")}
+            >
+              (reuse primary)
+            </button>
+          )}
+          {groups.map((g) => (
+            <div key={g.provider}>
+              <div className="px-3 py-1 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                -- {g.provider} --
+              </div>
+              {g.items.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  title={m.label}
+                  data-selected={m.id === value}
+                  className="tt-list-item block w-full truncate text-left text-sm"
+                  onClick={() => pick(m.id)}
+                >
+                  {m.id}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ConnectionFields({
   values,
   setValues,
@@ -123,8 +253,11 @@ export function ConnectionFields({
   values: ConnectionValues;
   setValues: React.Dispatch<React.SetStateAction<ConnectionValues>>;
 }) {
-  const [models, setModels] = useState<string[]>(SEED_MODELS);
+  const [groups, setGroups] = useState<ModelGroup[]>(seedGroups());
   const [modelStatus, setModelStatus] = useState("");
+  const [statusColor, setStatusColor] = useState<"muted" | "warn" | "success">(
+    "muted"
+  );
   const [fetching, setFetching] = useState(false);
 
   const set = (k: keyof ConnectionValues, v: string) =>
@@ -132,29 +265,59 @@ export function ConnectionFields({
 
   const fetchModels = async () => {
     if (!values.base_url) {
+      setStatusColor("warn");
       setModelStatus("Base URL is required to fetch models.");
       return;
     }
     if (!values.api_key) {
+      setStatusColor("warn");
       setModelStatus("Enter the API key to fetch models.");
       return;
     }
     setFetching(true);
+    setStatusColor("muted");
     setModelStatus("Checking which models respond with 200 OK...");
     try {
       const list = await agent.listModels();
       if (list.length) {
-        setModels(Array.from(new Set([...list, ...SEED_MODELS])));
-        setModelStatus(`${list.length} working model(s) found.`);
+        const g = groupModels(list);
+        setGroups(g);
+        setStatusColor("success");
+        setModelStatus(
+          `${list.length} working model(s) across ${g.length} provider(s) ` +
+            `(only models that returned 200 OK are listed).`
+        );
       } else {
-        setModelStatus("No models responded (check base URL, key, TLS).");
+        setStatusColor("warn");
+        setModelStatus(
+          "No models responded with 200 OK (check the base URL, key, and TLS mode)."
+        );
       }
     } catch (e) {
+      setStatusColor("warn");
       setModelStatus(`Could not fetch models: ${(e as Error).message}`);
     } finally {
       setFetching(false);
     }
   };
+
+  const statusClass =
+    statusColor === "warn"
+      ? "text-[#d69e2e]"
+      : statusColor === "success"
+        ? "text-[#48bb78]"
+        : "text-muted-foreground";
+
+  // Auto-check on open (mirrors SettingsDialog._auto_check): if a key and base
+  // URL are already saved, silently fetch the model list so the user lands on a
+  // verified, populated dropdown.
+  useEffect(() => {
+    if (values.base_url && values.api_key === MASK) {
+      void fetchModels();
+    }
+    // Run once on mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="flex flex-col gap-3">
@@ -177,47 +340,44 @@ export function ConnectionFields({
       </Field>
       <Field label="Model">
         <div className="flex gap-2">
-          <input
-            list="tt-models"
-            className="tt-input flex-1"
+          <ModelCombo
             value={values.model}
-            onChange={(e) => set("model", e.target.value)}
+            onChange={(v) => set("model", v)}
+            groups={groups}
           />
           <button
             type="button"
             className="tt-btn-ghost shrink-0 !px-3 !py-1.5 text-xs"
             onClick={fetchModels}
             disabled={fetching}
+            title="Query the API for available models and fill the dropdowns. Needs the API key and base URL above."
           >
             {fetching ? "Fetching..." : "Fetch models"}
           </button>
         </div>
       </Field>
       <Field label="Fast model">
-        <input
-          list="tt-models"
-          className="tt-input"
-          placeholder="(reuse primary if blank)"
+        <ModelCombo
           value={values.fast_model}
-          onChange={(e) => set("fast_model", e.target.value)}
+          onChange={(v) => set("fast_model", v)}
+          groups={groups}
+          allowBlank
+          placeholder="(reuse primary if blank)"
+          title="Used for the Recursive Language Model retrieval steps. Leave blank to reuse the primary model."
         />
       </Field>
       <Field label="Fallback model">
-        <input
-          list="tt-models"
-          className="tt-input"
-          placeholder="(safety fallback)"
+        <ModelCombo
           value={values.fallback_model}
-          onChange={(e) => set("fallback_model", e.target.value)}
+          onChange={(v) => set("fallback_model", v)}
+          groups={groups}
+          allowBlank
+          placeholder="(safety fallback)"
+          title="Safety fallback model used when the primary or fast model fails or is rate-limited."
         />
       </Field>
-      <datalist id="tt-models">
-        {models.map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
       {modelStatus && (
-        <p className="pl-[152px] text-xs text-muted-foreground">{modelStatus}</p>
+        <p className={`pl-[152px] text-xs ${statusClass}`}>{modelStatus}</p>
       )}
 
       <SectionHeader>Azure DevOps</SectionHeader>

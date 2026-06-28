@@ -45,3 +45,7 @@ __pycache__/
 *.pyc
 *.pyo
 agent-update.json
+Desktop_App_Without_EmbeddedPython.zip
+
+# Unzipped desktop app source - reference only for migration parity, never built/deployed
+/src/

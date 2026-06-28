@@ -96,6 +96,28 @@ async def _run_package(
         job.log(f"[ERROR] {job.error}")
 
 
+@router.get("/log")
+async def recent_log(max_bytes: int = 60000) -> dict[str, Any]:
+    """Return the tail of the rotating log file plus its on-disk path.
+
+    Mirrors the desktop Help -> 'View recent log...' dialog, which shows the
+    last ~60 KB of the log so it can be copied into a bug report.
+    """
+    from core.app_logging import log_path, log_dir, tail_log
+
+    try:
+        text = tail_log(max_bytes)
+    except Exception as e:  # noqa: BLE001
+        text = f"(could not read log: {e!r})"
+    p = log_path()
+    d = log_dir()
+    return {
+        "text": text,
+        "path": str(p) if p else "",
+        "dir": str(d) if d else "",
+    }
+
+
 @router.post("/package")
 async def package_pdfs(req: PackageRequest) -> dict[str, str]:
     if not req.wi_ids:
