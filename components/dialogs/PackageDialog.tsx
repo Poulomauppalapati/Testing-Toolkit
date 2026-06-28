@@ -9,6 +9,7 @@ export function PackageDialog({ onClose }: { onClose: () => void }) {
   const { selected, currentProject, displayName, pushLog } = useAppState();
   const selectedIds = [...selected].sort((a, b) => a - b);
   const [manualIds, setManualIds] = useState("");
+  const [paperSize, setPaperSize] = useState<"A4" | "Letter">("A4");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [progress, setProgress] = useState<JobProgress | null>(null);
@@ -33,7 +34,7 @@ export function PackageDialog({ onClose }: { onClose: () => void }) {
     pushLog("INFO", `Packaging ${ids.length} work item(s) into PDFs...`);
     try {
       const res = await agent.packagePdfs(
-        { project: currentProject, wi_ids: ids },
+        { project: currentProject, wi_ids: ids, paper_size: paperSize },
         {
           onLog: (line) => pushLog(agentLogLevel(line), line),
           onProgress: (p) => setProgress(p),
@@ -119,6 +120,28 @@ export function PackageDialog({ onClose }: { onClose: () => void }) {
             />
           </div>
         )}
+
+        <div className="flex items-center gap-3">
+          <h4 className="text-xs font-bold uppercase tracking-wide text-[#7abaff]">
+            Paper size
+          </h4>
+          <div className="flex gap-1.5">
+            {(["A4", "Letter"] as const).map((size) => (
+              <button
+                key={size}
+                type="button"
+                onClick={() => setPaperSize(size)}
+                disabled={busy}
+                className={
+                  paperSize === size ? "tt-btn-primary !px-3 !py-1.5 text-xs" : "tt-btn-ghost !px-3 !py-1.5 text-xs"
+                }
+                aria-pressed={paperSize === size}
+              >
+                {size}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {result && (
           <div className="rounded-lg border border-[#1aab5c]/40 bg-[#0d2a1c] p-3 text-sm">
