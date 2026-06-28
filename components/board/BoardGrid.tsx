@@ -45,7 +45,9 @@ export function BoardGrid() {
     const assignees = uniqueSorted(rows.map((r) => r.assigned_to || UNASSIGNED));
     const sprints = uniqueSorted(rows.map((r) => r.board_lane || NO_ITER));
     const known = new Set(columns.map((c) => c.name));
-    const cols = columns.map((c) => c.name);
+    // Preserve board column order but drop duplicate names (split columns can
+    // repeat a display name) so the filter <option> keys stay unique.
+    const cols = Array.from(new Set(columns.map((c) => c.name)));
     if (rows.some((r) => !r.board_column || !known.has(r.board_column)))
       cols.push(NO_COLUMN);
     return { types, assignees, sprints, cols };
