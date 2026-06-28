@@ -977,6 +977,20 @@ export const agent = {
   },
 
   /**
+   * Live progress of an in-flight apply, for the "Update in progress" screen.
+   * Cheap to poll. Returns null on older agents that lack the /update/progress
+   * route (so callers can fall back to an indeterminate bar).
+   */
+  async updateProgress(): Promise<UpdateProgress | null> {
+    try {
+      return await agentFetch<UpdateProgress>("/update/progress");
+    } catch (e) {
+      if (isAgent404(e)) return null;
+      throw e;
+    }
+  },
+
+  /**
    * Hand the local agent a read-only update token so a token-less install can
    * start self-updating without a reinstall. Returns the refreshed update
    * status (now `configured:true`), or null when this agent build predates the
@@ -1040,11 +1054,41 @@ export interface UpdateStatus {
 
 export interface UpdateApplyResult {
   applied: boolean;
-  status: "applied" | "up_to_date" | "failed" | "not_configured" | "unreachable";
+  status:
+    | "applied"
+    | "started"
+    | "up_to_date"
+    | "failed"
+    | "not_configured"
+    | "unreachable";
   current: string;
   latest: string | null;
   restarting: boolean;
   detail?: string;
+}
+
+export type UpdatePhase =
+  | "idle"
+  | "starting"
+  | "downloading"
+  | "installing_deps"
+  | "staging"
+  | "restarting"
+  | "done"
+  | "up_to_date"
+  | "failed";
+
+export interface UpdateProgress {
+  active: boolean;
+  phase: UpdatePhase;
+  message: string;
+  current: number;
+  total: number;
+  percent: number;
+  version: string;
+  status: string;
+  detail: string;
+  updated_at: number;
 }
 
 export interface SystemPrompt {

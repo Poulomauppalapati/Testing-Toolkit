@@ -46,6 +46,51 @@ _stop_event = threading.Event()
 _loop_started: bool = False
 _loop_lock = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# Live progress, so the web app can render an "Update in progress" screen with a
+# real progress bar instead of a silent self-restart. The applier writes here as
+# it advances through its phases; the UI polls GET /update/progress. State is
+# in-memory (reset on restart), which is fine: once the agent restarts the UI
+# switches to "restarting / reconnecting" and drives the bar to 100% itself.
+# ---------------------------------------------------------------------------
+# phase: idle | starting | downloading | installing_deps | staging | restarting
+#        | done | up_to_date | failed
+_PROGRESS: dict[str, Any] = {
+    "active": False,
+    "phase": "idle",
+    "message": "",
+    "current": 0,
+    "total": 0,
+    "percent": 0,
+    "version": "",
+    "status": "",
+    "detail": "",
+    "updated_at": 0.0,
+}
+_progress_lock = threading.Lock()
+
+
+def _set_progress(**kw: Any) -> None:
+    with _progress_lock:
+        _PROGRESS.update(kw)
+        _PROGRESS["updated_at"] = time.time()
+
+
+def get_progress() -> dict[str, Any]:
+    """Snapshot of the current apply progress (safe to poll from the UI)."""
+    with _progress_lock:
+        return dict(_PROGRESS)
+
+
+def _apply_in_flight() -> bool:
+    with _progress_lock:
+        return bool(_PROGRESS.get("active")) and _PROGRESS.get("phase") not in (
+            "idle",
+            "done",
+            "up_to_date",
+            "failed",
+        )
+
 # Baked-in defaults so a config that only carries a token (or an older config
 # missing manifest_url) can still resolve where to look for updates. These match
 # the values the installer injects (see app/api/installer/route.ts).
@@ -238,10 +283,14 @@ def _apply_manifest(manifest: dict[str, Any], *, defer_restart: bool = False) ->
     """
     remote_version = manifest.get("version", "")
     if not remote_version or remote_version == AGENT_VERSION:
+        _set_progress(active=False, phase="up_to_date", message="Already up to date",
+                      percent=100, version=remote_version, status="up_to_date")
         return "up_to_date"
 
     files = manifest.get("files", [])
     if not files:
+        _set_progress(active=False, phase="up_to_date", message="Already up to date",
+                      percent=100, version=remote_version, status="up_to_date")
         return "up_to_date"
 
     headers = _auth_headers()
@@ -251,8 +300,14 @@ def _apply_manifest(manifest: dict[str, Any], *, defer_restart: bool = False) ->
     # maps to <install>/agent/src/agent/server.py.
     src_root = Path(__file__).resolve().parent.parent
 
+    total = len(files)
+    _set_progress(active=True, phase="downloading",
+                  message=f"Downloading update ({total} files)…",
+                  current=0, total=total, percent=4,
+                  version=remote_version, status="", detail="")
+
     staged: list[tuple[Path, bytes]] = []
-    for file_info in files:
+    for idx, file_info in enumerate(files):
         rel_path = file_info.get("path", "")
         url = file_info.get("url", "")
         expected_hash = file_info.get("hash", "")
@@ -262,28 +317,52 @@ def _apply_manifest(manifest: dict[str, Any], *, defer_restart: bool = False) ->
             r = httpx.get(url, headers=headers, timeout=30,
                           follow_redirects=True)
             if r.status_code != 200:
+                _set_progress(active=False, phase="failed",
+                              message="Download failed", status="failed", percent=0)
                 return "failed"  # abort the whole update; try again next cycle
             content = r.content
             if expected_hash and hashlib.sha256(content).hexdigest() != expected_hash:
+                _set_progress(active=False, phase="failed",
+                              message="Verification failed", status="failed", percent=0)
                 return "failed"  # corrupt/mismatched -> do not apply partial
             staged.append((src_root / rel_path, content))
-        except Exception:
+            done = idx + 1
+            # Downloading spans 4% -> 72% of the overall bar.
+            pct = 4 + int(68 * done / max(total, 1))
+            _set_progress(phase="downloading",
+                          message=f"Downloading update ({done}/{total})…",
+                          current=done, total=total, percent=pct)
+        except Exception as exc:
+            _set_progress(active=False, phase="failed", message="Download failed",
+                          status="failed", detail=str(exc), percent=0)
             return "failed"
 
     # Install any new dependencies (extra wheels) BEFORE swapping in source
     # that imports them. If this fails we abort so we never restart into code
     # whose imports cannot resolve (which would crash-loop the agent).
+    _set_progress(phase="installing_deps", message="Installing dependencies…",
+                  percent=80)
     if not _install_extra_wheels(manifest.get("extraWheels") or [], headers):
+        _set_progress(active=False, phase="failed",
+                      message="Dependency install failed", status="failed", percent=0)
         return "failed"
 
     # All files fetched and verified -> apply atomically-ish, then restart.
+    _set_progress(phase="staging", message="Applying files…", percent=90)
     for dest, content in staged:
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(content)
-        except Exception:
+        except Exception as exc:
+            _set_progress(active=False, phase="failed", message="Applying files failed",
+                          status="failed", detail=str(exc), percent=0)
             return "failed"
 
+    # Signal "restarting" BEFORE the process is replaced so the UI catches it
+    # and switches to its reconnect wait (the agent won't answer during restart).
+    _set_progress(active=True, phase="restarting",
+                  message="Restarting the agent…", percent=96,
+                  version=remote_version, status="applied")
     if defer_restart:
         threading.Timer(1.0, _restart).start()
     else:
@@ -291,16 +370,40 @@ def _apply_manifest(manifest: dict[str, Any], *, defer_restart: bool = False) ->
     return "applied"
 
 
+def _apply_worker(manifest: dict[str, Any]) -> None:
+    """Run the (blocking) apply in the background so the HTTP caller returns
+    immediately and the UI can poll GET /update/progress for live progress.
+    _apply_manifest sets the terminal progress state itself (restarting on
+    success, failed/up_to_date otherwise)."""
+    try:
+        _apply_manifest(manifest, defer_restart=True)
+    except Exception as exc:
+        _set_progress(active=False, phase="failed", message="Update failed",
+                      status="failed", detail=str(exc), percent=0)
+
+
 def apply_update_now() -> dict[str, Any]:
-    """On-demand update triggered from the UI. Downloads + applies the latest
-    manifest and (if anything changed) schedules a restart so the new code
-    takes effect. Returns a status dict for the caller to surface."""
+    """On-demand update triggered from the UI. Kicks off a download+apply in a
+    background thread and returns right away with status "started"; the UI then
+    polls GET /update/progress and, when it sees "restarting", waits for the
+    agent to come back. Returns a status dict for the caller to surface."""
     if not (MANIFEST_URL or resolve_manifest_url()):
         return {
             "applied": False, "status": "not_configured",
             "current": AGENT_VERSION, "latest": None, "restarting": False,
             "detail": "Automatic updates are not configured for this install.",
         }
+
+    # Already applying -> report it as started so the UI just keeps polling.
+    if _apply_in_flight():
+        with _progress_lock:
+            latest = _PROGRESS.get("version") or None
+        return {
+            "applied": False, "status": "started",
+            "current": AGENT_VERSION, "latest": latest, "restarting": False,
+            "detail": "Update already in progress.",
+        }
+
     manifest = _fetch_manifest()
     if not manifest:
         return {
@@ -308,17 +411,31 @@ def apply_update_now() -> dict[str, Any]:
             "current": AGENT_VERSION, "latest": None, "restarting": False,
             "detail": "Could not reach the update server.",
         }
-    status = _apply_manifest(manifest, defer_restart=True)
+
+    latest = manifest.get("version", "") or ""
+    if not latest or latest == AGENT_VERSION:
+        _set_progress(active=False, phase="up_to_date", message="Already up to date",
+                      percent=100, version=latest, status="up_to_date")
+        return {
+            "applied": False, "status": "up_to_date",
+            "current": AGENT_VERSION, "latest": latest or None, "restarting": False,
+        }
+
+    _set_progress(active=True, phase="starting", message="Preparing update…",
+                  current=0, total=0, percent=2, version=latest, status="", detail="")
+    threading.Thread(target=_apply_worker, args=(manifest,),
+                     daemon=True, name="updater-apply").start()
     return {
-        "applied": status == "applied",
-        "status": status,
-        "current": AGENT_VERSION,
-        "latest": manifest.get("version", "") or None,
-        "restarting": status == "applied",
+        "applied": False, "status": "started",
+        "current": AGENT_VERSION, "latest": latest, "restarting": False,
     }
 
 
 def _check_and_apply() -> None:
+    # Don't fire the silent background restart while a UI-driven apply is showing
+    # its "Update in progress" screen — let that one finish and restart.
+    if _apply_in_flight():
+        return
     manifest = _fetch_manifest()
     if not manifest:
         return
@@ -387,18 +504,39 @@ def _install_extra_wheels(wheels: list[dict[str, Any]], headers: dict[str, str])
 
 
 def _restart() -> None:
-    """Restart the agent process so the new code takes effect."""
+    """Relaunch the agent so the new code takes effect — headless and OS-agnostic.
+
+    Windows: spawn pythonw.exe (no console) fully detached (CREATE_NO_WINDOW +
+    DETACHED_PROCESS + new process group) with stdio sent to nul, then exit.
+    POSIX: execv replaces the current image in place, so it inherits the existing
+    (already windowless/background) process with no new terminal.
+    """
     python = sys.executable
     try:
         if sys.platform == "win32":
-            # Prefer pythonw.exe + CREATE_NO_WINDOW so the restarted agent has
-            # no console window (matches the headless login task).
+            # Prefer pythonw.exe so the restarted agent has no console window
+            # (matches the headless login task). Fall back to python.exe.
             pyw = Path(python).with_name("pythonw.exe")
             run_python = str(pyw) if pyw.exists() else python
             CREATE_NO_WINDOW = 0x08000000
+            DETACHED_PROCESS = 0x00000008
+            flags = (
+                subprocess.CREATE_NEW_PROCESS_GROUP
+                | CREATE_NO_WINDOW
+                | DETACHED_PROCESS
+            )
+            try:
+                devnull = open(os.devnull, "wb")
+            except Exception:
+                devnull = None
             subprocess.Popen(
                 [run_python, "-m", "agent"],
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
+                creationflags=flags,
+                stdout=devnull,
+                stderr=devnull,
+                stdin=subprocess.DEVNULL,
+                close_fds=True,
+                cwd=str(install_dir()),
             )
             os._exit(0)
         else:

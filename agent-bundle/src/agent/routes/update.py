@@ -21,6 +21,17 @@ async def update_status() -> dict:
     return updater.check_for_update()
 
 
+@router.get("/progress")
+async def update_progress() -> dict:
+    """Live progress of an in-flight apply, for the 'Update in progress' screen.
+
+    Cheap to poll; reads in-memory state set by the background applier. Phases:
+    idle | starting | downloading | installing_deps | staging | restarting |
+    done | up_to_date | failed.
+    """
+    return updater.get_progress()
+
+
 @router.post("/config")
 async def update_config(payload: dict[str, Any] = Body(default={})) -> dict:
     """Enable/repair auto-update at runtime (no reinstall required).

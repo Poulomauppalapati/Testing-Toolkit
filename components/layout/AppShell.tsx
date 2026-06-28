@@ -14,6 +14,7 @@ import {
 } from "@/lib/preferences";
 import type { UpdateStatus } from "@/lib/agent-client";
 import { AgentUpdateRequired } from "@/components/onboarding/AgentUpdateRequired";
+import { AgentUpdating } from "@/components/onboarding/AgentUpdating";
 import { ActivityBar } from "./ActivityBar";
 import { NavPanel } from "./NavPanel";
 import { StatusBar } from "./StatusBar";
@@ -32,7 +33,7 @@ export function AppShell() {
     reindexAllKbs,
     pushLog,
   } = useAppState();
-  const { check, apply, ensureConfigured } = useAppUpdate(pushLog);
+  const { check, apply, ensureConfigured, progress } = useAppUpdate(pushLog);
   const bootstrapped = useRef(false);
   const reindexed = useRef(false);
   const autoUpdated = useRef(false);
@@ -196,11 +197,18 @@ export function AppShell() {
       </div>
       <StatusBar />
       <DialogHost />
-      {updateBlocked && (
-        <AgentUpdateRequired
-          status={updateBlocked}
-          onRetry={updateBlocked.configured ? apply : undefined}
-        />
+      {/* Live "Update in progress" screen while a patch downloads/applies and
+          the agent restarts headlessly. Takes precedence over the reinstall
+          gate so an in-flight auto-update is never hidden behind it. */}
+      {progress ? (
+        <AgentUpdating progress={progress} />
+      ) : (
+        updateBlocked && (
+          <AgentUpdateRequired
+            status={updateBlocked}
+            onRetry={updateBlocked.configured ? apply : undefined}
+          />
+        )
       )}
     </div>
   );
