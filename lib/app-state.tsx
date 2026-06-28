@@ -316,15 +316,8 @@ export function AppStateProvider({
   const runKbIndexOnce = useCallback(
     async (project: string) => {
       setKbState("indexing");
-      setKbMessage("KB indexing... starting");
+      setKbMessage("Indexing");
       setKbProgress(null);
-      const start = Date.now();
-      const fmtDuration = (secs: number) => {
-        const s = Math.max(0, Math.floor(secs));
-        if (s < 60) return `${s}s`;
-        const m = Math.floor(s / 60);
-        return `${m}m ${String(s % 60).padStart(2, "0")}s`;
-      };
       try {
         const status = await agent.kbStatus(project);
         if (!status.documents || status.documents.length === 0) {
@@ -336,27 +329,13 @@ export function AppStateProvider({
         const res = await agent.kbIndex(project, {
           onLog: (line) => pushLog(agentLogLevel(line), line),
           onProgress: (p) => {
-            const { current: done, total, stage } = p;
+            const { current: done, total } = p;
+            setKbMessage("Indexing");
             if (!total || total <= 0) {
-              setKbMessage("KB indexing... scanning");
               setKbProgress(null);
               return;
             }
-            if (done >= total) {
-              setKbMessage("KB indexing... finalizing");
-              setKbProgress(1);
-              return;
-            }
-            const elapsed = (Date.now() - start) / 1000;
-            const pct = Math.round((100 * done) / Math.max(total, 1));
-            const remaining = done > 0 ? (elapsed / done) * (total - done) : 0;
-            const timing =
-              done > 0
-                ? `${fmtDuration(elapsed)} / ${fmtDuration(remaining)} - ${pct}%`
-                : `${fmtDuration(elapsed)} / -- - ${pct}%`;
-            const name = stage && stage !== "indexing" ? ` (${stage})` : "";
-            setKbProgress(done / total);
-            setKbMessage(`KB indexing ${done}/${total}${name} | ${timing}`);
+            setKbProgress(done >= total ? 1 : done / total);
           },
         });
         if (res.n_chunks > 0) {

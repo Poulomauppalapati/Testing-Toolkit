@@ -122,21 +122,28 @@ export function StatusBar() {
           {kbMessage}
         </span>
         {kbState === "indexing" && (
-          <span
-            className="h-1.5 w-28 overflow-hidden rounded-full bg-[#2d313c]"
-            aria-label="Knowledge base indexing progress"
-          >
+          <>
             <span
-              className={`block h-full rounded-full bg-[#f59e0b] transition-[width] duration-200 ease-out ${
-                kbProgress === null ? "tt-progress-indeterminate w-2/5" : ""
-              }`}
-              style={
-                kbProgress === null
-                  ? undefined
-                  : { width: `${Math.round(kbProgress * 100)}%` }
-              }
-            />
-          </span>
+              className="h-1.5 w-28 overflow-hidden rounded-full bg-[#2d313c]"
+              aria-label="Knowledge base indexing progress"
+            >
+              <span
+                className={`block h-full rounded-full bg-[#f59e0b] transition-[width] duration-200 ease-out ${
+                  kbProgress === null ? "tt-progress-indeterminate w-2/5" : ""
+                }`}
+                style={
+                  kbProgress === null
+                    ? undefined
+                    : { width: `${Math.round(kbProgress * 100)}%` }
+                }
+              />
+            </span>
+            {kbProgress !== null && (
+              <span className="tabular-nums text-[#8a8f99]">
+                {Math.round(kbProgress * 100)}%
+              </span>
+            )}
+          </>
         )}
       </div>
       <div className="flex items-center gap-4">
