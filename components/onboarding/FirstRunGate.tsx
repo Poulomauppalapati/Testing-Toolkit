@@ -10,30 +10,45 @@ import {
   useConnectionFields,
 } from "@/components/dialogs/ConnectionFields";
 
+/**
+ * Mirrors the desktop startup flow (main._bootstrap): the main window is
+ * ALWAYS shown, and when the app is not yet configured a SetupWizard is shown
+ * as a modal on top of it. Skipping the wizard leaves the user in the app in
+ * manual mode with an empty board — it never blocks access to the shell.
+ */
 export function FirstRunGate({ children }: { children: ReactNode }) {
   const { settings, setSettings } = useAppState();
+  const [dismissed, setDismissed] = useState(false);
 
-  if (settings?.configured) return <>{children}</>;
+  const showWizard = !settings?.configured && !dismissed;
 
-  return <SetupWizard onDone={(s) => setSettings(s)} />;
+  return (
+    <>
+      {children}
+      {showWizard && (
+        <SetupWizard
+          onConnected={(s) => setSettings(s)}
+          onSkip={() => setDismissed(true)}
+        />
+      )}
+    </>
+  );
 }
 
 function SetupWizard({
-  onDone,
+  onConnected,
+  onSkip,
 }: {
-  onDone: (s: Awaited<ReturnType<typeof agent.getSettings>>) => void;
+  onConnected: (s: Awaited<ReturnType<typeof agent.getSettings>>) => void;
+  onSkip: () => void;
 }) {
-  const { values, setValues } = useConnectionFields({
-    base_url: "https://api.anthropic.com",
-  });
+  // Match the desktop first-run form: every field starts empty so the
+  // Base URL shows its placeholder and is directly editable (the backend
+  // supplies the default endpoint when none is submitted on save).
+  const { values, setValues } = useConnectionFields();
   const [busy, setBusy] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const log = (m: string) => setLogs((p) => [...p, m]);
-
-  const refresh = async () => {
-    const s = await agent.getSettings();
-    onDone(s);
-  };
 
   const connect = async () => {
     if (!values.pat.trim() || !values.organization.trim()) {
@@ -52,7 +67,8 @@ function SetupWizard({
         return;
       }
       log("[SUCCESS] ADO connected.");
-      await refresh();
+      const s = await agent.getSettings();
+      onConnected(s);
     } catch (e) {
       log(`[ERROR] Setup failed: ${(e as Error).message}`);
       setBusy(false);
@@ -64,13 +80,13 @@ function SetupWizard({
     try {
       await agent.saveSettings(toPayload(values));
     } catch {
-      /* ignore */
+      /* ignore — manual mode does not require valid credentials */
     }
-    await refresh().catch(() => setBusy(false));
+    onSkip();
   };
 
   return (
-    <div className="flex h-full items-center justify-center overflow-auto bg-background px-6 py-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-auto bg-black/60 px-6 py-8">
       <motion.div
         initial={{ opacity: 0, scale: 0.97 }}
         animate={{ opacity: 1, scale: 1 }}
