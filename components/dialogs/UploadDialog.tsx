@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { FileText, RefreshCw } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
-import { agent, type ArtifactFile } from "@/lib/agent-client";
+import { agent, agentLogLevel, type ArtifactFile } from "@/lib/agent-client";
 import { useAppState } from "@/lib/app-state";
 
 export function UploadDialog({ onClose }: { onClose: () => void }) {
@@ -37,12 +37,12 @@ export function UploadDialog({ onClose }: { onClose: () => void }) {
     setStatus("Creating Test Cases in ADO...");
     pushLog("INFO", `Uploading reviewed test cases to ADO...`);
     try {
-      const res = await agent.uploadToAdo({
-        project: currentProject,
-        xlsx_path: selected,
-      });
-      setStatus(`Created ${res.created} Test Case(s), skipped ${res.skipped}.`);
-      pushLog("SUCCESS", `Created ${res.created} Test Case(s) in ADO.`);
+      const res = await agent.pushReviewedXlsx(
+        { project: currentProject, xlsx_path: selected },
+        { onLog: (line) => pushLog(agentLogLevel(line), line) }
+      );
+      setStatus(`Created ${res.n_ok} Test Case(s), ${res.n_failed} failed.`);
+      pushLog("SUCCESS", `Created ${res.n_ok} Test Case(s) in ADO.`);
     } catch (e) {
       setStatus(`Upload failed: ${(e as Error).message}`);
       pushLog("ERROR", `Upload failed: ${(e as Error).message}`);

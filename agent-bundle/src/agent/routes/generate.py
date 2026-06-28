@@ -315,6 +315,53 @@ async def push_test_cases(req: PushRequest) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------
+# Push from a reviewed Excel on disk (honors reviewer edits)
+# ---------------------------------------------------------------------
+class PushXlsxRequest(BaseModel):
+    project: str
+    xlsx_path: str
+    area_override: str = ""
+    iteration_override: str = ""
+    inherit_paths: bool = True
+    test_category_field: str = "Custom.TestCategory"
+
+
+@router.post("/push-xlsx")
+async def push_test_cases_from_xlsx(req: PushXlsxRequest) -> dict[str, str]:
+    """Re-read a reviewer-edited .xlsx back into a payload and push it to ADO.
+
+    This mirrors the desktop "Push to ADO" button, which re-reads the edited
+    review spreadsheet (so Skip=Yes rows and manual title/step edits are
+    honored) instead of pushing the originally generated payload.
+    """
+    from testgen.testcase_excel import ExcelParseError, xlsx_to_payload
+
+    pat, org = _require_pat_org()
+    path = Path(req.xlsx_path)
+    if not path.exists():
+        raise HTTPException(404, f"Reviewed Excel not found: {req.xlsx_path}")
+    try:
+        payload, _warnings = xlsx_to_payload(path)
+    except ExcelParseError as e:
+        raise HTTPException(400, f"Could not read reviewed Excel: {e}")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Could not read reviewed Excel: {e}")
+
+    push_req = PushRequest(
+        project=req.project,
+        payload=payload,
+        area_override=req.area_override,
+        iteration_override=req.iteration_override,
+        inherit_paths=req.inherit_paths,
+        test_category_field=req.test_category_field,
+    )
+    job = JOBS.create("push")
+    job.log(f"[INFO] Creating test cases from {path.name}...")
+    asyncio.create_task(_run_push(job, push_req, pat, org))
+    return {"job_id": job.id}
+
+
+# ---------------------------------------------------------------------
 # Reviewer Excel download
 # ---------------------------------------------------------------------
 @router.get("/excel/{job_id}")

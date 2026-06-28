@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Modal } from "@/components/ui/modal";
-import { agent } from "@/lib/agent-client";
+import { agent, agentLogLevel, type JobProgress } from "@/lib/agent-client";
 import { useAppState } from "@/lib/app-state";
 
 export function PackageDialog({ onClose }: { onClose: () => void }) {
@@ -11,6 +11,7 @@ export function PackageDialog({ onClose }: { onClose: () => void }) {
   const [manualIds, setManualIds] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  const [progress, setProgress] = useState<JobProgress | null>(null);
   const [result, setResult] = useState<{ dir: string; n: number } | null>(null);
 
   const usingSelection = selectedIds.length > 0;
@@ -27,20 +28,36 @@ export function PackageDialog({ onClose }: { onClose: () => void }) {
     const ids = parseIds();
     if (!currentProject || ids.length === 0) return;
     setBusy(true);
+    setProgress(null);
     setStatus(`Packaging ${ids.length} work item(s)...`);
     pushLog("INFO", `Packaging ${ids.length} work item(s) into PDFs...`);
     try {
-      const res = await agent.packagePdfs({ project: currentProject, wi_ids: ids });
-      setResult({ dir: res.output_dir, n: res.n_pdfs });
-      setStatus(`Packaged ${res.n_pdfs} PDF(s).`);
-      pushLog("SUCCESS", `Packaged ${res.n_pdfs} PDF(s): ${res.output_dir}`);
+      const res = await agent.packagePdfs(
+        { project: currentProject, wi_ids: ids },
+        {
+          onLog: (line) => pushLog(agentLogLevel(line), line),
+          onProgress: (p) => setProgress(p),
+        }
+      );
+      setResult({ dir: res.output_dir, n: res.n_package_ok });
+      setStatus(`Packaged ${res.n_package_ok} work item(s).`);
+      pushLog(
+        "SUCCESS",
+        `Packaged ${res.n_package_ok} work item(s): ${res.output_dir}`
+      );
     } catch (e) {
       setStatus(`Packaging failed: ${(e as Error).message}`);
       pushLog("ERROR", `Packaging failed: ${(e as Error).message}`);
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
+
+  const progressPct =
+    progress && progress.total > 0
+      ? Math.round((progress.current / progress.total) * 100)
+      : null;
 
   return (
     <Modal
@@ -52,7 +69,10 @@ export function PackageDialog({ onClose }: { onClose: () => void }) {
       footer={
         <>
           {status && (
-            <span className="mr-auto text-xs text-muted-foreground">{status}</span>
+            <span className="mr-auto text-xs text-muted-foreground">
+              {status}
+              {progressPct != null && ` · ${progress?.stage} ${progressPct}%`}
+            </span>
           )}
           <button className="tt-btn-ghost" onClick={onClose} disabled={busy}>
             Close
@@ -102,8 +122,13 @@ export function PackageDialog({ onClose }: { onClose: () => void }) {
 
         {result && (
           <div className="rounded-lg border border-[#1aab5c]/40 bg-[#0d2a1c] p-3 text-sm">
-            <p className="text-[#22c46a]">Packaged {result.n} PDF(s).</p>
+            <p className="text-[#22c46a]">
+              Packaged {result.n} work item(s). PDFs written to:
+            </p>
             <code className="break-all text-xs text-[#bfc4cc]">{result.dir}</code>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Open the Outputs tab on a work item to download the packets.
+            </p>
           </div>
         )}
       </div>
