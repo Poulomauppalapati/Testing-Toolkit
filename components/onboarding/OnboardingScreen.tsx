@@ -66,9 +66,11 @@ export function OnboardingScreen({
   function handleDownload() {
     // Download the production installer generated server-side by /api/installer.
     // The route embeds a read-only token and streams a tiny launcher that pulls
-    // the agent bundle from GitHub at install time.
+    // the agent bundle from GitHub at install time. On a reinstall we request a
+    // fresh download (fresh=1) so the installer ignores any cached bundle parts
+    // and re-downloads everything from scratch.
     const link = document.createElement("a");
-    link.href = `/api/installer?os=${os}`;
+    link.href = `/api/installer?os=${os}${reinstall ? "&fresh=1" : ""}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

@@ -44,6 +44,7 @@ export function buildWindowsInstaller(
   repo: string,
   ref: string,
   token: string,
+  fresh = false,
 ): string {
   // Escape single quotes for safe embedding in PowerShell single-quoted strings.
   const psRepo = repo.replace(/'/g, "''")
@@ -71,6 +72,9 @@ $Concurrency = 4
 if ($env:TT_CONCURRENCY -match '^[1-9][0-9]*$') { $Concurrency = [int]$env:TT_CONCURRENCY }
 $MaxRetries  = 6
 $Verbose = ($env:TT_VERBOSE -eq '1')
+# Fresh install: ignore any previously downloaded parts and pull everything
+# again from scratch. Injected by the server for reinstall downloads.
+$Fresh = ${fresh ? "$true" : "$false"}
 
 # --- Console + transcript logging ----------------------------------------
 $LogFile = Join-Path $env:TEMP ('TestingToolkit-installer-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
@@ -113,6 +117,13 @@ try {
   New-Item -ItemType Directory -Force -Path $work | Out-Null
   # Stable cache keyed by ref => completed parts survive a re-run (true resume).
   $cacheRoot = Join-Path $env:TEMP 'TestingToolkit-cache'
+  # On a fresh (reinstall) download, wipe any previously downloaded parts so
+  # nothing stale is reused and the whole bundle is fetched again.
+  if ($Fresh) {
+    Write-Host "  Fresh reinstall: clearing any previously downloaded parts." -ForegroundColor Yellow
+    Write-Dbg ("purging cache " + $cacheRoot)
+    try { Remove-Item -Recurse -Force -LiteralPath $cacheRoot -ErrorAction SilentlyContinue } catch {}
+  }
   $partsDir = Join-Path $cacheRoot ($Ref -replace '[^A-Za-z0-9_.-]', '_')
   New-Item -ItemType Directory -Force -Path $partsDir | Out-Null
   Write-Dbg ("work dir:  " + $work)
@@ -400,11 +411,13 @@ export function buildUnixInstaller(
   repo: string,
   ref: string,
   token: string,
+  fresh = false,
 ): string {
   // Escape single quotes for safe embedding in bash single-quoted strings.
   const shRepo = repo.replace(/'/g, "'\\''")
   const shRef = ref.replace(/'/g, "'\\''")
   const shToken = token.replace(/'/g, "'\\''")
+  const shFresh = fresh ? "1" : "0"
 
   return `#!/usr/bin/env bash
 set -euo pipefail
@@ -412,6 +425,7 @@ set -euo pipefail
 REPO='${shRepo}'
 REF='${shRef}'
 TOKEN='${shToken}'
+FRESH='${shFresh}'
 
 echo ""
 echo "  Testing Toolkit - offline agent installer"
@@ -428,12 +442,13 @@ if [ -z "$PY" ]; then
   exit 1
 fi
 
-exec "$PY" - "$REPO" "$REF" "$TOKEN" <<'TT_PYEOF'
+exec "$PY" - "$REPO" "$REF" "$TOKEN" "$FRESH" <<'TT_PYEOF'
 import sys, os, json, hashlib, tempfile, shutil, zipfile, subprocess, time, platform, datetime
 import urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 repo, ref, token = sys.argv[1], sys.argv[2], sys.argv[3]
+fresh = len(sys.argv) > 4 and sys.argv[4] == "1"
 api = "https://api.github.com/repos/" + repo + "/contents/"
 AUTH_HEADERS = {
     "Authorization": "Bearer " + token,
@@ -514,7 +529,14 @@ try:
     work = tempfile.mkdtemp(prefix="TestingToolkit_")
     # Stable cache keyed by ref => completed parts survive a re-run (resume).
     safe_ref = "".join(c if (c.isalnum() or c in "_.-") else "_" for c in ref)
-    parts_dir = os.path.join(tempfile.gettempdir(), "TestingToolkit-cache", safe_ref)
+    cache_root = os.path.join(tempfile.gettempdir(), "TestingToolkit-cache")
+    # On a fresh (reinstall) download, wipe any previously downloaded parts so
+    # nothing stale is reused and the whole bundle is fetched again.
+    if fresh:
+        log("    Fresh reinstall: clearing any previously downloaded parts.")
+        dbg("purging cache %s" % cache_root)
+        shutil.rmtree(cache_root, ignore_errors=True)
+    parts_dir = os.path.join(cache_root, safe_ref)
     os.makedirs(parts_dir, exist_ok=True)
     dbg("work dir: %s" % work)
     dbg("parts cache: %s" % parts_dir)

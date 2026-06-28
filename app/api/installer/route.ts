@@ -39,17 +39,20 @@ export async function GET(req: NextRequest) {
 
   // Default to Windows for backward compatibility (?os=windows|mac|linux).
   const os = (req.nextUrl.searchParams.get("os") || "windows").toLowerCase()
+  // ?fresh=1 (used by the reinstall flow) makes the installer ignore any
+  // previously downloaded bundle parts and re-download everything from scratch.
+  const fresh = req.nextUrl.searchParams.get("fresh") === "1"
 
   let script: string
   let filename: string
   if (os === "mac" || os === "linux") {
-    script = buildUnixInstaller(REPO, REF, token)
+    script = buildUnixInstaller(REPO, REF, token, fresh)
     filename =
       os === "mac"
         ? "Testing-Toolkit-Installer.command"
         : "Testing-Toolkit-Installer.sh"
   } else {
-    script = buildWindowsInstaller(REPO, REF, token)
+    script = buildWindowsInstaller(REPO, REF, token, fresh)
     filename = "Testing-Toolkit-Installer.cmd"
   }
 
