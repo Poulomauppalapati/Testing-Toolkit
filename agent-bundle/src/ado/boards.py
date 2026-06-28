@@ -729,6 +729,22 @@ def download_attachment_sync(
     return asyncio.run(download_attachment_async(org, project, url, dest, cfg))
 
 
+async def fetch_ado_blob_async(
+    org: str, project: str, url: str, cfg: RuntimeConfig,
+) -> tuple[bytes, str]:
+    """Fetch an authenticated ADO blob (inline image or attachment) fully into
+    memory using the stored PAT. Returns (data, content_type). Used by the web
+    proxy so the browser can render/download media it cannot authenticate to."""
+    dcfg = _detail_cfg(org, project, cfg)
+    async with _client(cfg) as client:
+        r = await client.get(
+            url, timeout=httpx.Timeout(dcfg.download_timeout_sec)
+        )
+        r.raise_for_status()
+        ctype = r.headers.get("Content-Type", "application/octet-stream")
+        return r.content, ctype
+
+
 async def fetch_details_async(
     org: str, project: str, wi_ids: list[int], cfg: RuntimeConfig,
     on_progress: Callable[[int, int], None] | None = None,

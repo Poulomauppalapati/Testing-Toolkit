@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, FileText } from "lucide-react";
+import {
+  RefreshCw,
+  FileText,
+  Download,
+  ExternalLink,
+  ImageIcon,
+  Link as LinkIcon,
+} from "lucide-react";
 import {
   agent,
   TC_TYPES,
@@ -9,6 +16,7 @@ import {
   type TcType,
   type WorkItemDetail,
   type ArtifactFile,
+  type Attachment,
 } from "@/lib/agent-client";
 import { useAppState } from "@/lib/app-state";
 import { COLOR_MUTED } from "@/lib/board-utils";
@@ -180,15 +188,31 @@ function DetailContent({
 
       {detail.comments_html?.length > 0 && (
         <div className="flex flex-col gap-2">
-          <h4 className="text-sm font-bold text-[#edf0f5]">Comments</h4>
+          <h4 className="text-sm font-bold text-[#edf0f5]">
+            {detail.comments_html.length} Comment
+            {detail.comments_html.length === 1 ? "" : "s"}
+          </h4>
           {detail.comments_html.map(([who, when, html], i) => (
-            <div key={i} className="flex flex-col gap-0.5">
-              <div className="text-xs text-[#7abaff]">
-                {who}{" "}
-                <span className="text-[#7a7f8a]">{when}</span>
+            <div
+              key={i}
+              className="flex flex-col gap-1.5 rounded-[10px] border border-[#2d313c] bg-[#1a1d25] p-3"
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#2d313c] text-[10px] font-bold text-[#bfc4cc]"
+                  aria-hidden="true"
+                >
+                  {initials(who)}
+                </span>
+                <span className="text-sm font-semibold text-[#7abaff]">
+                  {who}
+                </span>
+                <span className="text-xs text-[#7a7f8a]">
+                  commented {fmtComment(when)}
+                </span>
               </div>
               <div
-                className="tt-html text-sm text-[#bfc4cc]"
+                className="tt-html text-sm leading-relaxed text-[#d6dae2] [&_a]:text-[#5ba8ff] [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded-md [&_img]:border [&_img]:border-[#2d313c]"
                 dangerouslySetInnerHTML={{ __html: html }}
               />
             </div>
@@ -197,39 +221,120 @@ function DetailContent({
       )}
 
       {detail.attachments?.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <h4 className="text-sm font-bold text-[#edf0f5]">Attachments</h4>
-          {detail.attachments.map((a, i) => (
-            <a
-              key={`${a.name}-${i}`}
-              href={a.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 text-sm text-[#5ba8ff] hover:underline"
-            >
-              <FileText className="h-3.5 w-3.5" /> {a.name}
-            </a>
-          ))}
+        <div className="flex flex-col gap-2">
+          <h4 className="text-sm font-bold text-[#edf0f5]">
+            Attachments ({detail.attachments.length})
+          </h4>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {detail.attachments.map((a, i) => (
+              <AttachmentCard key={`${a.name}-${i}`} attachment={a} />
+            ))}
+          </div>
         </div>
       )}
 
       {detail.hyperlinks?.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <h4 className="text-sm font-bold text-[#edf0f5]">Links</h4>
-          {detail.hyperlinks.map(([label, url], i) => (
-            <a
-              key={`${label}-${i}`}
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-[#5ba8ff] hover:underline"
-            >
-              {label || url}
-            </a>
-          ))}
+        <div className="flex flex-col gap-2">
+          <h4 className="text-sm font-bold text-[#edf0f5]">
+            Links ({detail.hyperlinks.length})
+          </h4>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {detail.hyperlinks.map(([label, url], i) => (
+              <a
+                key={`${label}-${i}`}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 rounded-[10px] border border-[#2d313c] bg-[#1a1d25] p-2.5 text-sm text-[#5ba8ff] transition-colors hover:border-[#3a4150] hover:bg-[#20242d]"
+                title={url}
+              >
+                <LinkIcon className="h-4 w-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">{label || url}</span>
+                <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[#7a7f8a]" />
+              </a>
+            ))}
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+/** Initials for a comment avatar, e.g. "Amy Domenick (US)" → "AD". */
+function initials(name: string): string {
+  const cleaned = name.replace(/\([^)]*\)/g, "").trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/** ADO comment dates are ISO strings; render a short, friendly date. */
+function fmtComment(when: string): string {
+  if (!when) return "";
+  const d = new Date(when);
+  if (Number.isNaN(d.getTime())) return when;
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|bmp|webp|svg|tiff?)$/i;
+
+/** Format a byte count as a short human string. */
+function fmtSize(bytes: number): string {
+  if (!bytes || bytes < 0) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let n = bytes;
+  let u = 0;
+  while (n >= 1024 && u < units.length - 1) {
+    n /= 1024;
+    u++;
+  }
+  return `${n >= 10 || u === 0 ? Math.round(n) : n.toFixed(1)} ${units[u]}`;
+}
+
+function AttachmentCard({ attachment }: { attachment: Attachment }) {
+  const isImage = IMAGE_EXT_RE.test(attachment.name);
+  return (
+    <a
+      href={attachment.downloadUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      download={attachment.name}
+      className="group flex flex-col overflow-hidden rounded-[10px] border border-[#2d313c] bg-[#1a1d25] transition-colors hover:border-[#3a4150] hover:bg-[#20242d]"
+      title={`Download ${attachment.name}`}
+    >
+      <div className="flex h-24 items-center justify-center bg-[#0f1218]">
+        {isImage ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={attachment.downloadUrl || "/placeholder.svg"}
+            alt={attachment.name}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <FileText className="h-8 w-8 text-[#7a7f8a]" />
+        )}
+      </div>
+      <div className="flex items-center gap-1.5 p-2">
+        {isImage ? (
+          <ImageIcon className="h-3.5 w-3.5 shrink-0 text-[#7a7f8a]" />
+        ) : (
+          <Download className="h-3.5 w-3.5 shrink-0 text-[#7a7f8a]" />
+        )}
+        <span className="min-w-0 flex-1 truncate text-xs text-[#cfd4dc]">
+          {attachment.name}
+        </span>
+        {attachment.size > 0 && (
+          <span className="shrink-0 text-[10px] text-[#7a7f8a]">
+            {fmtSize(attachment.size)}
+          </span>
+        )}
+      </div>
+    </a>
   );
 }
 
@@ -238,7 +343,7 @@ function Section({ title, html }: { title: string; html: string }) {
     <div className="flex flex-col gap-1.5">
       <h4 className="text-sm font-bold text-[#edf0f5]">{title}</h4>
       <div
-        className="tt-html text-sm leading-relaxed text-[#bfc4cc] [&_img]:max-w-full [&_a]:text-[#5ba8ff]"
+        className="tt-html text-sm leading-relaxed text-[#bfc4cc] [&_a]:text-[#5ba8ff] [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded-md [&_img]:border [&_img]:border-[#2d313c]"
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>

@@ -10,10 +10,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 router = APIRouter()
+
+# Hosts we are willing to proxy authenticated blobs from. ADO attachment and
+# inline-image URLs always live on one of these.
+_ALLOWED_BLOB_HOSTS = ("dev.azure.com", "visualstudio.com", "azure.com")
 
 
 def _cfg_or_400(project: str | None = None):
@@ -165,12 +170,18 @@ async def work_item_detail(project: str, wi_id: int) -> dict[str, Any]:
         "tags": list(d.tags),
         "description_text": d.description_text,
         "acceptance_text": d.acceptance_text,
+        "description_html": d.description_html,
+        "acceptance_html": d.acceptance_html,
         "comments": [
             {"when": when, "author": author, "text": text}
             for when, author, text in d.comments
         ],
+        "comments_html": [
+            {"when": when, "author": author, "html": html}
+            for when, author, html in d.comments_html
+        ],
         "attachments": [
-            {"name": a.name, "url": a.url, "size": a.size}
+            {"name": a.name, "url": a.url, "size": a.size, "comment": a.comment}
             for a in d.attachments
         ],
         "hyperlinks": [{"url": url, "comment": comment} for url, comment in d.hyperlinks],
@@ -178,3 +189,33 @@ async def work_item_detail(project: str, wi_id: int) -> dict[str, Any]:
             {"name": name, "wi_id": rid, "url": url} for name, rid, url in d.related
         ],
     }
+
+
+@router.get("/blob")
+async def ado_blob(
+    project: str = Query(...),
+    url: str = Query(...),
+    download: str | None = Query(None),
+) -> Response:
+    """Proxy an authenticated ADO blob (inline image or attachment) using the
+    stored PAT, so the browser can display or download it. Only ADO-hosted URLs
+    are allowed. When ``download`` is provided, the response is sent as an
+    attachment with that filename."""
+    from urllib.parse import urlparse
+    from ado.boards import fetch_ado_blob_async
+
+    host = (urlparse(url).hostname or "").lower()
+    if not any(host == h or host.endswith("." + h) for h in _ALLOWED_BLOB_HOSTS):
+        raise HTTPException(400, "Refusing to proxy a non-Azure-DevOps URL")
+
+    cfg, org = _cfg_or_400(project)
+    try:
+        data, ctype = await fetch_ado_blob_async(org, project, url, cfg)
+    except Exception as e:
+        raise HTTPException(502, str(e))
+
+    headers: dict[str, str] = {"Cache-Control": "private, max-age=3600"}
+    if download:
+        safe = download.replace('"', "").replace("\\", "")
+        headers["Content-Disposition"] = f'attachment; filename="{safe}"'
+    return Response(content=data, media_type=ctype, headers=headers)

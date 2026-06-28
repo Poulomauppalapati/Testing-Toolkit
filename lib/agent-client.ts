@@ -107,6 +107,8 @@ export interface Attachment {
   url: string;
   size: number;
   comment?: string;
+  /** Browser-loadable URL that streams the blob via the agent (PAT-authed). */
+  downloadUrl: string;
 }
 
 export interface WorkItemDetail {
@@ -323,10 +325,36 @@ interface RawWorkItemDetail {
   tags: string[];
   description_text: string;
   acceptance_text: string;
+  description_html?: string;
+  acceptance_html?: string;
   comments: Array<{ when: string; author: string; text: string }>;
-  attachments: Array<{ name: string; url: string; size: number }>;
+  comments_html?: Array<{ when: string; author: string; html: string }>;
+  attachments: Array<{ name: string; url: string; size: number; comment?: string }>;
   hyperlinks: Array<{ url: string; comment: string }>;
   related: Array<{ name: string; wi_id: number; url: string }>;
+}
+
+// Hosts whose <img>/attachment blobs require the stored PAT and must be proxied
+// through the agent so the browser can load them.
+const ADO_BLOB_HOST_RE = /(?:dev\.azure\.com|visualstudio\.com|\.azure\.com)/i;
+
+/** Build a browser-loadable URL that streams an authenticated ADO blob. */
+function adoBlobUrl(project: string, url: string, filename?: string): string {
+  const q = new URLSearchParams({ project, url });
+  if (filename) q.set("download", filename);
+  return `${AGENT_URL}/ado/blob?${q.toString()}`;
+}
+
+/** Rewrite ADO-hosted <img src> values to load through the agent blob proxy. */
+function rewriteHtmlMedia(html: string, project: string): string {
+  if (!html) return "";
+  return html.replace(/<img\b[^>]*>/gi, (tag) => {
+    const m = /\ssrc=("|')(.*?)\1/i.exec(tag);
+    if (!m) return tag;
+    const src = m[2];
+    if (!/^https?:/i.test(src) || !ADO_BLOB_HOST_RE.test(src)) return tag;
+    return tag.replace(m[0], ` src="${adoBlobUrl(project, src)}"`);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -445,15 +473,35 @@ export const agent = {
       iteration_path: d.iteration_path,
       assigned_to: d.assigned_to,
       tags: d.tags ?? [],
-      description_html: textToHtml(d.description_text),
-      acceptance_html: textToHtml(d.acceptance_text),
-      comments_html: (d.comments ?? []).map(
-        (c) => [c.author, c.when, textToHtml(c.text)] as [string, string, string]
+      description_html: rewriteHtmlMedia(
+        d.description_html || textToHtml(d.description_text),
+        project
+      ),
+      acceptance_html: rewriteHtmlMedia(
+        d.acceptance_html || textToHtml(d.acceptance_text),
+        project
+      ),
+      comments_html: (
+        d.comments_html ??
+        (d.comments ?? []).map((c) => ({
+          when: c.when,
+          author: c.author,
+          html: textToHtml(c.text),
+        }))
+      ).map(
+        (c) =>
+          [c.author, c.when, rewriteHtmlMedia(c.html, project)] as [
+            string,
+            string,
+            string
+          ]
       ),
       attachments: (d.attachments ?? []).map((a) => ({
         name: a.name,
         url: a.url,
         size: a.size,
+        comment: a.comment,
+        downloadUrl: adoBlobUrl(project, a.url, a.name),
       })),
       hyperlinks: (d.hyperlinks ?? []).map(
         (h) => [h.comment || h.url, h.url] as [string, string]
