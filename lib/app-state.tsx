@@ -335,7 +335,10 @@ export function AppStateProvider({
 
   const reindexAllKbs = useCallback(async () => {
     setLogVisible(true);
-    pushLog("INFO", "Reinstall: re-indexing all knowledge bases...");
+    pushLog(
+      "INFO",
+      "Reinstall: caches cleared, artifacts retained — re-indexing all knowledge bases..."
+    );
     let names: string[] = [];
     try {
       names = await agent.listProjects();

@@ -221,7 +221,16 @@ function ReinstallConfirm({
           <li className="flex gap-2">
             <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
             <span className="text-muted-foreground">
-              All your{" "}
+              Your{" "}
+              <b className="text-foreground">generated artifacts (outputs)</b>{" "}
+              are kept — nothing you&apos;ve produced is deleted.
+            </span>
+          </li>
+          <li className="flex gap-2">
+            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+            <span className="text-muted-foreground">
+              Transient <b className="text-foreground">caches are cleared</b>{" "}
+              (KB embedding/vector cache and stale build cache), then all your{" "}
               <b className="text-foreground">knowledge bases are re-indexed</b>{" "}
               automatically once the agent restarts. This can take a while for
               large KBs.
