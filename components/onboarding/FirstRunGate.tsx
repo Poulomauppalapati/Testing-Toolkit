@@ -96,13 +96,18 @@ function SetupWizard({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-auto bg-black/60 px-6 py-8">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.97 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.2 }}
-        className="tt-dialog w-full max-w-2xl p-7"
-      >
+    // Scrollable overlay: a min-h-full flex wrapper keeps the dialog centered
+    // when it fits and lets the whole panel scroll (top reachable) when the
+    // form is taller than the viewport — otherwise the step label/title get
+    // clipped above the fold on short screens.
+    <div className="tt-overlay fixed inset-0 z-50 overflow-y-auto">
+      <div className="flex min-h-full items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.97 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.2 }}
+          className="tt-dialog my-auto w-full max-w-xl p-6"
+        >
         <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Setup · Step 2 of 4
         </span>
@@ -143,6 +148,7 @@ function SetupWizard({
           </button>
         </div>
       </motion.div>
+      </div>
     </div>
   );
 }
