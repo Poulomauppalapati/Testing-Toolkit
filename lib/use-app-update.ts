@@ -14,6 +14,7 @@
 
 import { useCallback, useState } from "react";
 import { agent, type UpdateStatus } from "./agent-client";
+import { compareVersions } from "./agent-version";
 
 type Pushed = (level: "INFO" | "SUCCESS" | "WARN" | "ERROR", text: string) => void;
 
@@ -96,17 +97,39 @@ export function useAppUpdate(pushLog?: Pushed) {
       setPhase("restarting");
       const back = await waitForReconnect();
       setPhase("done");
-      if (back) {
-        log("SUCCESS", "Update applied. Reloading the app...");
-        await new Promise((r) => setTimeout(r, 600));
-        if (typeof window !== "undefined") window.location.reload();
-      } else {
+      if (!back) {
         log(
           "WARN",
           "Update applied, but the agent is taking a while to restart. " +
             "Reload the page in a moment."
         );
+        return true;
       }
+
+      // Post-apply verification: confirm the restarted agent actually reports
+      // the expected version. If it didn't advance, the apply silently didn't
+      // take effect — treat that as a failure so the caller can fall through to
+      // the block-and-reinstall path instead of believing we're up to date.
+      if (r.latest) {
+        try {
+          const h = await agent.health();
+          if (compareVersions(h.version, r.latest) < 0) {
+            log(
+              "ERROR",
+              `Update did not take effect (agent still v${h.version}, expected v${r.latest}).`
+            );
+            setPhase("idle");
+            return false;
+          }
+        } catch {
+          // Couldn't read health to verify — fall through and reload anyway;
+          // the next launch's handshake will re-evaluate.
+        }
+      }
+
+      log("SUCCESS", "Update applied. Reloading the app...");
+      await new Promise((r) => setTimeout(r, 600));
+      if (typeof window !== "undefined") window.location.reload();
       return true;
     } catch (e) {
       log("ERROR", `Update failed: ${(e as Error).message}`);

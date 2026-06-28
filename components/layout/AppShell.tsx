@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAgent } from "@/lib/agent-context";
 import { useAppState } from "@/lib/app-state";
 import { useAppUpdate } from "@/lib/use-app-update";
+import { useWebFreshness } from "@/lib/use-web-freshness";
+import { isAgentOutdated, REQUIRED_AGENT_VERSION } from "@/lib/agent-version";
 import {
   getPreferences,
   setPendingReindexPref,
@@ -21,7 +23,7 @@ import { LogPanel } from "@/components/board/LogPanel";
 import { DialogHost } from "@/components/dialogs/DialogHost";
 
 export function AppShell() {
-  const { status } = useAgent();
+  const { status, health } = useAgent();
   const {
     navVisible,
     logVisible,
@@ -38,6 +40,13 @@ export function AppShell() {
   // whole app with AgentUpdateRequired until the user reinstalls.
   const [updateBlocked, setUpdateBlocked] = useState<UpdateStatus | null>(null);
 
+  // (B) Keep the WEB app itself current: reload the tab when a newer deployment
+  // ships. The orchestrator must be fresh for the other guarantees to hold.
+  useWebFreshness();
+
+  // The agent version reported by /health, used for the (A) handshake below.
+  const agentVersion = health?.version ?? null;
+
   // Bootstrap: once connected & configured, load the project list (desktop
   // main.py _bootstrap -> reload_projects).
   useEffect(() => {
@@ -51,44 +60,97 @@ export function AppShell() {
     }
   }, [status, settings?.configured, reloadProjects]);
 
-  // Check for the latest agent patch. Strategy is "silent first, then block":
+  // (A) Minimum-version handshake — the hard guarantee. The web app knows the
+  // lowest agent version it works with (REQUIRED_AGENT_VERSION). The moment a
+  // connected agent reports an older version, BLOCK the whole app immediately
+  // and unconditionally — no GitHub, manifest, or update-config dependency. A
+  // newer-than-required agent is fine. This runs on every connect/version change
+  // and cannot be bypassed by network failures, so a stale agent is never
+  // silently usable against this build.
+  useEffect(() => {
+    if (status !== "connected" || !agentVersion) return;
+    if (isAgentOutdated(agentVersion)) {
+      setUpdateBlocked((prev) =>
+        prev?.current === agentVersion
+          ? prev
+          : {
+              current: agentVersion,
+              latest: REQUIRED_AGENT_VERSION,
+              update_available: true,
+              // We don't yet know if auto-update is configured; the check below
+              // refines this. Default false so the gate shows reinstall first.
+              configured: false,
+              reachable: true,
+              install_dir: "",
+            }
+      );
+    }
+  }, [status, agentVersion]);
+
+  // Shared update routine. Strategy is "silent first, then block":
   //   1. If an update exists and auto-update IS configured, apply it silently —
-  //      apply() restarts the agent, waits for it, and reloads the page so the
-  //      new code is live. The patch just "arrives" on refresh.
-  //   2. If that silent apply can't happen (install not configured for
-  //      auto-update) or it fails (unreachable/failed), the running agent is
-  //      out of date with the shipped patch, so we BLOCK the whole app with
-  //      AgentUpdateRequired and require a reinstall.
+  //      apply() restarts the agent, verifies the new version, and reloads.
+  //   2. If that silent apply can't happen (not configured) or fails, the agent
+  //      is out of date with the shipped patch → BLOCK with AgentUpdateRequired.
   // Nothing happens (no noise, no block) when already up to date.
-  //
-  // When to run: configured sessions check on every refresh (as before). On top
-  // of that, the FIRST LAUNCH OF EACH DAY always checks regardless of whether
-  // the toolkit is configured yet — only a connected agent is required — so
-  // shipped agent changes are never missed for days at a time.
+  const runUpdateCheck = useCallback(async () => {
+    const s = await check();
+    if (!s) return; // check failed (offline / unreachable) — leave as-is
+    if (!s.update_available) {
+      // Up to date per the manifest. If a stale handshake block is showing for
+      // an out-of-date agent it stays; otherwise nothing to do.
+      return;
+    }
+    if (s.configured) {
+      pushLog?.(
+        "INFO",
+        `New patch available (v${s.latest}). Applying automatically...`
+      );
+      const applied = await apply(); // reloads the page on success
+      if (applied) return;
+    }
+    // Either not configured for auto-update, or the silent apply failed.
+    pushLog?.(
+      "WARN",
+      "Agent changes require a reinstall to take effect. Pausing the app."
+    );
+    setUpdateBlocked(s);
+  }, [check, apply, pushLog]);
+
+  // When to run the manifest check: configured sessions check on every refresh.
+  // On top of that, the FIRST LAUNCH OF EACH DAY always checks regardless of
+  // whether the toolkit is configured yet — only a connected agent is required —
+  // so shipped agent changes are never missed for days at a time.
   useEffect(() => {
     if (status !== "connected" || autoUpdated.current) return;
     if (!settings?.configured && !isFirstLaunchToday()) return;
     autoUpdated.current = true;
-    void (async () => {
-      markUpdateCheckedToday();
-      const s = await check();
-      if (!s?.update_available) return; // up to date or check failed
-      if (s.configured) {
-        pushLog?.(
-          "INFO",
-          `New patch available (v${s.latest}). Applying automatically...`
-        );
-        const applied = await apply(); // reloads the page on success
-        if (applied) return;
+    markUpdateCheckedToday();
+    void runUpdateCheck();
+  }, [status, settings?.configured, runUpdateCheck]);
+
+  // (C) Harden detection for long-open sessions: re-check on tab focus, when the
+  // network returns, and on a periodic interval — not just at launch. These are
+  // no-ops while offline or already up to date.
+  useEffect(() => {
+    if (status !== "connected") return;
+    const recheck = () => {
+      if (settings?.configured || isFirstLaunchToday()) {
+        markUpdateCheckedToday();
+        void runUpdateCheck();
       }
-      // Either not configured for auto-update, or the silent apply failed.
-      pushLog?.(
-        "WARN",
-        "Agent changes require a reinstall to take effect. Pausing the app."
-      );
-      setUpdateBlocked(s);
-    })();
-  }, [status, settings?.configured, check, apply, pushLog]);
+    };
+    const onFocus = () => recheck();
+    const onOnline = () => recheck();
+    const interval = setInterval(recheck, 30 * 60 * 1000); // every 30 min
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onOnline);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [status, settings?.configured, runUpdateCheck]);
 
   // After a reinstall the agent restarts and the app reloads with a persisted
   // pendingReindex flag — rebuild every KB vector index once we're back online.
