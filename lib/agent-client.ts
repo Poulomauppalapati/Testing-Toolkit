@@ -513,6 +513,59 @@ export const agent = {
     }
   },
 
+  /** Remove a single KB document and invalidate the stored index. */
+  async deleteKbDocument(project: string, name: string): Promise<void> {
+    await agentFetch(
+      `/kb/document/${encodeURIComponent(project)}?name=${encodeURIComponent(
+        name
+      )}`,
+      { method: "DELETE" }
+    );
+  },
+
+  // -- Per-phase test-script templates --
+  async templateStatus(
+    project: string,
+    phase: TcType
+  ): Promise<TemplateStatus> {
+    return agentFetch<TemplateStatus>(
+      `/kb/template/${encodeURIComponent(project)}/${encodeURIComponent(phase)}`
+    );
+  },
+
+  async uploadTemplate(
+    project: string,
+    phase: TcType,
+    file: File
+  ): Promise<TemplateStatus> {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(
+      `${AGENT_URL}/kb/template/${encodeURIComponent(
+        project
+      )}/${encodeURIComponent(phase)}`,
+      { method: "POST", body: formData }
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(humanizeError(res.status, body));
+    }
+    return res.json();
+  },
+
+  async deleteTemplate(project: string, phase: TcType): Promise<{ ok: boolean }> {
+    return agentFetch<{ ok: boolean }>(
+      `/kb/template/${encodeURIComponent(project)}/${encodeURIComponent(phase)}`,
+      { method: "DELETE" }
+    );
+  },
+
+  templateDownloadUrl(project: string, phase: TcType): string {
+    return `${AGENT_URL}/kb/template/${encodeURIComponent(
+      project
+    )}/${encodeURIComponent(phase)}/download`;
+  },
+
   // -- Artifacts (generated outputs browser) --
   async listArtifacts(project: string): Promise<ArtifactFile[]> {
     return agentFetch<ArtifactFile[]>(
