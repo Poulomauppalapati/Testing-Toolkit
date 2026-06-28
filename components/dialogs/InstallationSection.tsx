@@ -5,11 +5,7 @@ import { RefreshCw, AlertTriangle, RotateCcw } from "lucide-react";
 import { agent, type UpdateStatus } from "@/lib/agent-client";
 import { useAppUpdate } from "@/lib/use-app-update";
 import { useAppState } from "@/lib/app-state";
-import {
-  setTourCompletedPref,
-  setPendingReindexPref,
-  setPendingReinstallPref,
-} from "@/lib/preferences";
+import { requestReinstall } from "@/lib/reinstall";
 
 /**
  * Installation & Updates panel for the Settings dialog.
@@ -47,17 +43,10 @@ export function InstallationSection() {
   const onReinstall = () => {
     setConfirmReinstall(false);
     pushLog("INFO", "Reinstall requested — returning to the installer step.");
-    // A reinstall in this app means re-downloading and re-running the installer
-    // (Step 1 onboarding). Persist the intentions so they survive the reload:
-    //  - pendingReinstall: force the Step 1 download/install screen.
-    //  - tourCompleted=false: run the quick tour again afterwards.
-    //  - pendingReindex: rebuild every KB once the fresh agent reconnects.
-    // Settings, fetched models, preferences and artifacts are retained; the
-    // fresh install clears transient caches and the reindex rebuilds vectors.
-    setPendingReinstallPref(true);
-    setTourCompletedPref(false);
-    setPendingReindexPref(true);
-    if (typeof window !== "undefined") window.location.reload();
+    // Shared with the blocking AgentUpdateRequired gate: persists the reinstall
+    // intentions (force installer, re-run tour, reindex KBs) and reloads into
+    // Step 1 onboarding. Settings, models, preferences and artifacts are kept.
+    requestReinstall();
   };
 
   const label =
