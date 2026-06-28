@@ -64,7 +64,13 @@ export function groupRowsByColumn(
     }
   }
   const out: Array<[string, WorkItemRow[]]> = [];
+  const emitted = new Set<string>();
   for (const c of columns) {
+    // A board can return multiple columns sharing a display name (e.g. split
+    // "Doing" columns). Their rows already collapse into a single bucket, so
+    // only emit each lane once to keep React keys unique.
+    if (emitted.has(c.name)) continue;
+    emitted.add(c.name);
     const list = buckets.get(c.name)!;
     if (list.length) out.push([c.name, sortRows(list)]);
   }
