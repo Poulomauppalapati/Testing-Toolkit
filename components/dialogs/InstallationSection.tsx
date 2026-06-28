@@ -114,6 +114,17 @@ export function InstallationSection() {
         {!checking && status?.configured && status?.reachable && !status?.update_available && (
           <p className="text-muted-foreground">You&apos;re up to date.</p>
         )}
+        {!checking && !status?.configured && (
+          <p className="text-amber-300/90">
+            Automatic updates aren&apos;t configured for this install. Reinstall
+            the agent (below) to enable them.
+          </p>
+        )}
+        {!checking && status?.configured && !status?.reachable && (
+          <p className="text-amber-300/90">
+            Update server unreachable — check your network or VPN, then Recheck.
+          </p>
+        )}
       </div>
 
       <div className="mt-2 flex items-center gap-2">

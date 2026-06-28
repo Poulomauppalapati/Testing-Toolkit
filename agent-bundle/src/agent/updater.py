@@ -42,6 +42,19 @@ CHECK_INTERVAL_SEC: int = 60
 MANIFEST_URL: str = ""
 _stop_event = threading.Event()
 
+# Baked-in defaults so a config that only carries a token (or an older config
+# missing manifest_url) can still resolve where to look for updates. These match
+# the values the installer injects (see app/api/installer/route.ts).
+DEFAULT_REPO: str = "nrcharanvignesh/Testing-Toolkit"
+DEFAULT_REF: str = "parts"
+
+
+def _manifest_url_for(repo: str, ref: str) -> str:
+    """Build the GitHub contents-API URL for the update manifest."""
+    repo = (repo or DEFAULT_REPO).strip()
+    ref = (ref or DEFAULT_REF).strip()
+    return f"https://api.github.com/repos/{repo}/contents/agent-update.json?ref={ref}"
+
 
 def install_dir() -> Path:
     """Directory the agent is installed into (holds update.json, pid, etc.)."""
@@ -62,9 +75,44 @@ def _load_config() -> dict[str, Any]:
 
 
 def resolve_manifest_url() -> str:
-    """Where to poll for updates. Prefers the install-time config file."""
+    """Where to poll for updates. Prefers the install-time config file.
+
+    Self-heals partial configs: if a token is present but ``manifest_url`` is
+    missing (older installs, or a config that only stored the token), the URL is
+    reconstructed from the stored ``repo``/``ref`` (or the baked-in defaults) and
+    written back so future polls are fast. Without a token we cannot reach the
+    private repo, so we report "not configured" rather than a dead URL.
+    """
     cfg = _load_config()
-    return cfg.get("manifest_url", "") or os.environ.get("AGENT_MANIFEST_URL", "")
+    url = cfg.get("manifest_url", "") or os.environ.get("AGENT_MANIFEST_URL", "")
+    if url:
+        return url
+
+    token = cfg.get("token", "") or os.environ.get("TT_UPDATE_TOKEN", "")
+    if not token:
+        return ""  # genuinely unconfigured (e.g. offline-only install)
+
+    repo = cfg.get("repo", "") or os.environ.get("TT_UPDATE_REPO", "")
+    ref = cfg.get("ref", "") or os.environ.get("TT_UPDATE_REF", "")
+    healed = _manifest_url_for(repo, ref)
+
+    # Persist the repaired config (best-effort) so we only do this once.
+    try:
+        new_cfg = dict(cfg)
+        new_cfg["manifest_url"] = healed
+        new_cfg.setdefault("token", token)
+        new_cfg.setdefault("repo", repo or DEFAULT_REPO)
+        new_cfg.setdefault("ref", ref or DEFAULT_REF)
+        path = _config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(new_cfg))
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return healed
 
 
 def _auth_headers() -> dict[str, str]:

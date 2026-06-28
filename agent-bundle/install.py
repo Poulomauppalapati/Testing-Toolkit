@@ -404,9 +404,11 @@ def write_update_config() -> None:
     Without this, auto-update is simply disabled (non-fatal).
     """
     token = os.environ.get("TT_UPDATE_TOKEN", "")
-    repo = os.environ.get("TT_UPDATE_REPO", "")
+    # Repo/ref default to the known release location so a token alone is enough
+    # to enable auto-update (the agent can reconstruct the URL and self-heal).
+    repo = os.environ.get("TT_UPDATE_REPO", "") or "nrcharanvignesh/Testing-Toolkit"
     ref = os.environ.get("TT_UPDATE_REF", "") or "parts"
-    if not (token and repo):
+    if not token:
         info("Auto-update not configured (no token provided); skipping.")
         return
     manifest_url = (
@@ -415,7 +417,13 @@ def write_update_config() -> None:
     try:
         INSTALL_DIR.mkdir(parents=True, exist_ok=True)
         cfg = INSTALL_DIR / "update.json"
-        cfg.write_text(json.dumps({"manifest_url": manifest_url, "token": token}))
+        # Store repo/ref too so the agent can rebuild the URL if needed later.
+        cfg.write_text(json.dumps({
+            "manifest_url": manifest_url,
+            "token": token,
+            "repo": repo,
+            "ref": ref,
+        }))
         try:
             os.chmod(cfg, 0o600)  # readable only by the user
         except Exception:
