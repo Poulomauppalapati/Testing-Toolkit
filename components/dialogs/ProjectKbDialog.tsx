@@ -98,7 +98,21 @@ function DocumentsSection({
         await agent.deleteKbDocument(project, name);
         okCount += 1;
       } catch (e) {
-        pushLog("ERROR", `Could not remove ${name}: ${(e as Error).message}`);
+        const msg = (e as Error).message || "";
+        // A generic 404 ("Not Found") means the running agent predates the
+        // remove route. Stop hammering 70+ doomed requests and tell the user
+        // exactly how to fix it (one clear message instead of a wall of errors).
+        if (/40[34]/.test(msg) && /not found/i.test(msg)) {
+          pushLog(
+            "ERROR",
+            "Remove failed: your local Testing Toolkit agent is out of date " +
+              "and doesn't support removing KB documents yet. Update/restart " +
+              "the agent (pull the latest build, then relaunch) and try again."
+          );
+          setBusy(false);
+          return;
+        }
+        pushLog("ERROR", `Could not remove ${name}: ${msg}`);
       }
     }
     setSelectedDocs(new Set());
