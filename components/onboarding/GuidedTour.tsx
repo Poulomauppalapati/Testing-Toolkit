@@ -42,7 +42,7 @@ const STEPS: TourStep[] = [
   {
     icon: RefreshCw,
     title: "Keeping the app fresh",
-    body: "The refresh button at the top of the navigator pulls and installs the latest patches, then reloads automatically — no reinstall needed.",
+    body: "The refresh button at the top of the navigator pulls and installs the latest patches, then reloads automatically — no reinstall needed. Heads-up: if you ever see the app reload itself on its own, that's just it updating to the newest version in the background — nothing is wrong.",
   },
   {
     icon: Settings,

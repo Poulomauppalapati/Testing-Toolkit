@@ -120,17 +120,23 @@ export function BoardGrid() {
     setSelected(next);
   };
 
-  // Header shows the selected board the same way the Boards sidebar does — by
-  // its team name (e.g. "Abbott 2026 Enhancements"), NOT the board kind
-  // ("Stories"). So this reads "Abbott - Abbott 2026 Enhancements Work Items".
-  const headerLabel =
-    currentProject && currentBoard
-      ? `${displayName(currentProject)} - ${
-          currentBoard.team_name || currentBoard.name
-        } Work Items`
-      : currentProject
-        ? `${displayName(currentProject)} Work Items`
-        : "Work Items";
+  // Header shows the selected board by its team name (e.g. "Abbott 2026
+  // Enhancements"), NOT the board kind ("Stories"). Boards usually repeat the
+  // project name as a prefix, so strip it here alone to avoid "Abbott - Abbott
+  // 2026 Enhancements" — leaving "Abbott - 2026 Enhancements Work Items".
+  const headerLabel = (() => {
+    if (!currentProject) return "Work Items";
+    const project = displayName(currentProject);
+    if (!currentBoard) return `${project} Work Items`;
+    let board = (currentBoard.team_name || currentBoard.name || "").trim();
+    if (board.toLowerCase().startsWith(project.toLowerCase())) {
+      const stripped = board.slice(project.length).replace(/^[\s\-–—:]+/, "");
+      if (stripped) board = stripped;
+    }
+    return board
+      ? `${project} - ${board} Work Items`
+      : `${project} Work Items`;
+  })();
 
   return (
     <div className="flex min-h-0 flex-1 gap-2">
