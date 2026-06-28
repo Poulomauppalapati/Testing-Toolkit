@@ -101,7 +101,22 @@ class RuntimeConfig:
                     f"falling back to combined bundle",
                     file=sys.stderr,
                 )
-        # system: combined certifi + OS-store roots
+        # system (default): prefer truststore so the LIVE OS trust store is used
+        # for verification. This is the most reliable path behind TLS-intercepting
+        # corporate proxies (Zscaler / Netskope): their root CA is installed in
+        # the OS store and truststore validates the full chain dynamically, which
+        # avoids the "self-signed certificate in certificate chain" failure that a
+        # static, possibly-stale combined CA file can still produce.
+        try:
+            import truststore  # type: ignore
+            return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        except Exception as e:
+            print(
+                f"[WARN] truststore unavailable ({type(e).__name__}: {e!r}); "
+                f"falling back to combined CA bundle",
+                file=sys.stderr,
+            )
+        # Fallback: combined certifi + OS-store roots (static PEM file).
         try:
             from core.tls_helper import build_combined_ca_bundle
             return ssl.create_default_context(
