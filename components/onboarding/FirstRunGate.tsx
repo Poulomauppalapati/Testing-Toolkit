@@ -4,6 +4,8 @@ import { useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { agent } from "@/lib/agent-client";
 import { useAppState } from "@/lib/app-state";
+import { usePreferences } from "@/lib/preferences";
+import { GuidedTour } from "@/components/onboarding/GuidedTour";
 import {
   ConnectionFields,
   toPayload,
@@ -11,16 +13,23 @@ import {
 } from "@/components/dialogs/ConnectionFields";
 
 /**
- * Mirrors the desktop startup flow (main._bootstrap): the main window is
- * ALWAYS shown, and when the app is not yet configured a SetupWizard is shown
- * as a modal on top of it. Skipping the wizard leaves the user in the app in
- * manual mode with an empty board — it never blocks access to the shell.
+ * Drives the first-run onboarding flow. The agent download/install is handled
+ * upstream (OnboardingScreen, shown while the agent is offline). Once the agent
+ * is online this gate runs the remaining stages on top of the always-rendered
+ * app shell:
+ *   Stage 2 — Setup (SetupWizard): credentials + read-only model defaults.
+ *   Stage 3 — Quick tour (GuidedTour): a short walkthrough of the app.
+ *   Stage 4 — Full app usage: nothing overlaid; the shell is fully usable.
+ * Tour completion is persisted so returning users land straight in stage 4.
  */
 export function FirstRunGate({ children }: { children: ReactNode }) {
   const { settings, setSettings } = useAppState();
+  const { prefs, setTourCompleted } = usePreferences();
   const [dismissed, setDismissed] = useState(false);
 
   const showWizard = !settings?.configured && !dismissed;
+  const setupDone = !!settings?.configured || dismissed;
+  const showTour = setupDone && !showWizard && !prefs.tourCompleted;
 
   return (
     <>
@@ -31,6 +40,7 @@ export function FirstRunGate({ children }: { children: ReactNode }) {
           onSkip={() => setDismissed(true)}
         />
       )}
+      {showTour && <GuidedTour onDone={() => setTourCompleted(true)} />}
     </>
   );
 }
@@ -93,8 +103,11 @@ function SetupWizard({
         transition={{ duration: 0.2 }}
         className="tt-dialog w-full max-w-2xl p-7"
       >
-        <h2 className="text-lg font-bold tracking-tight text-white">
-          Testing Toolkit — one-time setup
+        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Setup · Step 2 of 4
+        </span>
+        <h2 className="mt-1 text-lg font-bold tracking-tight text-white">
+          Set up your connection
         </h2>
         <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
           Enter your LLM API and Azure DevOps details. On{" "}
@@ -104,7 +117,7 @@ function SetupWizard({
         </p>
 
         <div className="mt-5">
-          <ConnectionFields values={values} setValues={setValues} />
+          <ConnectionFields values={values} setValues={setValues} readOnlyModels />
         </div>
 
         {logs.length > 0 && (

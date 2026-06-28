@@ -248,12 +248,49 @@ function ModelCombo({
   );
 }
 
+/** Read-only model rows for the first-run setup stage. Models are not editable
+ *  here — the agent probes and fills the real working list in the background. */
+function ReadOnlyModels({ values }: { values: ConnectionValues }) {
+  const rows: { label: string; value: string; fallback: string }[] = [
+    { label: "Model", value: values.model, fallback: SEED_MODELS[0] },
+    { label: "Fast model", value: values.fast_model, fallback: SEED_MODELS[1] },
+    {
+      label: "Fallback model",
+      value: values.fallback_model,
+      fallback: SEED_MODELS[2],
+    },
+  ];
+  return (
+    <>
+      {rows.map((r) => (
+        <Field key={r.label} label={r.label}>
+          <input
+            type="text"
+            className="tt-input cursor-not-allowed opacity-70"
+            value={r.value || r.fallback}
+            readOnly
+            disabled
+            title="Models are configured automatically — more will be fetched in the background."
+          />
+        </Field>
+      ))}
+      <p className="pl-[152px] text-xs text-muted-foreground">
+        These are sensible defaults. More models will be fetched automatically in
+        the background once the app is connected — you can change them later in
+        Settings.
+      </p>
+    </>
+  );
+}
+
 export function ConnectionFields({
   values,
   setValues,
+  readOnlyModels = false,
 }: {
   values: ConnectionValues;
   setValues: React.Dispatch<React.SetStateAction<ConnectionValues>>;
+  readOnlyModels?: boolean;
 }) {
   const [groups, setGroups] = useState<ModelGroup[]>(seedGroups());
   const [modelStatus, setModelStatus] = useState("");
@@ -320,6 +357,7 @@ export function ConnectionFields({
   // URL are already saved, silently fetch the model list so the user lands on a
   // verified, populated dropdown.
   useEffect(() => {
+    if (readOnlyModels) return;
     if (values.base_url && values.api_key === MASK) {
       void fetchModels();
     }
@@ -344,46 +382,52 @@ export function ConnectionFields({
           onChange={(v) => set("base_url", v)}
         />
       </Field>
-      <Field label="Model">
-        <div className="flex gap-2">
-          <ModelCombo
-            value={values.model}
-            onChange={(v) => set("model", v)}
-            groups={groups}
-          />
-          <button
-            type="button"
-            className="tt-btn-ghost shrink-0 !px-3 !py-1.5 text-xs"
-            onClick={() => fetchModels(true)}
-            disabled={fetching}
-            title="Re-probe the API for working models and refresh the cache. Needs the API key and base URL above."
-          >
-            {fetching ? "Fetching..." : "Fetch models"}
-          </button>
-        </div>
-      </Field>
-      <Field label="Fast model">
-        <ModelCombo
-          value={values.fast_model}
-          onChange={(v) => set("fast_model", v)}
-          groups={groups}
-          allowBlank
-          placeholder="(reuse primary if blank)"
-          title="Used for the Recursive Language Model retrieval steps. Leave blank to reuse the primary model."
-        />
-      </Field>
-      <Field label="Fallback model">
-        <ModelCombo
-          value={values.fallback_model}
-          onChange={(v) => set("fallback_model", v)}
-          groups={groups}
-          allowBlank
-          placeholder="(safety fallback)"
-          title="Safety fallback model used when the primary or fast model fails or is rate-limited."
-        />
-      </Field>
-      {modelStatus && (
-        <p className={`pl-[152px] text-xs ${statusClass}`}>{modelStatus}</p>
+      {readOnlyModels ? (
+        <ReadOnlyModels values={values} />
+      ) : (
+        <>
+          <Field label="Model">
+            <div className="flex gap-2">
+              <ModelCombo
+                value={values.model}
+                onChange={(v) => set("model", v)}
+                groups={groups}
+              />
+              <button
+                type="button"
+                className="tt-btn-ghost shrink-0 !px-3 !py-1.5 text-xs"
+                onClick={() => fetchModels(true)}
+                disabled={fetching}
+                title="Re-probe the API for working models and refresh the cache. Needs the API key and base URL above."
+              >
+                {fetching ? "Fetching..." : "Fetch models"}
+              </button>
+            </div>
+          </Field>
+          <Field label="Fast model">
+            <ModelCombo
+              value={values.fast_model}
+              onChange={(v) => set("fast_model", v)}
+              groups={groups}
+              allowBlank
+              placeholder="(reuse primary if blank)"
+              title="Used for the Recursive Language Model retrieval steps. Leave blank to reuse the primary model."
+            />
+          </Field>
+          <Field label="Fallback model">
+            <ModelCombo
+              value={values.fallback_model}
+              onChange={(v) => set("fallback_model", v)}
+              groups={groups}
+              allowBlank
+              placeholder="(safety fallback)"
+              title="Safety fallback model used when the primary or fast model fails or is rate-limited."
+            />
+          </Field>
+          {modelStatus && (
+            <p className={`pl-[152px] text-xs ${statusClass}`}>{modelStatus}</p>
+          )}
+        </>
       )}
 
       <SectionHeader>Azure DevOps</SectionHeader>

@@ -68,6 +68,9 @@ export function OnboardingScreen() {
           <p className="text-muted-foreground">
             AI-powered test case generation for Azure DevOps
           </p>
+          <span className="mt-1 text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
+            Download &amp; install · Step 1 of 4
+          </span>
         </div>
 
         {/* Action area */}

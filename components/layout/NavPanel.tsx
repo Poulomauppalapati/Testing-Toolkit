@@ -5,12 +5,48 @@ import {
   Settings,
   Brain,
   ChevronLeft,
+  ChevronDown,
   RefreshCw,
 } from "lucide-react";
 import { useAppState } from "@/lib/app-state";
 import { Dropdown } from "@/components/ui/dropdown";
 import { agent } from "@/lib/agent-client";
 import { useAppUpdate } from "@/lib/use-app-update";
+import { usePreferences, type SectionKey } from "@/lib/preferences";
+
+/** Collapsible section header with a chevron. The collapsed state is persisted
+ *  by the caller via preferences, so it survives app restarts. */
+function SectionHeader({
+  label,
+  collapsed,
+  onToggle,
+  action,
+}: {
+  label: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between px-1">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        className="flex items-center gap-1 text-sm font-semibold text-[#bfc4cc] hover:text-white"
+      >
+        <ChevronDown
+          className={`h-3.5 w-3.5 transition-transform ${
+            collapsed ? "-rotate-90" : ""
+          }`}
+          strokeWidth={2.5}
+        />
+        {label}
+      </button>
+      {action}
+    </div>
+  );
+}
 
 export function NavPanel() {
   const {
@@ -28,6 +64,10 @@ export function NavPanel() {
     setLogVisible,
     pushLog,
   } = useAppState();
+
+  const { prefs, toggleSection } = usePreferences();
+  const sections = prefs.sections;
+  const toggle = (k: SectionKey) => () => toggleSection(k);
 
   const { apply: applyUpdate, phase: updatePhase, busy: updateBusy } =
     useAppUpdate(pushLog);
@@ -47,91 +87,116 @@ export function NavPanel() {
     }
   }
 
+  const updateLabel =
+    updatePhase === "applying"
+      ? "Checking..."
+      : updatePhase === "restarting"
+        ? "Restarting..."
+        : "Update app";
+
   return (
     <div className="tt-rail flex w-56 shrink-0 flex-col gap-2 p-2">
-      {/* Update app */}
-      <button
-        className="tt-btn-ghost flex w-full items-center justify-center gap-2 !py-1.5 text-xs"
-        onClick={onUpdateClick}
-        disabled={updateBusy}
-        title="Check for and install the latest app patches, then reload"
-      >
-        <RefreshCw
-          className={`h-3.5 w-3.5 ${updateBusy ? "animate-spin" : ""}`}
-          strokeWidth={2}
-        />
-        {updatePhase === "applying"
-          ? "Checking..."
-          : updatePhase === "restarting"
-            ? "Restarting..."
-            : "Update app"}
-      </button>
+      {/* Updates */}
+      <SectionHeader
+        label="Updates"
+        collapsed={sections.update}
+        onToggle={toggle("update")}
+      />
+      {!sections.update && (
+        <button
+          className="tt-btn-ghost flex w-full items-center justify-center gap-2 !py-1.5 text-xs"
+          onClick={onUpdateClick}
+          disabled={updateBusy}
+          title="Check for and install the latest app patches, then reload"
+        >
+          <RefreshCw
+            className={`h-3.5 w-3.5 ${updateBusy ? "animate-spin" : ""}`}
+            strokeWidth={2}
+          />
+          {updateLabel}
+        </button>
+      )}
 
       {/* Projects */}
-      <div className="flex items-center justify-between px-1">
-        <span className="text-sm font-semibold text-[#bfc4cc]">Projects</span>
-        <button className="tt-btn-ghost !px-2 !py-1 text-xs" onClick={reloadProjects}>
-          Refresh
-        </button>
-      </div>
-      <div className="tt-input min-h-0 flex-1 overflow-auto !p-1">
-        {projects.length === 0 ? (
-          <p className="px-2 py-1.5 text-xs text-muted-foreground">
-            No projects. Configure ADO in Settings, then Refresh.
-          </p>
-        ) : (
-          projects.map((full) => (
-            <div
-              key={full}
-              role="button"
-              tabIndex={0}
-              data-selected={full === currentProject}
-              onClick={() => selectProject(full)}
-              onKeyDown={(e) => e.key === "Enter" && selectProject(full)}
-              className="tt-list-item truncate text-sm"
-              title={full}
-            >
-              {displayName(full)}
-            </div>
-          ))
-        )}
-      </div>
+      <SectionHeader
+        label="Projects"
+        collapsed={sections.projects}
+        onToggle={toggle("projects")}
+        action={
+          <button
+            className="tt-btn-ghost !px-2 !py-1 text-xs"
+            onClick={reloadProjects}
+          >
+            Refresh
+          </button>
+        }
+      />
+      {!sections.projects && (
+        <div className="tt-input min-h-0 flex-1 overflow-auto !p-1">
+          {projects.length === 0 ? (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+              No projects. Configure ADO in Settings, then Refresh.
+            </p>
+          ) : (
+            projects.map((full) => (
+              <div
+                key={full}
+                role="button"
+                tabIndex={0}
+                data-selected={full === currentProject}
+                onClick={() => selectProject(full)}
+                onKeyDown={(e) => e.key === "Enter" && selectProject(full)}
+                className="tt-list-item truncate text-sm"
+                title={full}
+              >
+                {displayName(full)}
+              </div>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Boards */}
-      <div className="flex items-center justify-between px-1">
-        <span className="text-sm font-semibold text-[#bfc4cc]">Boards</span>
-        <button
-          className="tt-btn-ghost !px-2 !py-1 text-xs"
-          onClick={() => reloadBoards()}
-        >
-          Refresh
-        </button>
-      </div>
-      <div className="tt-input min-h-0 flex-1 overflow-auto !p-1">
-        {boards.length === 0 ? (
-          <p className="px-2 py-1.5 text-xs text-muted-foreground">
-            {currentProject ? "No boards found." : "Select a project."}
-          </p>
-        ) : (
-          boards.map((b) => (
-            <div
-              key={b.id || b.label}
-              role="button"
-              tabIndex={0}
-              data-selected={b.label === currentBoard?.label}
-              onClick={() => selectBoard(b)}
-              onKeyDown={(e) => e.key === "Enter" && selectBoard(b)}
-              className="tt-list-item truncate text-sm"
-              title={b.label}
-            >
-              {b.team_name}
-            </div>
-          ))
-        )}
-      </div>
+      <SectionHeader
+        label="Boards"
+        collapsed={sections.boards}
+        onToggle={toggle("boards")}
+        action={
+          <button
+            className="tt-btn-ghost !px-2 !py-1 text-xs"
+            onClick={() => reloadBoards()}
+          >
+            Refresh
+          </button>
+        }
+      />
+      {!sections.boards && (
+        <div className="tt-input min-h-0 flex-1 overflow-auto !p-1">
+          {boards.length === 0 ? (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+              {currentProject ? "No boards found." : "Select a project."}
+            </p>
+          ) : (
+            boards.map((b) => (
+              <div
+                key={b.id || b.label}
+                role="button"
+                tabIndex={0}
+                data-selected={b.label === currentBoard?.label}
+                onClick={() => selectBoard(b)}
+                onKeyDown={(e) => e.key === "Enter" && selectBoard(b)}
+                className="tt-list-item truncate text-sm"
+                title={b.label}
+              >
+                {b.team_name}
+              </div>
+            ))
+          )}
+        </div>
+      )}
 
-      {/* Bottom buttons */}
-      <div className="flex items-center gap-1">
+      {/* Bottom buttons (mt-auto pins them down when sections are collapsed) */}
+      <div className="mt-auto flex items-center gap-1">
         <Dropdown
           align="left"
           direction="up"

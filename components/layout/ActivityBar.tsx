@@ -7,11 +7,13 @@ import {
   Settings,
   Brain,
   ChevronRight,
+  RefreshCw,
   type LucideIcon,
 } from "lucide-react";
 import { useAppState } from "@/lib/app-state";
 import { Dropdown } from "@/components/ui/dropdown";
 import { agent } from "@/lib/agent-client";
+import { useAppUpdate } from "@/lib/use-app-update";
 
 function RailButton({
   icon: Icon,
@@ -46,6 +48,13 @@ export function ActivityBar() {
     setLogVisible,
   } = useAppState();
 
+  const { apply: applyUpdate, busy: updateBusy } = useAppUpdate(pushLog);
+
+  async function onUpdateClick() {
+    setLogVisible(true);
+    await applyUpdate();
+  }
+
   async function openLogFolder() {
     setLogVisible(true);
     try {
@@ -58,6 +67,20 @@ export function ActivityBar() {
 
   return (
     <div className="tt-rail flex w-11 shrink-0 flex-col items-center gap-1 py-2">
+      {/* Update app — topmost, refresh logo only */}
+      <button
+        onClick={onUpdateClick}
+        title="Update app"
+        aria-label="Update app"
+        disabled={updateBusy}
+        className="tt-btn-ghost h-8 w-8 shrink-0 !rounded-lg !border-transparent !p-0 disabled:opacity-40"
+      >
+        <RefreshCw
+          className={`h-[18px] w-[18px] ${updateBusy ? "animate-spin" : ""}`}
+          strokeWidth={2}
+        />
+      </button>
+
       <RailButton icon={Folder} label="Projects" onClick={() => setNavVisible(true)} />
       <RailButton icon={LayoutGrid} label="Boards" onClick={() => setNavVisible(true)} />
 
