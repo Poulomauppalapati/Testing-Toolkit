@@ -81,12 +81,27 @@ async def health() -> dict:
         user = os.getlogin()
     except OSError:
         user = os.environ.get("USERNAME") or os.environ.get("USER") or "unknown"
+    # Architecture info (best-effort) so the app can show the chip and adapt to
+    # ARM / Apple Silicon / unified-memory SoCs. Fail-safe: omitted on error.
+    arch: dict = {}
+    try:
+        from core.hardware import chip_name, is_arm, is_unified_memory
+
+        arch = {
+            "arch": platform.machine(),
+            "chip": chip_name(),
+            "is_arm": is_arm(),
+            "is_unified_memory": is_unified_memory(),
+        }
+    except Exception:
+        arch = {"arch": platform.machine()}
     return {
         "status": "ok",
         "version": AGENT_VERSION,
         "user": user,
         "machine": platform.node(),
         "models_loaded": models_loaded(),
+        "hardware": arch,
     }
 
 
@@ -196,43 +211,59 @@ async def metrics() -> dict:
 
     # GPU — only reported when an accelerator is actually present/in use.
     try:
-        from core.hardware import gpu_available, gpu_device_name
+        from core.hardware import (
+            gpu_available,
+            gpu_device_name,
+            is_unified_memory,
+        )
 
         if gpu_available():
+            unified = bool(is_unified_memory())
             gpu: dict = {
                 "name": gpu_device_name() or "GPU",
                 "in_use": True,
                 "util_percent": None,
                 "mem_used_mb": None,
                 "mem_total_mb": None,
+                # On a unified-memory SoC (e.g. Apple Silicon) the accelerator
+                # shares system RAM, so there is no separate VRAM pool. The UI
+                # uses this to label memory as "unified" instead of "VRAM".
+                "unified_memory": unified,
             }
-            # NVIDIA utilization + memory via NVML when available.
-            try:
-                import pynvml  # type: ignore
-
-                pynvml.nvmlInit()
-                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                gpu["util_percent"] = float(util.gpu)
-                gpu["mem_used_mb"] = int(meminfo.used / (1024 * 1024))
-                gpu["mem_total_mb"] = int(meminfo.total / (1024 * 1024))
-                pynvml.nvmlShutdown()
-            except Exception:
-                # Fallback: CUDA memory via torch when present.
+            if unified:
+                # The shared pool IS system RAM. Report total RAM as the
+                # accelerator's memory pool; a GPU-specific "used" figure isn't
+                # cheaply attributable on these SoCs, so leave mem_used_mb null.
+                if data.get("ram_total_mb"):
+                    gpu["mem_total_mb"] = int(data["ram_total_mb"])
+            else:
+                # Discrete GPU: NVIDIA utilization + VRAM via NVML when present.
                 try:
-                    import torch  # type: ignore
+                    import pynvml  # type: ignore
 
-                    if torch.cuda.is_available():
-                        gpu["mem_used_mb"] = int(
-                            torch.cuda.memory_allocated(0) / (1024 * 1024)
-                        )
-                        gpu["mem_total_mb"] = int(
-                            torch.cuda.get_device_properties(0).total_memory
-                            / (1024 * 1024)
-                        )
+                    pynvml.nvmlInit()
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    gpu["util_percent"] = float(util.gpu)
+                    gpu["mem_used_mb"] = int(meminfo.used / (1024 * 1024))
+                    gpu["mem_total_mb"] = int(meminfo.total / (1024 * 1024))
+                    pynvml.nvmlShutdown()
                 except Exception:
-                    pass
+                    # Fallback: CUDA memory via torch when present.
+                    try:
+                        import torch  # type: ignore
+
+                        if torch.cuda.is_available():
+                            gpu["mem_used_mb"] = int(
+                                torch.cuda.memory_allocated(0) / (1024 * 1024)
+                            )
+                            gpu["mem_total_mb"] = int(
+                                torch.cuda.get_device_properties(0).total_memory
+                                / (1024 * 1024)
+                            )
+                    except Exception:
+                        pass
             data["gpu"] = gpu
     except Exception:
         pass

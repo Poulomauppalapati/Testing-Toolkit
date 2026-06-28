@@ -189,11 +189,17 @@ export function StatusBar() {
                 }
                 title={
                   `${gpu.name}` +
-                  (gpu.mem_used_mb !== null && gpu.mem_total_mb !== null
-                    ? ` — ${fmtMem(gpu.mem_used_mb)} / ${fmtMem(
-                        gpu.mem_total_mb
-                      )} VRAM`
-                    : "")
+                  (gpu.unified_memory
+                    ? // Unified-memory SoC (e.g. Apple Silicon): shared pool,
+                      // not separate VRAM.
+                      gpu.mem_total_mb !== null
+                      ? ` — unified memory (${fmtMem(gpu.mem_total_mb)} shared)`
+                      : " — unified memory"
+                    : gpu.mem_used_mb !== null && gpu.mem_total_mb !== null
+                      ? ` — ${fmtMem(gpu.mem_used_mb)} / ${fmtMem(
+                          gpu.mem_total_mb
+                        )} VRAM`
+                      : "")
                 }
               />
             )}

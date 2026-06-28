@@ -89,38 +89,61 @@ def _accelerated_providers() -> list[str] | None:
 
 def _construct_with_fallbacks(cls: Any, base_kwargs: dict[str, Any]) -> Any:
     """Construct a fastembed model, requesting GPU providers when available and
-    degrading gracefully on older fastembed builds.
+    degrading gracefully on older fastembed builds AND on accelerators that
+    fail at session-build time.
 
-    ``base_kwargs`` are always kept (e.g. model_name, cache_dir). The optional
-    accelerator/offline keywords are layered on top and dropped one at a time
-    (newest/most-optional first) if a given fastembed version rejects them with
-    a TypeError, so we never lose the offline cache_dir just because
-    ``providers`` or ``local_files_only`` is unsupported.
+    ``base_kwargs`` are always kept (e.g. model_name, cache_dir). Two optional
+    keywords are layered on top:
+
+    * ``providers``         - request a hardware accelerator (CUDA / CoreML /
+                              DirectML) when one is detected.
+    * ``local_files_only``  - force strictly-offline load from the bundled
+                              cache.
+
+    These are tried in priority order and dropped independently. We catch a
+    BROAD ``Exception`` per trial (not just ``TypeError``) because:
+
+    * Old fastembed builds reject an unknown kwarg with ``TypeError``.
+    * An accelerator EP can be *present* yet fail when the session is actually
+      built - e.g. Apple's ``CoreMLExecutionProvider`` on unsupported ops, or
+      Windows ``DmlExecutionProvider`` - raising an ONNX Runtime
+      ``RuntimeException``/``Fail`` rather than ``TypeError``.
+
+    Catching only ``TypeError`` would let such a runtime failure abort the whole
+    construction and silently disable dense retrieval on Apple Silicon / DML
+    machines. By falling back, we keep dense retrieval working on the CPU EP
+    (and keep the offline cache) instead of losing it entirely.
+
+    The trial order maximizes what survives regardless of which optional kwarg
+    is the culprit: full -> drop accelerator (keep offline) -> drop offline-flag
+    (keep accelerator) -> base only. A successful trial returns immediately, so
+    healthy machines incur no overhead.
     """
-    # Optional kwargs in drop order: try ALL, then drop providers, then drop
-    # local_files_only — base_kwargs always survive.
-    optional: dict[str, Any] = {}
     providers = _accelerated_providers()
-    if providers is not None:
-        optional["providers"] = providers
-    if base_kwargs.get("cache_dir"):
-        optional["local_files_only"] = True
+    offline = bool(base_kwargs.get("cache_dir"))
 
-    drop_order = ["providers", "local_files_only"]
-    # Build the sequence of optional-kwarg sets to try, progressively dropping.
-    trials: list[dict[str, Any]] = [dict(optional)]
-    current = dict(optional)
-    for key in drop_order:
-        if key in current:
-            current = dict(current)
-            current.pop(key, None)
-            trials.append(dict(current))
+    with_providers: dict[str, Any] = (
+        {"providers": providers} if providers is not None else {}
+    )
+    with_offline: dict[str, Any] = {"local_files_only": True} if offline else {}
+
+    # Ordered, de-duplicated optional-kwarg sets to try.
+    raw_trials: list[dict[str, Any]] = [
+        {**with_providers, **with_offline},  # best: accelerator + offline
+        {**with_offline},                    # CoreML/DML build failed: CPU+offline
+        {**with_providers},                  # old fastembed (no lfo): keep accel
+        {},                                  # last resort: CPU only
+    ]
+    trials: list[dict[str, Any]] = []
+    for t in raw_trials:
+        if t not in trials:
+            trials.append(t)
 
     last_exc: Exception | None = None
     for extra in trials:
         try:
             return cls(**base_kwargs, **extra)
-        except TypeError as exc:
+        except Exception as exc:  # noqa: BLE001 - any build failure -> degrade
             last_exc = exc
             continue
     if last_exc is not None:

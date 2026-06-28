@@ -48,6 +48,10 @@ export interface GpuMetrics {
   util_percent: number | null;
   mem_used_mb: number | null;
   mem_total_mb: number | null;
+  /** True on a unified-memory SoC (e.g. Apple Silicon) where the accelerator
+   *  shares system RAM, so mem_total_mb is the shared pool, not separate VRAM.
+   *  Optional: absent on older agents that predate unified-memory reporting. */
+  unified_memory?: boolean;
 }
 
 /** Live system resource usage from the agent's `/metrics` endpoint. Any field

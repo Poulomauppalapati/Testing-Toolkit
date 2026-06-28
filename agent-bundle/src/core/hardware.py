@@ -54,6 +54,24 @@ def is_apple_silicon() -> bool:
         return False
 
 
+def is_unified_memory() -> bool:
+    """True on a unified-memory SoC where the GPU/Neural Engine shares system
+    RAM (no separate VRAM pool).
+
+    Today this is reliably detectable for Apple Silicon (M-series), where the
+    GPU and Neural Engine address the same physical RAM as the CPU. On such
+    systems a separate "GPU memory used / total" figure is meaningless, so the
+    metrics layer reports total system RAM as the accelerator's memory pool and
+    flags it as unified for the UI. Other ARM SoCs (Snapdragon, Ampere) are
+    also typically unified, but we only assert it where we can detect it
+    confidently. Fail-safe: returns False on any error.
+    """
+    try:
+        return is_apple_silicon()
+    except Exception:
+        return False
+
+
 def chip_name() -> str:
     """Human-readable chip/architecture identifier."""
     try:
@@ -298,6 +316,7 @@ def hardware_summary() -> dict[str, object]:
         "arch": platform.machine(),
         "is_arm": is_arm(),
         "is_apple_silicon": is_apple_silicon(),
+        "is_unified_memory": is_unified_memory(),
         "chip": chip_name(),
         "logical_cores": _logical_cores(),
         "physical_cores": _physical_cores(),
