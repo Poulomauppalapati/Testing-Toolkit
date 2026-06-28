@@ -66,20 +66,6 @@ export function NavPanel() {
         className="tt-rail flex shrink-0 flex-col gap-2 p-2"
         style={{ width }}
       >
-        {/* Update app */}
-        <button
-          className="tt-btn-ghost flex w-full items-center justify-center gap-2 !py-1.5 text-xs"
-          onClick={onUpdateClick}
-          disabled={updateBusy}
-          title="Check for and install the latest app patches, then reload"
-        >
-          <RefreshCw
-            className={`h-3.5 w-3.5 ${updateBusy ? "animate-spin" : ""}`}
-            strokeWidth={2}
-          />
-          {updateLabel}
-        </button>
-
         {/* Projects */}
         <div className="flex items-center justify-between px-1">
           <span className="text-sm font-semibold text-[#bfc4cc]">Projects</span>
@@ -188,6 +174,20 @@ export function NavPanel() {
             onClick={() => setNavVisible(false)}
           >
             <ChevronLeft className="h-[18px] w-[18px]" strokeWidth={2} />
+          </button>
+
+          {/* Update app — fills the remaining space on the bottom row */}
+          <button
+            className="tt-btn-ghost flex h-8 flex-1 items-center justify-center gap-2 !py-0 text-xs"
+            onClick={onUpdateClick}
+            disabled={updateBusy}
+            title="Check for and install the latest app patches, then reload"
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${updateBusy ? "animate-spin" : ""}`}
+              strokeWidth={2}
+            />
+            {updateLabel}
           </button>
         </div>
       </div>
