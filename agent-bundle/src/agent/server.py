@@ -29,7 +29,7 @@ _SRC_DIR = Path(__file__).resolve().parent.parent
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from core.app_config import APP_VERSION, ensure_workspace
+from core.app_config import APP_VERSION, WORKSPACE, ensure_workspace
 from agent.version import AGENT_VERSION, AGENT_PORT
 
 
@@ -194,9 +194,12 @@ app.include_router(artifacts_router, prefix="/artifacts")
 
 
 def _install_dir() -> Path:
-    return Path(
-        os.environ.get("TT_INSTALL_DIR", Path.home() / "TestingToolkit")
-    ).expanduser()
+    override = (os.environ.get("TT_INSTALL_DIR") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    # Keep the agent's runtime files (pid, update.json) alongside
+    # everything else under the single TestingToolkitWeb workspace.
+    return WORKSPACE
 
 
 def _write_pid_file() -> None:
@@ -305,6 +308,16 @@ def _tee_output_to_logfile() -> None:
 
 def main() -> None:
     _tee_output_to_logfile()
+    # Initialise the structured rotating log so the in-app "Recent log"
+    # view and "Open log folder" have a real file to point at. Without
+    # this, log_path()/tail_log() return None -> "(no log file configured)".
+    try:
+        from core.app_logging import init_logging
+        lp = init_logging()
+        if lp is not None:
+            print(f"[agent] log file: {lp}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[agent] could not init structured logging (non-fatal): {exc}", flush=True)
     _write_pid_file()
     print(f"[agent] starting uvicorn on 127.0.0.1:{AGENT_PORT}", flush=True)
     try:

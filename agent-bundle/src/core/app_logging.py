@@ -57,6 +57,13 @@ _ROOT_NAME = "testing_toolkit"
 
 def _candidate_dirs() -> list[Path]:
     dirs: list[Path] = []
+    # Preferred: the single TestingToolkitWeb workspace, so the log sits
+    # next to projects/KB/runs/outputs (and honours TT_WORKSPACE_DIR).
+    try:
+        from core.app_config import LOGS_DIR
+        dirs.append(LOGS_DIR)
+    except Exception:
+        pass
     local = os.environ.get("LOCALAPPDATA")
     if local:
         dirs.append(Path(local) / _APP_DIR_NAME / "logs")

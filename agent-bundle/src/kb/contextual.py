@@ -30,7 +30,17 @@ LogFn = Callable[[str], None]
 
 _MAX_DOC_CHARS: Final[int] = 60000    # cap the cached document body
 _CONTEXT_MAX_TOKENS: Final[int] = 120
-_CONCURRENCY: Final[int] = 4
+
+
+def _default_concurrency() -> int:
+    try:
+        from core.app_config import KB_CONTEXTUAL_CONCURRENCY
+        return max(1, int(KB_CONTEXTUAL_CONCURRENCY))
+    except Exception:
+        return 4
+
+
+_CONCURRENCY: Final[int] = _default_concurrency()
 
 _SYSTEM: Final[str] = (
     "You situate a document excerpt within its source document for search "

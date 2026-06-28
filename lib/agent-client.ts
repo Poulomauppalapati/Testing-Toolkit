@@ -803,8 +803,12 @@ export const agent = {
     });
   },
 
-  async listModels(): Promise<ModelInfo[]> {
-    return agentFetch<ModelInfo[]>("/llm/models");
+  async listModels(refresh = false): Promise<ModelInfo[]> {
+    // Default reads the agent-side cache (instant). Pass refresh=true to
+    // force a fresh probe (the "Fetch models" button).
+    return agentFetch<ModelInfo[]>(
+      `/llm/models${refresh ? "?refresh=true" : ""}`
+    );
   },
 
   async recentLog(maxBytes = 60000): Promise<RecentLog> {

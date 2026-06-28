@@ -265,7 +265,7 @@ export function ConnectionFields({
   const set = (k: keyof ConnectionValues, v: string) =>
     setValues((prev) => ({ ...prev, [k]: v }));
 
-  const fetchModels = async () => {
+  const fetchModels = async (forceRefresh = false) => {
     if (!values.base_url) {
       setStatusColor("warn");
       setModelStatus("Base URL is required to fetch models.");
@@ -278,16 +278,22 @@ export function ConnectionFields({
     }
     setFetching(true);
     setStatusColor("muted");
-    setModelStatus("Checking which models respond with 200 OK...");
+    setModelStatus(
+      forceRefresh
+        ? "Re-checking which models respond with 200 OK..."
+        : "Loading models..."
+    );
     try {
-      const list = await agent.listModels();
+      const list = await agent.listModels(forceRefresh);
       if (list.length) {
         const g = groupModels(list);
         setGroups(g);
         setStatusColor("success");
         setModelStatus(
           `${list.length} working model(s) across ${g.length} provider(s) ` +
-            `(only models that returned 200 OK are listed).`
+            (forceRefresh
+              ? "(only models that returned 200 OK are listed)."
+              : "(from cache - use Fetch models to re-check).")
         );
       } else {
         setStatusColor("warn");
@@ -348,9 +354,9 @@ export function ConnectionFields({
           <button
             type="button"
             className="tt-btn-ghost shrink-0 !px-3 !py-1.5 text-xs"
-            onClick={fetchModels}
+            onClick={() => fetchModels(true)}
             disabled={fetching}
-            title="Query the API for available models and fill the dropdowns. Needs the API key and base URL above."
+            title="Re-probe the API for working models and refresh the cache. Needs the API key and base URL above."
           >
             {fetching ? "Fetching..." : "Fetch models"}
           </button>

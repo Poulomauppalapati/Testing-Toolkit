@@ -5,7 +5,7 @@ Toolkit. Charan's convention: no argparse, no .env files; the constants
 live near the top of this module. Change them, restart the app.
 
 Workspace layout (created on first launch):
-    ~/TestingToolkit/
+    ~/TestingToolkitWeb/   (override with TT_WORKSPACE_DIR)
         projects/<full_project_name>/   per-project KB + system prompt
             system_prompt.txt
             kb/                          drop requirement docs here
@@ -19,6 +19,7 @@ Workspace layout (created on first launch):
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Final
@@ -28,8 +29,29 @@ APP_NAME:    Final[str] = "Testing Toolkit"
 APP_SLUG:    Final[str] = "TestingToolkit"
 APP_VERSION: Final[str] = "2.0.0"
 
+# The web build keeps its workspace separate from the desktop app so the
+# two can coexist on the same machine. Everything (projects, KB, runs,
+# outputs/artifacts, logs, settings) lives under this single root.
+WEB_WORKSPACE_SLUG: Final[str] = "TestingToolkitWeb"
+
+
+def _resolve_workspace() -> Path:
+    """Workspace root for the web agent.
+
+    Defaults to ``~/TestingToolkitWeb`` (e.g. ``C:\\Users\\cnr002\\
+    TestingToolkitWeb`` on Windows). Set the ``TT_WORKSPACE_DIR``
+    environment variable to override it with an absolute path.
+    """
+    override = (os.environ.get("TT_WORKSPACE_DIR") or "").strip()
+    if override:
+        try:
+            return Path(override).expanduser()
+        except (OSError, ValueError):
+            pass
+    return Path.home() / WEB_WORKSPACE_SLUG
+
 # -------------------------- WORKSPACE -------------------------
-WORKSPACE:    Final[Path] = Path.home() / APP_SLUG
+WORKSPACE:    Final[Path] = _resolve_workspace()
 PROJECTS_DIR: Final[Path] = WORKSPACE / "projects"
 RUNS_DIR:     Final[Path] = WORKSPACE / "runs"
 OUTPUTS_DIR:  Final[Path] = WORKSPACE / "outputs"
@@ -88,6 +110,42 @@ RLM_VERIFY_MAX_TOKENS:     Final[int] = 8_000
 # Regeneration: maximum number of user-driven regeneration iterations
 # per session per set of work items.
 RLM_MAX_REGEN_ITERATIONS:  Final[int] = 10
+
+
+# -------------------------- KB INDEXING -----------------------
+# The first index build is the slow part of the first generation. We run it
+# "full BRRRR": files are extracted/OCR'd/contextualized across a worker pool
+# so a capable PC saturates its CPU and IO instead of crawling one file at a
+# time. Quality is unchanged (same deterministic chunk ids, same checkpoint).
+def _resolve_int_env(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    return default
+
+
+# Number of files processed in parallel during indexing.
+#   0 = auto -> use every logical CPU core (full utilization).
+# Override with TT_KB_INDEX_WORKERS (e.g. set to 4 to cap on a small box).
+KB_INDEX_MAX_WORKERS: Final[int] = _resolve_int_env("TT_KB_INDEX_WORKERS", 0)
+
+# Max concurrent contextual-retrieval LLM calls per document. Raising this
+# pushes the gateway harder; lower it if you hit rate limits.
+# Override with TT_KB_CONTEXT_CONCURRENCY.
+KB_CONTEXTUAL_CONCURRENCY: Final[int] = _resolve_int_env(
+    "TT_KB_CONTEXT_CONCURRENCY", 8
+)
+
+
+def resolve_index_workers(n_items: int) -> int:
+    """Effective worker count for an indexing run of ``n_items`` files."""
+    configured = KB_INDEX_MAX_WORKERS or (os.cpu_count() or 4)
+    if n_items <= 0:
+        return 1
+    return max(1, min(configured, n_items))
 
 
 def ensure_workspace() -> None:

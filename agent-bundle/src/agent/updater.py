@@ -45,7 +45,7 @@ _stop_event = threading.Event()
 
 def _config_path() -> Path:
     install_dir = Path(
-        os.environ.get("TT_INSTALL_DIR", Path.home() / "TestingToolkit")
+        os.environ.get("TT_INSTALL_DIR", Path.home() / "TestingToolkitWeb")
     ).expanduser()
     return install_dir / "update.json"
 

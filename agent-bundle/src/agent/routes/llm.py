@@ -68,21 +68,36 @@ async def complete(req: CompleteRequest) -> CompleteResponse:
 
 
 @router.get("/models")
-async def list_models() -> list[dict[str, str]]:
+async def list_models(refresh: bool = False) -> list[dict[str, str]]:
     """List available/working models from the configured API, grouped by
-    provider (mirrors the desktop ConnectionFields.fetch_models)."""
+    provider (mirrors the desktop ConnectionFields.fetch_models).
+
+    The working-model probe is slow against corporate gateways, so the result
+    is cached on the agent and reused instantly on subsequent opens. Pass
+    ``?refresh=true`` (the "Fetch models" button) to bypass the cache and
+    re-probe. The cache is keyed to the current base URL + API key, so it is
+    invalidated automatically whenever either changes.
+    """
     from core.settings_store import get_setting, load_api_key, KEY_BASE_URL
     from core.anthropic_client import (
         AnthropicClient,
         group_models_by_provider,
     )
     from core.settings_store import build_runtime_config
+    from core import model_cache
 
     api_key = load_api_key()
     if not api_key:
         raise HTTPException(400, "No API key configured")
 
     base_url = get_setting(KEY_BASE_URL)
+
+    # Auto-use the cache unless an explicit refresh was requested.
+    if not refresh:
+        cached = model_cache.load(base_url, api_key)
+        if cached:
+            return cached
+
     # Use the app's TLS handling (combined CA bundle / truststore) so corporate
     # self-signed proxy chains (Zscaler etc.) verify correctly. Without this the
     # client falls back to plain certifi and raises CERTIFICATE_VERIFY_FAILED.
@@ -93,6 +108,11 @@ async def list_models() -> list[dict[str, str]]:
     try:
         models = await client.list_working_models_async()
     except Exception as e:
+        # On a refresh/probe failure, fall back to any cached list so the user
+        # still gets a usable dropdown instead of an empty one.
+        cached = model_cache.load(base_url, api_key)
+        if cached:
+            return cached
         raise HTTPException(502, f"Failed to list models: {e!r}")
 
     # Flatten into ordered [{id, provider, label}] so the web UI can render the
@@ -105,4 +125,7 @@ async def list_models() -> list[dict[str, str]]:
                 "provider": provider,
                 "label": getattr(m, "label", "") or m.id,
             })
+
+    # Persist for instant reuse next time (best-effort).
+    model_cache.save(base_url, api_key, out)
     return out

@@ -23,6 +23,7 @@ ASCII-only; fully type-hinted.
 from __future__ import annotations
 
 import gc
+import threading
 from pathlib import Path
 from typing import Callable, Final
 
@@ -31,6 +32,9 @@ from kb.store import extract_text
 LogFn = Callable[[str], None]
 
 _ocr_engine: object | None = None
+# Indexing now processes files in parallel, so the lazy engine init must be
+# serialized to avoid two threads building RapidOCR at once.
+_ocr_init_lock = threading.Lock()
 
 # If a PDF page yields fewer than this many extractable characters per page
 # on average, treat it as image-only and route it to OCR.
@@ -107,12 +111,13 @@ def _ocr_pdf(path: Path, on_log: LogFn | None) -> str:
     if _ocr_init_failed:
         return ""
     try:
-        if _ocr_engine is None:
-            try:
-                from rapidocr_onnxruntime import RapidOCR  # type: ignore
-            except Exception:
-                from rapidocr import RapidOCR  # type: ignore
-            _ocr_engine = RapidOCR()
+        with _ocr_init_lock:
+            if _ocr_engine is None:
+                try:
+                    from rapidocr_onnxruntime import RapidOCR  # type: ignore
+                except Exception:
+                    from rapidocr import RapidOCR  # type: ignore
+                _ocr_engine = RapidOCR()
         engine = _ocr_engine
     except Exception:
         _ocr_init_failed = True

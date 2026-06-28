@@ -39,7 +39,9 @@ from __future__ import annotations
 import gc
 import json
 import os
+import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Final
@@ -157,6 +159,90 @@ def _dicts_to_chunks(items: list[dict[str, Any]]) -> list[KbChunk]:
         )
         for d in items
     ]
+
+
+def _process_one_file(
+    p: Path,
+    doc_index: int,
+    on_log: LogFn | None,
+    on_sub_progress: SubProgressFn | None,
+    llm_client: "Any | None",
+    llm_model: str,
+) -> list[KbChunk]:
+    """Extract + chunk (+ contextualize) a single document.
+
+    Pure with respect to the index: it only reads ``p`` and returns the new
+    chunks, so it is safe to run for many files concurrently. ``doc_index`` is
+    the file's fixed position in the sorted scan, which keeps chunk ids stable
+    and deterministic regardless of completion order. Never raises.
+    """
+    def _log(msg: str) -> None:
+        if on_log is not None:
+            try:
+                on_log(msg)
+            except Exception:
+                pass
+
+    is_multimedia = False
+    try:
+        from kb.multimedia import is_multimedia_file
+        is_multimedia = is_multimedia_file(p)
+    except Exception:
+        pass
+
+    try:
+        if is_multimedia:
+            from kb.multimedia import extract_multimedia_text
+            _log(f"[INFO] Processing multimedia: '{p.name}'...")
+            text = extract_multimedia_text(
+                p, on_log=on_log, on_sub_progress=on_sub_progress
+            )
+        else:
+            text = standardize_to_text(p, on_log=on_log)
+
+        if not text.strip():
+            try:
+                file_size_kb = p.stat().st_size / 1024
+            except OSError:
+                file_size_kb = 0.0
+            _log(f"[WARN] '{p.name}' ({file_size_kb:.0f} KB) yielded no "
+                 f"text - may need OCR or is binary/encrypted.")
+            return []
+
+        text_kb = len(text) / 1024
+        new_chunks = chunk_document(p.name, doc_index, text)
+        if llm_client is not None and llm_model and new_chunks:
+            try:
+                from kb.contextual import contextualize_document
+                chunk_dicts = [
+                    {"text": c.text, "chunk_id": c.chunk_id}
+                    for c in new_chunks
+                ]
+                n_ctx = contextualize_document(
+                    llm_client, llm_model, text, chunk_dicts, on_log=on_log,
+                )
+                if n_ctx > 0:
+                    ctx_map = {
+                        d["chunk_id"]: d.get("context", "")
+                        for d in chunk_dicts if d.get("context")
+                    }
+                    for c in new_chunks:
+                        if c.chunk_id in ctx_map:
+                            c.context = ctx_map[c.chunk_id]
+            except Exception as e:  # noqa: BLE001
+                _log(f"[WARN] Contextual retrieval failed for '{p.name}': "
+                     f"{e!r}; using plain chunks.")
+        _log(f"[INFO] '{p.name}': {text_kb:.0f} KB text -> "
+             f"{len(new_chunks)} chunk(s)")
+        return new_chunks
+    except MemoryError:
+        _log(f"[WARN] Out of memory indexing '{p.name}'; skipping. "
+             "Consider closing other applications.")
+        gc.collect()
+        return []
+    except Exception as e:  # noqa: BLE001 - one bad file must not abort
+        _log(f"[WARN] Could not index '{p.name}': {e!r}; skipping.")
+        return []
 
 
 def build_index_resumable(
@@ -283,82 +369,32 @@ def build_index_resumable(
     # Track per-file timing for ETA calculation
     file_times: list[float] = []
 
+    # Files still to do, paired with their fixed sorted position so chunk ids
+    # stay deterministic no matter what order they finish in.
+    pending: list[tuple[int, Path, str]] = []
     for doc_index, p in enumerate(files):
         n, m, s = _file_sig(p)
         sig = _sig(n, m, s)
         if sig in done_sigs:
             continue
-        if should_stop is not None and should_stop():
-            _log("[WARN] KB indexing paused; will resume on next launch.")
-            return KbIndex(chunks=list(chunks), sources=[], built_at=0.0)
+        pending.append((doc_index, p, sig))
 
-        file_start = time.monotonic()
+    from core.app_config import resolve_index_workers
+    workers = resolve_index_workers(len(pending))
 
-        # Detect multimedia files for special handling (sub-progress + isolation)
-        is_multimedia = False
-        try:
-            from kb.multimedia import is_multimedia_file, extract_multimedia_text
-            is_multimedia = is_multimedia_file(p)
-        except Exception:
-            pass
+    # Serialize checkpoint writes / shared-state mutation across worker threads.
+    state_lock = threading.Lock()
+    stop_requested = {"flag": False}
 
-        try:
-            if is_multimedia:
-                # Multimedia: use the isolated extractor with sub-progress
-                _log(f"[INFO] Processing multimedia: '{p.name}'...")
-                text = extract_multimedia_text(
-                    p, on_log=on_log, on_sub_progress=on_sub_progress
-                )
-            else:
-                # Standard: OCR-aware extraction for documents/PDFs
-                text = standardize_to_text(p, on_log=on_log)
-
-            if text.strip():
-                text_kb = len(text) / 1024
-                new_chunks = chunk_document(p.name, doc_index, text)
-                # Contextual retrieval: prefix each chunk with LLM-generated
-                # situating context (when a client is available).
-                if llm_client is not None and llm_model and new_chunks:
-                    try:
-                        from kb.contextual import contextualize_document
-                        chunk_dicts = [
-                            {"text": c.text, "chunk_id": c.chunk_id}
-                            for c in new_chunks
-                        ]
-                        n_ctx = contextualize_document(
-                            llm_client, llm_model, text, chunk_dicts,
-                            on_log=on_log,
-                        )
-                        if n_ctx > 0:
-                            ctx_map = {
-                                d["chunk_id"]: d.get("context", "")
-                                for d in chunk_dicts if d.get("context")
-                            }
-                            for c in new_chunks:
-                                if c.chunk_id in ctx_map:
-                                    c.context = ctx_map[c.chunk_id]
-                    except Exception as e:  # noqa: BLE001
-                        _log(f"[WARN] Contextual retrieval failed for "
-                             f"'{p.name}': {e!r}; using plain chunks.")
-                chunks.extend(new_chunks)
-                _log(f"[INFO] '{p.name}': {text_kb:.0f} KB text -> "
-                     f"{len(new_chunks)} chunk(s)")
-            else:
-                file_size_kb = p.stat().st_size / 1024
-                _log(f"[WARN] '{p.name}' ({file_size_kb:.0f} KB) yielded no "
-                     f"text - may need OCR or is binary/encrypted.")
-            del text
-        except MemoryError:
-            _log(f"[WARN] Out of memory indexing '{p.name}'; skipping. "
-                 "Consider closing other applications.")
-            gc.collect()
-        except Exception as e:  # noqa: BLE001 - one bad file must not abort
-            _log(f"[WARN] Could not index '{p.name}': {e!r}; skipping.")
-
+    def _handle_result(
+        doc_index: int, p: Path, sig: str, new_chunks: list[KbChunk],
+        file_elapsed: float,
+    ) -> None:
+        """Merge one finished file into the index + checkpoint. Serialized."""
+        nonlocal done
+        chunks.extend(new_chunks)
         done_sigs.add(sig)
         done += 1
-
-        file_elapsed = time.monotonic() - file_start
         file_times.append(file_elapsed)
 
         # Checkpoint after every file so a crash resumes here.
@@ -371,17 +407,91 @@ def build_index_resumable(
         except OSError:
             pass
 
-        # Report progress with ETA
         elapsed = time.monotonic() - start
         remaining_files = total - done
         if file_times and remaining_files > 0:
+            # With N workers, wall-clock ETA is roughly the serial estimate
+            # divided by the degree of parallelism.
             avg_time = sum(file_times) / len(file_times)
-            eta_seconds = avg_time * remaining_files
+            eta_seconds = avg_time * remaining_files / max(1, workers)
             _log(f"[INFO] {p.name} done in {file_elapsed:.1f}s | "
                  f"ETA: ~{_format_eta(eta_seconds)}")
 
         _prog(done, total, elapsed, p.name)
-        gc.collect()
+
+    if workers <= 1:
+        # Single-worker path keeps the original simple, low-memory behavior.
+        for doc_index, p, sig in pending:
+            if should_stop is not None and should_stop():
+                _log("[WARN] KB indexing paused; will resume on next launch.")
+                return KbIndex(chunks=list(chunks), sources=[], built_at=0.0)
+            file_start = time.monotonic()
+            new_chunks = _process_one_file(
+                p, doc_index, on_log, on_sub_progress, llm_client, llm_model
+            )
+            _handle_result(doc_index, p, sig, new_chunks,
+                           time.monotonic() - file_start)
+            gc.collect()
+    else:
+        # Parallel path: saturate the box. Keep at most `workers` files in
+        # flight so memory stays bounded on large/scanned PDFs.
+        _log(f"[INFO] Indexing {len(pending)} file(s) across {workers} "
+             f"worker(s) for maximum throughput.")
+        starts: dict[Any, tuple[int, Path, str, float]] = {}
+
+        def _submit(ex: ThreadPoolExecutor, item: tuple[int, Path, str]) -> Any:
+            doc_index, p, sig = item
+            fut = ex.submit(
+                _process_one_file, p, doc_index, on_log, on_sub_progress,
+                llm_client, llm_model,
+            )
+            starts[fut] = (doc_index, p, sig, time.monotonic())
+            return fut
+
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            it = iter(pending)
+            in_flight: set[Any] = set()
+            # Prime the pool with up to `workers` files.
+            for _ in range(workers):
+                try:
+                    in_flight.add(_submit(ex, next(it)))
+                except StopIteration:
+                    break
+
+            while in_flight:
+                completed, in_flight = wait(
+                    in_flight, return_when=FIRST_COMPLETED
+                )
+                for fut in completed:
+                    doc_index, p, sig, file_start = starts.pop(fut)
+                    try:
+                        new_chunks = fut.result()
+                    except Exception as e:  # noqa: BLE001
+                        _log(f"[WARN] Could not index '{p.name}': {e!r}; "
+                             "skipping.")
+                        new_chunks = []
+                    with state_lock:
+                        _handle_result(doc_index, p, sig, new_chunks,
+                                       time.monotonic() - file_start)
+
+                    # Cooperative pause: stop submitting new work, let the
+                    # in-flight files finish (already checkpointed).
+                    if not stop_requested["flag"] and should_stop is not None \
+                            and should_stop():
+                        stop_requested["flag"] = True
+                        _log("[WARN] KB indexing pausing; finishing "
+                             "in-flight file(s) then will resume next launch.")
+
+                    # Backfill the pool to keep `workers` files in flight.
+                    if not stop_requested["flag"]:
+                        try:
+                            in_flight.add(_submit(ex, next(it)))
+                        except StopIteration:
+                            pass
+                gc.collect()
+
+        if stop_requested["flag"]:
+            return KbIndex(chunks=list(chunks), sources=[], built_at=0.0)
 
     # Finalize: write the real index, drop the checkpoint.
     sources = [
