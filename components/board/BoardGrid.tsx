@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, PanelRightOpen, PanelRightClose } from "lucide-react";
 import { useAppState } from "@/lib/app-state";
+import { usePreferences, getPreferences, setSizePref } from "@/lib/preferences";
+import { ResizeHandle } from "@/components/ui/resizer";
 import type { WorkItemRow } from "@/lib/agent-client";
 import {
   ALL,
@@ -29,6 +31,12 @@ export function BoardGrid() {
     setSelected,
     toggleSelected,
   } = useAppState();
+
+  const { prefs, togglePanel } = usePreferences();
+  const detailVisible = prefs.panels.detail;
+  const [detailWidth, setDetailWidth] = useState(
+    () => getPreferences().sizes.detailWidth
+  );
 
   const [activeWiId, setActiveWiId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -110,18 +118,34 @@ export function BoardGrid() {
   return (
     <div className="flex min-h-0 flex-1 gap-2">
       {/* Items pane */}
-      <div className="tt-card flex min-w-0 flex-[3] flex-col gap-1.5 p-2.5">
-        <div className="flex items-center justify-between">
+      <div className="tt-card flex min-w-0 flex-1 flex-col gap-1.5 p-2.5">
+        <div className="flex items-center justify-between gap-2">
           <h2 className="tt-header text-[15px]">{headerLabel}</h2>
-          <span
-            className="text-xs"
-            style={{
-              color: selected.size ? "#10b981" : COLOR_MUTED,
-              fontWeight: selected.size ? 600 : 400,
-            }}
-          >
-            {selected.size} selected
-          </span>
+          <div className="flex items-center gap-2">
+            <span
+              className="text-xs"
+              style={{
+                color: selected.size ? "#10b981" : COLOR_MUTED,
+                fontWeight: selected.size ? 600 : 400,
+              }}
+            >
+              {selected.size} selected
+            </span>
+            <button
+              className="tt-btn-ghost flex shrink-0 items-center gap-1.5 !px-3 !py-1.5 text-xs"
+              onClick={() => togglePanel("detail")}
+              title={
+                detailVisible ? "Hide the detail panel" : "Show the detail panel"
+              }
+            >
+              {detailVisible ? (
+                <PanelRightClose className="h-3.5 w-3.5" strokeWidth={2} />
+              ) : (
+                <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={2} />
+              )}
+              {detailVisible ? "Hide details" : "Show details"}
+            </button>
+          </div>
         </div>
 
         {/* Filter row 1 */}
@@ -216,10 +240,27 @@ export function BoardGrid() {
         )}
       </div>
 
-      {/* Detail pane */}
-      <div className="flex min-w-0 flex-[2] flex-col">
-        <DetailPane activeWiId={activeWiId} />
-      </div>
+      {/* Detail pane — hidden by default, toggled from the Work Items header */}
+      {detailVisible && (
+        <>
+          <ResizeHandle
+            axis="x"
+            value={detailWidth}
+            min={300}
+            max={900}
+            invert
+            onChange={setDetailWidth}
+            onCommit={(v) => setSizePref("detailWidth", v)}
+            ariaLabel="Resize detail panel"
+          />
+          <div
+            className="flex shrink-0 flex-col"
+            style={{ width: detailWidth }}
+          >
+            <DetailPane activeWiId={activeWiId} />
+          </div>
+        </>
+      )}
     </div>
   );
 }

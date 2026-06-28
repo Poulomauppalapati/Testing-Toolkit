@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAppState, type LogLine } from "@/lib/app-state";
+import { getPreferences, setSizePref } from "@/lib/preferences";
+import { ResizeHandle } from "@/components/ui/resizer";
 
 const LEVEL_COLOR: Record<LogLine["level"], string> = {
   INFO: "#8a8f99",
@@ -13,16 +15,29 @@ const LEVEL_COLOR: Record<LogLine["level"], string> = {
 export function LogPanel() {
   const { log } = useAppState();
   const endRef = useRef<HTMLDivElement | null>(null);
+  const [height, setHeight] = useState(() => getPreferences().sizes.logHeight);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [log]);
 
   // Desktop LogProgressPanel: no in-panel header or trash/close icons — just
-  // the scrolling log view (Hide lives in the action strip) — L02.
+  // the scrolling log view (Hide lives in the action strip) — L02. The top
+  // edge is a free-hand resize handle whose height persists to preferences.
   return (
-    <div className="tt-card flex h-44 flex-col overflow-hidden p-0">
-      <div className="min-h-0 flex-1 overflow-auto bg-[#0d1017] px-3 py-2 font-mono text-xs leading-relaxed">
+    <div className="flex shrink-0 flex-col" style={{ height }}>
+      <ResizeHandle
+        axis="y"
+        value={height}
+        min={100}
+        max={600}
+        invert
+        onChange={setHeight}
+        onCommit={(v) => setSizePref("logHeight", v)}
+        ariaLabel="Resize activity log"
+      />
+      <div className="tt-card flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+        <div className="min-h-0 flex-1 overflow-auto bg-[#0d1017] px-3 py-2 font-mono text-xs leading-relaxed">
         {log.length === 0 ? (
           <p className="text-[#5a5f6a]">No activity yet.</p>
         ) : (
@@ -44,7 +59,8 @@ export function LogPanel() {
             );
           })
         )}
-        <div ref={endRef} />
+          <div ref={endRef} />
+        </div>
       </div>
     </div>
   );

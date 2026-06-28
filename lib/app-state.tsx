@@ -23,6 +23,7 @@ import {
   type BoardView,
   type SettingsResponse,
 } from "./agent-client";
+import { getPreferences, setPanelPref } from "./preferences";
 
 export type KbState = "none" | "indexing" | "ready" | "error";
 export type DialogId =
@@ -128,12 +129,25 @@ export function AppStateProvider({
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
   const [log, setLog] = useState<LogLine[]>([]);
-  const [logVisible, setLogVisible] = useState(false);
+  // Visibility defaults come from saved preferences (first launch hides all).
+  const [logVisible, setLogVisibleState] = useState<boolean>(
+    () => getPreferences().panels.log
+  );
+  const setLogVisible = useCallback((v: boolean) => {
+    setLogVisibleState(v);
+    setPanelPref("log", v);
+  }, []);
 
   const [kbState, setKbState] = useState<KbState>("none");
   const [kbMessage, setKbMessage] = useState("KB: no project selected");
 
-  const [navVisible, setNavVisible] = useState(true);
+  const [navVisible, setNavVisibleState] = useState<boolean>(
+    () => getPreferences().panels.nav
+  );
+  const setNavVisible = useCallback((v: boolean) => {
+    setNavVisibleState(v);
+    setPanelPref("nav", v);
+  }, []);
 
   const [dialog, setDialog] = useState<DialogId>(null);
   const [generateCtx, setGenerateCtx] = useState<GenerateContext>({
@@ -162,7 +176,7 @@ export function AppStateProvider({
 
   const reloadProjects = useCallback(async () => {
     setProjectsLoading(true);
-    setLogVisible(true);
+    // Log panel stays hidden by default; the user opens it via Show / the rail.
     pushLog("INFO", "Loading projects...");
     try {
       const names = await agent.listProjects();
