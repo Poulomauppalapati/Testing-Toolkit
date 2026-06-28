@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useAgent } from "@/lib/agent-context";
 import { useAppState } from "@/lib/app-state";
 import { useAppUpdate } from "@/lib/use-app-update";
-import { getPreferences, setPendingReindexPref } from "@/lib/preferences";
+import {
+  getPreferences,
+  setPendingReindexPref,
+  isFirstLaunchToday,
+  markUpdateCheckedToday,
+} from "@/lib/preferences";
 import type { UpdateStatus } from "@/lib/agent-client";
 import { AgentUpdateRequired } from "@/components/onboarding/AgentUpdateRequired";
 import { ActivityBar } from "./ActivityBar";
@@ -46,8 +51,7 @@ export function AppShell() {
     }
   }, [status, settings?.configured, reloadProjects]);
 
-  // On every refresh: once connected & configured, check for the latest agent
-  // patch. Strategy is "silent first, then block":
+  // Check for the latest agent patch. Strategy is "silent first, then block":
   //   1. If an update exists and auto-update IS configured, apply it silently —
   //      apply() restarts the agent, waits for it, and reloads the page so the
   //      new code is live. The patch just "arrives" on refresh.
@@ -56,32 +60,34 @@ export function AppShell() {
   //      out of date with the shipped patch, so we BLOCK the whole app with
   //      AgentUpdateRequired and require a reinstall.
   // Nothing happens (no noise, no block) when already up to date.
+  //
+  // When to run: configured sessions check on every refresh (as before). On top
+  // of that, the FIRST LAUNCH OF EACH DAY always checks regardless of whether
+  // the toolkit is configured yet — only a connected agent is required — so
+  // shipped agent changes are never missed for days at a time.
   useEffect(() => {
-    if (
-      status === "connected" &&
-      settings?.configured &&
-      !autoUpdated.current
-    ) {
-      autoUpdated.current = true;
-      void (async () => {
-        const s = await check();
-        if (!s?.update_available) return; // up to date or check failed
-        if (s.configured) {
-          pushLog?.(
-            "INFO",
-            `New patch available (v${s.latest}). Applying automatically...`
-          );
-          const applied = await apply(); // reloads the page on success
-          if (applied) return;
-        }
-        // Either not configured for auto-update, or the silent apply failed.
+    if (status !== "connected" || autoUpdated.current) return;
+    if (!settings?.configured && !isFirstLaunchToday()) return;
+    autoUpdated.current = true;
+    void (async () => {
+      markUpdateCheckedToday();
+      const s = await check();
+      if (!s?.update_available) return; // up to date or check failed
+      if (s.configured) {
         pushLog?.(
-          "WARN",
-          "Agent changes require a reinstall to take effect. Pausing the app."
+          "INFO",
+          `New patch available (v${s.latest}). Applying automatically...`
         );
-        setUpdateBlocked(s);
-      })();
-    }
+        const applied = await apply(); // reloads the page on success
+        if (applied) return;
+      }
+      // Either not configured for auto-update, or the silent apply failed.
+      pushLog?.(
+        "WARN",
+        "Agent changes require a reinstall to take effect. Pausing the app."
+      );
+      setUpdateBlocked(s);
+    })();
   }, [status, settings?.configured, check, apply, pushLog]);
 
   // After a reinstall the agent restarts and the app reloads with a persisted

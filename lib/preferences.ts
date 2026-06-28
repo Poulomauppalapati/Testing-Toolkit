@@ -41,6 +41,12 @@ export interface UiPreferences {
    * the freshly reinstalled agent reconnects and the user continues.
    */
   pendingReinstall: boolean;
+  /**
+   * Local calendar date ("YYYY-MM-DD") of the last agent update check. Used to
+   * guarantee an update check on the first launch of each day regardless of
+   * whether the toolkit is otherwise configured. Empty string = never checked.
+   */
+  lastUpdateCheck: string;
 }
 
 const KEY = "tt.ui.prefs.v3";
@@ -54,6 +60,7 @@ const DEFAULTS: UiPreferences = {
   tourCompleted: false,
   pendingReindex: false,
   pendingReinstall: false,
+  lastUpdateCheck: "",
 };
 
 let cache: UiPreferences = DEFAULTS;
@@ -72,6 +79,8 @@ function load(): UiPreferences {
       tourCompleted: !!parsed.tourCompleted,
       pendingReindex: !!parsed.pendingReindex,
       pendingReinstall: !!parsed.pendingReinstall,
+      lastUpdateCheck:
+        typeof parsed.lastUpdateCheck === "string" ? parsed.lastUpdateCheck : "",
     };
   } catch {
     return DEFAULTS;
@@ -150,6 +159,26 @@ export function setPendingReindexPref(value: boolean) {
 export function setPendingReinstallPref(value: boolean) {
   ensureLoaded();
   persist({ ...cache, pendingReinstall: value });
+}
+
+/** Local calendar date as "YYYY-MM-DD" (not UTC) for daily-check comparisons. */
+export function todayKey(): string {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/** True when no update check has run yet today (first launch of the day). */
+export function isFirstLaunchToday(): boolean {
+  ensureLoaded();
+  return cache.lastUpdateCheck !== todayKey();
+}
+
+/** Record that an update check ran today (always persisted). */
+export function markUpdateCheckedToday() {
+  ensureLoaded();
+  persist({ ...cache, lastUpdateCheck: todayKey() });
 }
 
 export function usePreferences() {
