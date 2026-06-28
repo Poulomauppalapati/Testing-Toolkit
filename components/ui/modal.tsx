@@ -2,7 +2,7 @@
 
 import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Minus, Square, X } from "lucide-react";
+import { X } from "lucide-react";
 
 interface ModalProps {
   open: boolean;
@@ -14,8 +14,7 @@ interface ModalProps {
 }
 
 /**
- * Portaled modal dialog with a desktop OS-style teal title bar (icon + title +
- * window controls), matching the PyQt dialogs in the desktop app.
+ * Portaled modal dialog with a clean header (title + close button).
  *
  * Intentionally framer-motion-free. A motion/AnimatePresence overlay rendered
  * through a portal gets promoted to its own compositor layer (will-change) and
@@ -63,29 +62,18 @@ export function Modal({
         className="tt-dialog tt-dialog-enter flex max-h-[90vh] w-full flex-col overflow-hidden shadow-2xl"
         style={{ maxWidth: width }}
       >
-        {/* Teal OS-style title bar */}
-        <header className="tt-titlebar flex h-8 shrink-0 items-center justify-between pl-3 pr-1 select-none">
-          <div className="flex items-center gap-2">
-            <span className="h-3 w-3 rounded-[3px] bg-[#0e7e7e]" aria-hidden />
-            <span className="text-[12.5px] font-semibold tracking-tight">
-              {title}
-            </span>
-          </div>
-          <div className="flex items-center gap-0.5">
-            <span className="tt-titlebar-btn" aria-hidden>
-              <Minus className="h-3 w-3" />
-            </span>
-            <span className="tt-titlebar-btn" aria-hidden>
-              <Square className="h-2.5 w-2.5" />
-            </span>
-            <button
-              onClick={onClose}
-              aria-label="Close"
-              className="tt-titlebar-btn is-close"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </div>
+        {/* Dialog header (title + close) */}
+        <header className="flex shrink-0 items-center justify-between border-b border-[#1e2128] px-6 py-3.5 select-none">
+          <h2 className="text-[14px] font-semibold tracking-tight text-[#e6e9ef]">
+            {title}
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-[#94a3b8] transition-colors hover:bg-[#1e2128] hover:text-[#e6e9ef]"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </header>
         <div className="flex-1 overflow-auto px-6 py-5">{children}</div>
         {footer && (

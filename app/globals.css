@@ -427,30 +427,6 @@
     transition: width 0.2s ease;
   }
 
-  /* ---- OS-style teal title bar (app frame + dialog frames) ---- */
-  .tt-titlebar {
-    background: var(--color-titlebar);
-    color: var(--color-titlebar-text);
-    border-bottom: 1px solid #0e7e7e;
-  }
-  .tt-titlebar-btn {
-    color: #d6f5f5;
-    width: 30px;
-    height: 22px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 4px;
-    transition: background 0.1s ease;
-  }
-  .tt-titlebar-btn:hover {
-    background: rgba(255, 255, 255, 0.18);
-  }
-  .tt-titlebar-btn.is-close:hover {
-    background: #e53e3e;
-    color: #fff;
-  }
-
   /* ---- Board tree group row (desktop: plain text + disclosure triangle) ---- */
   .tt-group-row {
     background: #0d1017;
