@@ -380,17 +380,25 @@ build_anthropic_client = build_llm_client
 
 
 def model_pair() -> tuple[str, str]:
-    """(primary_model, fast_model). fast_model falls back to primary."""
+    """(primary_model, fast_model).
+
+    The fast model resolves via get_setting so the configured DEFAULT_FAST_MODEL
+    (Sonnet) applies when the user hasn't explicitly chosen one. Reading
+    _load_all() directly here was the bug behind "Fast mode used Opus": the raw
+    store has no default, so an unset fast model fell back to primary (Opus).
+    Only fall back to primary if get_setting somehow yields nothing.
+    """
     primary = get_setting(KEY_MODEL)
-    fast = _load_all().get(KEY_FAST_MODEL, "").strip() or primary
+    fast = get_setting(KEY_FAST_MODEL) or primary
     return primary, fast
 
 
 def model_triple() -> tuple[str, str, str]:
-    """(primary, fast, fallback). Each falls back to primary if blank."""
+    """(primary, fast, fallback). Fast/fallback use their configured defaults
+    (Sonnet / Haiku) via get_setting, falling back to primary only if blank."""
     primary = get_setting(KEY_MODEL)
-    fast = _load_all().get(KEY_FAST_MODEL, "").strip() or primary
-    fallback = _load_all().get(KEY_FALLBACK_MODEL, "").strip() or primary
+    fast = get_setting(KEY_FAST_MODEL) or primary
+    fallback = get_setting(KEY_FALLBACK_MODEL) or primary
     return primary, fast, fallback
 
 
