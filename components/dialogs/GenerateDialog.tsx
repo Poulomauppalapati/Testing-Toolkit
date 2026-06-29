@@ -395,6 +395,8 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
                 setFeedback={setFeedback}
                 iteration={iteration}
                 busy={busy}
+                fastModel={fastModel}
+                setFastModel={setFastModel}
                 onRegenerate={() => run(true)}
               />
             )}
@@ -426,6 +428,8 @@ function RegenerateSection({
   setFeedback,
   iteration,
   busy,
+  fastModel,
+  setFastModel,
   onRegenerate,
 }: {
   pushed: string;
@@ -433,8 +437,11 @@ function RegenerateSection({
   setFeedback: (v: string) => void;
   iteration: number;
   busy: boolean;
+  fastModel: boolean;
+  setFastModel: (v: boolean) => void;
   onRegenerate: () => void;
 }) {
+  const atLimit = iteration >= MAX_ITERATIONS;
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-[#2d313c] bg-[#13161d] p-3">
       <h4 className="text-sm font-bold text-[#edf0f5]">Regenerate with feedback</h4>
@@ -458,13 +465,28 @@ function RegenerateSection({
         >
           Attach files...
         </button>
-        <button
-          className="tt-btn-primary !px-4 !py-1.5 text-sm"
-          onClick={onRegenerate}
-          disabled={busy || !feedback.trim() || iteration >= MAX_ITERATIONS}
-        >
-          Regenerate
-        </button>
+        <div className="flex items-center gap-3">
+          <label
+            className="flex items-center gap-1.5 text-xs text-[#bfc4cc]"
+            title="Use the faster model (skips decompose/verify) for this regeneration"
+          >
+            <input
+              type="checkbox"
+              className="tt-check"
+              checked={fastModel}
+              onChange={(e) => setFastModel(e.target.checked)}
+              disabled={busy || atLimit}
+            />
+            Fast model
+          </label>
+          <button
+            className="tt-btn-primary !px-4 !py-1.5 text-sm"
+            onClick={onRegenerate}
+            disabled={busy || !feedback.trim() || atLimit}
+          >
+            Regenerate
+          </button>
+        </div>
       </div>
     </div>
   );
