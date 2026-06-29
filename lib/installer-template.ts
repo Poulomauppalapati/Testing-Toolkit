@@ -881,6 +881,40 @@ REF='${shRef}'
 TOKEN='${shToken}'
 FRESH='${shFresh}'
 
+# --- OS-agnostic no-flash: run in the background, drive the web UI ----------
+# Parity with the Windows windowless .vbs. On macOS a double-clicked .command
+# opens Terminal, and many Linux file managers open a terminal too. To match the
+# "everything happens in the web UI" experience, when we are attached to a
+# terminal we relaunch ourselves FULLY DETACHED (output to the centralized
+# workspace log) and close the terminal window, so the install runs in the
+# background while the web app shows live progress via the local install beacon.
+# A missing Python is the one thing worth showing in the terminal, so we check
+# for it BEFORE detaching. The detached child sets TT_DETACHED=1 and runs inline.
+if [ -z "\${TT_DETACHED:-}" ] && [ -f "\$0" ] && [ -t 1 ]; then
+  _has_py=""
+  for c in python3 python; do
+    if command -v "\$c" >/dev/null 2>&1; then _has_py="1"; break; fi
+  done
+  if [ -z "\$_has_py" ]; then
+    echo ""
+    echo "  ERROR: Python 3.9+ is required but was not found."
+    echo "    macOS:  brew install python   (or install from python.org)"
+    echo "    Linux:  sudo apt install python3 python3-venv"
+    echo ""
+    echo "  Install Python, then run this installer again."
+    exit 1
+  fi
+  export TT_DETACHED=1
+  _ttw_logs="\$HOME/TestingToolkitWeb/logs"
+  mkdir -p "\$_ttw_logs" 2>/dev/null || _ttw_logs="\${TMPDIR:-/tmp}"
+  nohup "\$0" >"\$_ttw_logs/installer-launch.out" 2>&1 &
+  if [ "\$(uname)" = "Darwin" ]; then
+    # Close the Terminal window that opened from the double-click (best effort).
+    osascript -e 'tell application "Terminal" to close (every window whose name contains "Testing-Toolkit-Installer")' >/dev/null 2>&1 || true
+  fi
+  exit 0
+fi
+
 echo ""
 echo "  Testing Toolkit - offline agent installer"
 echo "  -----------------------------------------"
