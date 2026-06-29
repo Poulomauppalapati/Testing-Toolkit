@@ -51,9 +51,16 @@ _CF = CREATE_NO_WINDOW if os.name == "nt" else 0
 # bootstrap installer points us at the SAME file (via TT_INSTALL_PROGRESS) and
 # serves it over http://127.0.0.1:7842/install/progress so the web app can show
 # a live progress bar even before the real agent is up.
+# Default lives inside the single centralized root (~/TestingToolkitWeb/.cache)
+# so nothing install-related is scattered in %TEMP%. The bootstrap installer
+# normally overrides this via TT_INSTALL_PROGRESS (and points its beacon at the
+# same file). INSTALL_DIR is resolved further down, so recompute the root here.
+_TT_ROOT = Path(
+    os.environ.get("TT_INSTALL_DIR", Path.home() / "TestingToolkitWeb")
+).expanduser()
 PROGRESS_PATH = Path(
     os.environ.get("TT_INSTALL_PROGRESS")
-    or (Path(tempfile.gettempdir()) / "TestingToolkit-install-progress.json")
+    or (_TT_ROOT / ".cache" / "install-progress.json")
 )
 
 # --- Resolve bundle layout (everything is relative to this file) ----------
@@ -695,6 +702,32 @@ def clean_previous_install(os_name: str) -> None:
         if d.exists():
             info(f"Removing previous build: {d}")
             shutil.rmtree(d, ignore_errors=True)
+
+    # Clean up the LEGACY split-tree install root (~/TestingToolkit, no "Web").
+    # Older builds put the agent code/venv/lib there while the workspace + data
+    # always lived in ~/TestingToolkitWeb, so this folder only ever held program
+    # files - safe to remove its program dirs so no orphaned copy is left behind.
+    # Skip entirely if the current install root IS the legacy path (custom
+    # TT_INSTALL_DIR) so we never delete the build we are installing.
+    legacy_root = (Path.home() / "TestingToolkit").expanduser()
+    try:
+        same = legacy_root.resolve() == INSTALL_DIR.resolve()
+    except Exception:
+        same = str(legacy_root) == str(INSTALL_DIR)
+    if legacy_root.exists() and not same:
+        for sub in ("venv", "agent", "lib"):
+            d = legacy_root / sub
+            if d.exists():
+                info(f"Removing orphaned legacy build: {d}")
+                shutil.rmtree(d, ignore_errors=True)
+        # Remove the legacy root itself only if it is now empty (never nuke a
+        # folder that still contains anything the user may have placed there).
+        try:
+            if not any(legacy_root.iterdir()):
+                legacy_root.rmdir()
+                info(f"Removed empty legacy folder: {legacy_root}")
+        except Exception:
+            pass
 
 
 # --------------------------------------------------------------------------

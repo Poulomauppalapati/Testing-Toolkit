@@ -82,7 +82,15 @@ call :tslog "================ Testing Toolkit installer launched ===============
 call :tslog "log dir : %TT_LOG_DIR%"
 call :tslog "user=%USERNAME%  host=%COMPUTERNAME%  os=%OS%  hidden=%TT_HIDDEN%"
 
-set "_TT_PS1=%TEMP%\\TestingToolkit_%RANDOM%%RANDOM%.ps1"
+rem Centralized scratch/cache dir: EVERYTHING install-related lives under the
+rem single TestingToolkitWeb root, not %TEMP%. Forwarded to the PS worker (which
+rem uses it for the progress file and extraction scratch). Falls back to %TEMP%.
+set "TT_CACHE_DIR=%USERPROFILE%\\TestingToolkitWeb\\.cache"
+mkdir "%TT_CACHE_DIR%" >nul 2>&1
+if not exist "%TT_CACHE_DIR%" set "TT_CACHE_DIR=%TEMP%"
+call :tslog "cache dir : %TT_CACHE_DIR%"
+
+set "_TT_PS1=%TT_CACHE_DIR%\\TestingToolkit_%RANDOM%%RANDOM%.ps1"
 call :tslog "extracting PowerShell payload to %_TT_PS1%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $marker='#PS'+'BEGIN'; $c=[IO.File]::ReadAllText('%~f0'); $i=$c.IndexOf($marker); if ($i -lt 0) { throw 'PSBEGIN marker not found in installer' }; $start=$c.IndexOf([char]10, $i) + 1; [IO.File]::WriteAllText($env:_TT_PS1, $c.Substring($start), [Text.UTF8Encoding]::new($false)); exit 0 } catch { try { [IO.File]::AppendAllText($env:TT_BOOT_LOG, '[extract-error] ' + $_.Exception.Message + [Environment]::NewLine) } catch {}; exit 1 }"
 set "_TT_EXTRACT=%ERRORLEVEL%"
@@ -147,6 +155,15 @@ $LogFile = Join-Path $LogDir ('installer-' + $stamp + '.log')
 # A STABLE filename that always points at the most recent run so the user (and
 # support) never has to hunt for a timestamped file.
 $LastLog = Join-Path $LogDir 'installer-last.log'
+
+# Centralized scratch/cache dir: the progress file + extraction scratch live
+# under the single TestingToolkitWeb root, NOT %TEMP%. The cmd forwards
+# TT_CACHE_DIR; fall back to it / USERPROFILE / TEMP defensively so nothing
+# install-related is ever scattered outside the workspace.
+$CacheDir = $env:TT_CACHE_DIR
+if (-not $CacheDir) { $CacheDir = Join-Path $env:USERPROFILE 'TestingToolkitWeb\\.cache' }
+try { New-Item -ItemType Directory -Force -Path $CacheDir -ErrorAction Stop | Out-Null }
+catch { $CacheDir = $env:TEMP }
 
 $global:TtLogWriter = $null
 try {
@@ -239,7 +256,7 @@ function Show-Bar($done, $total) {
 # "installing" so the app never mistakes the beacon for a live agent. It frees
 # the port the moment install.py signals release_port (just before it starts
 # the agent). Written without an HttpListener so no URL-ACL/admin is needed.
-$ProgressPath = Join-Path $env:TEMP 'TestingToolkit-install-progress.json'
+$ProgressPath = Join-Path $CacheDir 'install-progress.json'
 
 function Set-TtProgress($phase, $message, $percent) {
   try {
@@ -357,7 +374,8 @@ try {
 
   $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
   if (-not $scriptDir) { $scriptDir = (Get-Location).Path }
-  $work = Join-Path $env:TEMP ('TestingToolkit_' + [Guid]::NewGuid().ToString('N'))
+  # Transient extraction scratch under the centralized cache (deleted on finish).
+  $work = Join-Path $CacheDir ('work\\' + [Guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Force -Path $work | Out-Null
   # Stable cache keyed by ref => completed parts survive a re-run (true resume).
   # Kept inside the single centralized workspace so EVERYTHING (downloads, logs,
@@ -690,8 +708,6 @@ try {
     try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } catch {}
   }
 }
-\`
-}
 `
 }
 
@@ -871,7 +887,15 @@ def fetch(path):
 # serves it at /install/progress and answers /health with 503 "installing" so
 # the app never mistakes the beacon for a live agent. It releases the port as
 # soon as install.py signals release_port (just before it starts the agent).
-PROGRESS_PATH = os.path.join(tempfile.gettempdir(), "TestingToolkit-install-progress.json")
+# Lives inside the single centralized workspace (~/TestingToolkitWeb/.cache) so
+# nothing install-related is left in TMPDIR. Falls back to TMPDIR only if that
+# directory cannot be created.
+_progress_dir = os.path.join(_ws_root, ".cache")
+try:
+    os.makedirs(_progress_dir, exist_ok=True)
+    PROGRESS_PATH = os.path.join(_progress_dir, "install-progress.json")
+except Exception:
+    PROGRESS_PATH = os.path.join(tempfile.gettempdir(), "TestingToolkit-install-progress.json")
 
 def write_progress(phase, message, percent=None):
     try:
@@ -963,7 +987,15 @@ try:
         for p in parts:
             dbg("part %s  sha256=%s..." % (p["name"], p["sha256"][:12]))
 
-    work = tempfile.mkdtemp(prefix="TestingToolkit_")
+    # Transient extraction scratch, kept inside the centralized workspace
+    # (~/TestingToolkitWeb/.cache/work) and deleted when the install finishes.
+    # Falls back to TMPDIR if the workspace dir cannot be created.
+    try:
+        _work_parent = os.path.join(_ws_root, ".cache", "work")
+        os.makedirs(_work_parent, exist_ok=True)
+        work = tempfile.mkdtemp(prefix="TestingToolkit_", dir=_work_parent)
+    except Exception:
+        work = tempfile.mkdtemp(prefix="TestingToolkit_")
     # Stable cache keyed by ref => completed parts survive a re-run (resume).
     # Kept inside the single centralized workspace (~/TestingToolkitWeb/.cache/
     # downloads) so EVERYTHING lives in one place; falls back to TMPDIR if that
