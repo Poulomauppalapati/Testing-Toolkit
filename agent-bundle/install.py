@@ -76,26 +76,106 @@ INSTALL_DIR = Path(
 AGENT_DIR = INSTALL_DIR / "agent"
 VENV_DIR = INSTALL_DIR / "venv"
 LIB_DIR = INSTALL_DIR / "lib"  # used for the --target fallback path
-LOG_DIR = INSTALL_DIR / "logs"  # agent.log + diagnostics live here
+# Logs live here: agent.log + installer trace logs. Honor TT_LOG_DIR (the
+# bootstrap installer forwards the SAME folder) so all logs land together.
+LOG_DIR = Path(
+    os.environ.get("TT_LOG_DIR") or (INSTALL_DIR / "logs")
+).expanduser()
 
 
 # --------------------------------------------------------------------------
 # Logging helpers
 # --------------------------------------------------------------------------
+# The offline installer usually runs under a HIDDEN PowerShell worker, so its
+# stdout is thrown away. We therefore ALWAYS also write a trace-level log to a
+# documented, stable folder shared with the bootstrap installer and the agent:
+#   <INSTALL_DIR>/logs/install-<stamp>.log   (timestamped, this run)
+#   <INSTALL_DIR>/logs/install-last.log       (stable, always the latest run)
+# Logging is set up on the very first line of main() and never raises.
+import datetime as _dt
+
+_LOG_FH = None            # open file handle for install-<stamp>.log
+_LOG_PATH: Path | None = None
+_LAST_LOG_PATH: Path | None = None
+
+
+def _setup_logging() -> None:
+    """Open the trace log file. Never raises; falls back to TEMP, then off."""
+    global _LOG_FH, _LOG_PATH, _LAST_LOG_PATH
+    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    candidates = [LOG_DIR, Path(tempfile.gettempdir()) / "TestingToolkit" / "logs"]
+    for d in candidates:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            _LOG_PATH = d / f"install-{stamp}.log"
+            _LAST_LOG_PATH = d / "install-last.log"
+            _LOG_FH = open(_LOG_PATH, "w", encoding="utf-8")
+            break
+        except Exception:
+            _LOG_FH = None
+            _LOG_PATH = None
+            _LAST_LOG_PATH = None
+    _log_line("INFO", "================ offline installer started ================")
+    if _LOG_PATH:
+        _log_line("INFO", f"trace log: {_LOG_PATH}")
+
+
+def _log_line(level: str, msg: str) -> None:
+    """Append one timestamped line to the trace log (best-effort)."""
+    if not _LOG_FH:
+        return
+    try:
+        ts = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        _LOG_FH.write(f"{ts}  [{level}] {msg}\n")
+        _LOG_FH.flush()
+    except Exception:
+        pass
+
+
+def _close_logging() -> None:
+    """Flush + copy the run log to the stable install-last.log path."""
+    global _LOG_FH
+    try:
+        if _LOG_FH:
+            _LOG_FH.flush()
+    except Exception:
+        pass
+    try:
+        if _LOG_PATH and _LAST_LOG_PATH and _LOG_PATH.exists():
+            shutil.copyfile(_LOG_PATH, _LAST_LOG_PATH)
+    except Exception:
+        pass
+    try:
+        if _LOG_FH:
+            _LOG_FH.close()
+    except Exception:
+        pass
+    _LOG_FH = None
+
+
 def info(msg: str) -> None:
     print(f"[INFO] {msg}", flush=True)
+    _log_line("INFO", msg)
 
 
 def warn(msg: str) -> None:
     print(f"[WARN] {msg}", flush=True)
+    _log_line("WARN", msg)
 
 
 def error(msg: str) -> None:
     print(f"[ERROR] {msg}", flush=True)
+    _log_line("ERROR", msg)
 
 
 def ok(msg: str) -> None:
     print(f"[SUCCESS] {msg}", flush=True)
+    _log_line("SUCCESS", msg)
+
+
+def trace(msg: str) -> None:
+    """Trace-level detail: file only (keeps the console clean)."""
+    _log_line("TRACE", msg)
 
 
 # --------------------------------------------------------------------------
@@ -141,9 +221,34 @@ def progress(phase: str, message: str, percent: float | None = None, **extra) ->
 
 
 def _run(cmd, **kwargs):
-    """subprocess.run wrapper that is windowless on Windows."""
+    """subprocess.run wrapper that is windowless on Windows.
+
+    Traces the command and (when captured) its output + return code to the log
+    so pip/venv/schtasks failures are fully diagnosable even though the install
+    runs hidden.
+    """
     kwargs.setdefault("creationflags", _CF)
-    return subprocess.run(cmd, **kwargs)
+    try:
+        printable = cmd if isinstance(cmd, str) else " ".join(str(c) for c in cmd)
+    except Exception:
+        printable = str(cmd)
+    trace(f"run: {printable}")
+    result = subprocess.run(cmd, **kwargs)
+    try:
+        rc = getattr(result, "returncode", None)
+        if rc is not None:
+            trace(f"  -> exit {rc}")
+        out = getattr(result, "stdout", None)
+        err = getattr(result, "stderr", None)
+        if out:
+            for line in str(out).splitlines():
+                trace(f"  out: {line}")
+        if err:
+            for line in str(err).splitlines():
+                trace(f"  err: {line}")
+    except Exception:
+        pass
+    return result
 
 
 def _port_free(port: int) -> bool:
@@ -422,8 +527,11 @@ def install_via_venv(base_python: str, online: bool = False) -> str | None:
         info("Installing packages offline from the bundled wheelhouse (this can take a minute)...")
         args = pip_args_offline(["-r", str(REQUIREMENTS)])
     progress("installing_deps", "Installing packages (clean, no cached wheels)", 78)
-    r = _run([str(venv_py), *args], text=True)
+    # Capture output so the real pip failure reason is written to the trace log
+    # (the install runs hidden, so streamed stdout would otherwise be lost).
+    r = _run([str(venv_py), *args], text=True, capture_output=True)
     if r.returncode != 0:
+        warn("pip install (venv) failed; see the installer log for details.")
         return None
     return str(venv_py)
 
@@ -447,8 +555,10 @@ def install_via_target(python_exe: str, online: bool = False) -> str | None:
     extra = ["--target", str(LIB_DIR), "-r", str(REQUIREMENTS)]
     args = pip_args_online(extra) if online else pip_args_offline(extra)
     progress("installing_deps", "Installing packages (clean, no cached wheels)", 78)
-    r = _run([python_exe, *args], text=True)
+    # Capture output so the real pip failure reason lands in the trace log.
+    r = _run([python_exe, *args], text=True, capture_output=True)
     if r.returncode != 0:
+        warn("pip install (portable) failed; see the installer log for details.")
         return None
     return python_exe
 
@@ -838,6 +948,9 @@ def main() -> int:
                         help="Do not register a login auto-start entry.")
     args = parser.parse_args()
 
+    # Set up the trace log FIRST so every subsequent step is recorded to disk.
+    _setup_logging()
+
     os_name, arch = detect_platform()
     print("[INFO] ============================================")
     print("[INFO] Testing Toolkit Agent Installer (offline)")
@@ -845,6 +958,24 @@ def main() -> int:
     info(f"Platform: {os_name}-{arch}")
     info(f"Bundle:   {BUNDLE_DIR}")
     info(f"Install:  {INSTALL_DIR}")
+    info(f"Logs:     {LOG_DIR}")
+    trace(f"python={sys.executable}")
+    trace(f"argv={sys.argv}")
+    trace(f"platform={platform.platform()}")
+    trace(
+        "env: "
+        + ", ".join(
+            f"{k}={'<set>' if os.environ.get(k) else ''}"
+            for k in (
+                "TT_INSTALL_DIR",
+                "TT_LOG_DIR",
+                "TT_INSTALL_PROGRESS",
+                "TT_OFFLINE_ONLY",
+                "TT_ENFORCE_DENSE",
+                "TT_UPDATE_TOKEN",
+            )
+        )
+    )
 
     # Validate the bundle is complete.
     missing = [p.name for p in (WHEELHOUSE, SRC_DIR, REQUIREMENTS) if not p.exists()]
@@ -982,19 +1113,29 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    import traceback as _tb
+
     try:
         rc = main()
         if rc != 0:
+            error(f"Installer exited with code {rc}.")
             progress("error", "Installation failed; see the installer log", None,
                      release_port=True)
+        else:
+            trace("installer finished successfully (exit 0)")
+        _close_logging()
         sys.exit(rc)
     except KeyboardInterrupt:
         print()
         error("Interrupted.")
         progress("error", "Installation was interrupted", None, release_port=True)
+        _close_logging()
         sys.exit(130)
     except Exception as exc:  # noqa: BLE001
         error(f"Unexpected installer error: {exc}")
+        # Record the full traceback so an unexpected crash is fully diagnosable.
+        _log_line("FATAL", "Unhandled exception:\n" + _tb.format_exc())
         progress("error", f"Unexpected installer error: {exc}", None,
                  release_port=True)
+        _close_logging()
         sys.exit(1)

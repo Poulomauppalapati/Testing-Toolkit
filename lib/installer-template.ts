@@ -32,8 +32,16 @@
  *     plus a periodic heartbeat, so the user always sees forward motion.
  *   - Every part is cached under %TEMP%\\TestingToolkit-cache\\<ref> and skipped
  *     on re-run if its checksum already matches (true resume).
- *   - A full transcript is written to %TEMP% so failures can be diagnosed.
- *     Set TT_VERBOSE=1 before running for per-attempt / proxy / redirect detail.
+ *   - A full, trace-level log is ALWAYS written to a documented, stable folder
+ *     (%USERPROFILE%\\TestingToolkit\\logs, with %TEMP% fallback). Each run gets
+ *     a timestamped installer-<stamp>.log plus a stable installer-last.log that
+ *     always points at the most recent run. The cmd bootstrap additionally
+ *     writes installer-bootstrap.log BEFORE PowerShell starts, so even a failure
+ *     to launch PowerShell (policy / antivirus) leaves a breadcrumb instead of a
+ *     window that flashes and vanishes. Logging is set up on the very first line
+ *     and guarded by a top-level trap, so nothing fails silently. Trace logging
+ *     is ON by default; set TT_VERBOSE=0 only to quiet the on-console debug echo
+ *     (the log file always gets full detail).
  *
  * `repo`, `ref`, and `token` are injected from the server at download time, so
  * the token never lives in the repo or the client source - only inside the
@@ -52,25 +60,146 @@ export function buildWindowsInstaller(
   const psToken = token.replace(/'/g, "''")
 
   return `@echo off
-setlocal
+setlocal enabledelayedexpansion
+title Testing Toolkit Agent - Installer
+
+rem ====================================================================
+rem Durable logging from the VERY FIRST line. We create a documented,
+rem stable log folder and write the bootstrap (cmd) steps here BEFORE
+rem PowerShell is even launched, so that a failure to start PowerShell
+rem (policy, antivirus, missing runtime) still leaves a breadcrumb on
+rem disk instead of a window that flashes and vanishes with no trace.
+rem All installer logs live together in one place.
+rem ====================================================================
+set "TT_LOG_DIR=%USERPROFILE%\\TestingToolkit\\logs"
+mkdir "%TT_LOG_DIR%" >nul 2>&1
+if not exist "%TT_LOG_DIR%" set "TT_LOG_DIR=%TEMP%\\TestingToolkit\\logs"
+mkdir "%TT_LOG_DIR%" >nul 2>&1
+if not exist "%TT_LOG_DIR%" set "TT_LOG_DIR=%TEMP%"
+set "TT_BOOT_LOG=%TT_LOG_DIR%\\installer-bootstrap.log"
+call :tslog "================ Testing Toolkit installer launched ================"
+call :tslog "log dir : %TT_LOG_DIR%"
+call :tslog "user=%USERNAME%  host=%COMPUTERNAME%  os=%OS%  hidden=%TT_HIDDEN%"
+
 set "_TT_PS1=%TEMP%\\TestingToolkit_%RANDOM%%RANDOM%.ps1"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$marker='#PS'+'BEGIN'; $c=[IO.File]::ReadAllText('%~f0'); $start=$c.IndexOf([char]10, $c.IndexOf($marker)) + 1; [IO.File]::WriteAllText($env:_TT_PS1, $c.Substring($start), [Text.UTF8Encoding]::new($false))"
-rem Relaunch the install hidden so there is no console window: the web app is
-rem the UI and shows live progress via the beacon. The hidden PowerShell
-rem deletes its own temp .ps1 when it finishes (it must outlive this cmd).
+call :tslog "extracting PowerShell payload to %_TT_PS1%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $marker='#PS'+'BEGIN'; $c=[IO.File]::ReadAllText('%~f0'); $i=$c.IndexOf($marker); if ($i -lt 0) { throw 'PSBEGIN marker not found in installer' }; $start=$c.IndexOf([char]10, $i) + 1; [IO.File]::WriteAllText($env:_TT_PS1, $c.Substring($start), [Text.UTF8Encoding]::new($false)); exit 0 } catch { try { [IO.File]::AppendAllText($env:TT_BOOT_LOG, '[extract-error] ' + $_.Exception.Message + [Environment]::NewLine) } catch {}; exit 1 }"
+set "_TT_EXTRACT=%ERRORLEVEL%"
+if not "%_TT_EXTRACT%"=="0" goto :extract_failed
+if not exist "%_TT_PS1%" goto :extract_failed
+call :tslog "payload extracted OK"
+
+rem Relaunch the worker hidden so there is no console window: the web app is
+rem the UI and shows live progress via the beacon. We forward TT_LOG_DIR so the
+rem PowerShell worker logs into the SAME folder. The hidden PowerShell deletes
+rem its own temp .ps1 when it finishes (it must outlive this cmd).
 if not "%TT_HIDDEN%"=="1" (
   set "TT_HIDDEN=1"
+  call :tslog "launching hidden PowerShell worker"
   start "" powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%_TT_PS1%"
   exit /b 0
 )
 powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%_TT_PS1%"
 set "_TT_CODE=%ERRORLEVEL%"
 del "%_TT_PS1%" >nul 2>&1
+call :tslog "worker exited with code %_TT_CODE%"
 exit /b %_TT_CODE%
+
+:extract_failed
+call :tslog "[FATAL] could not extract the PowerShell payload (exit %_TT_EXTRACT%)."
+echo.
+echo   Testing Toolkit installer could not start.
+echo.
+echo   A diagnostic log was written to:
+echo     %TT_BOOT_LOG%
+echo.
+echo   This is almost always PowerShell being blocked by Group Policy or
+echo   antivirus. Please send the log file above to support.
+echo.
+pause
+exit /b 1
+
+:tslog
+>>"%TT_BOOT_LOG%" echo [%DATE% %TIME%] %~1
+exit /b 0
 #PSBEGIN
-$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+
+# === Durable TRACE logging - set up BEFORE anything that can fail =========
+# This MUST come first. Earlier versions enabled ErrorActionPreference=Stop and
+# referenced [Net.SecurityProtocolType]::Tls13 (undefined on some .NET builds)
+# before any log existed, so an early failure killed the worker silently - a
+# window that flashed and vanished with no log. We now open a trace log in a
+# documented, stable folder FIRST, define a crash trap, and only THEN make
+# errors terminating. The folder is shared with the offline installer and the
+# agent so every log lives in one place: %USERPROFILE%\\TestingToolkit\\logs.
+$LogDir = $env:TT_LOG_DIR
+if (-not $LogDir) { $LogDir = Join-Path $env:USERPROFILE 'TestingToolkit\\logs' }
+try { New-Item -ItemType Directory -Force -Path $LogDir -ErrorAction Stop | Out-Null }
+catch {
+  $LogDir = Join-Path $env:TEMP 'TestingToolkit\\logs'
+  try { New-Item -ItemType Directory -Force -Path $LogDir -ErrorAction Stop | Out-Null } catch { $LogDir = $env:TEMP }
+}
+$stamp   = (Get-Date -Format 'yyyyMMdd-HHmmss')
+$LogFile = Join-Path $LogDir ('installer-' + $stamp + '.log')
+# A STABLE filename that always points at the most recent run so the user (and
+# support) never has to hunt for a timestamped file.
+$LastLog = Join-Path $LogDir 'installer-last.log'
+
+$global:TtLogWriter = $null
+try {
+  $global:TtLogWriter = [IO.StreamWriter]::new($LogFile, $false, (New-Object System.Text.UTF8Encoding($false)))
+  $global:TtLogWriter.AutoFlush = $true
+} catch {}
+
+function Trace($level, $msg) {
+  $line = ('{0}  [{1}] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $level, $msg)
+  if ($global:TtLogWriter) { try { $global:TtLogWriter.WriteLine($line) } catch {} }
+}
+# Trace-level logging is ON by default (operator asked for verbose traces). The
+# file ALWAYS gets full detail; set TT_VERBOSE=0 only to quiet the on-console
+# debug lines (irrelevant while hidden, useful when run with a console).
+$Verbose = -not ($env:TT_VERBOSE -eq '0')
+
+function Write-Step($m) { Write-Host ""; Write-Host "==> $m" -ForegroundColor Cyan; Trace 'STEP' $m }
+function Write-Dbg($m)  { Trace 'TRACE' $m; if ($Verbose) { Write-Host ("    [debug] " + $m) -ForegroundColor DarkGray } }
+
+Trace 'INFO' '================ installer worker started ================'
+Trace 'INFO' ('log file : ' + $LogFile)
+Trace 'INFO' ('hidden   : ' + ($env:TT_HIDDEN -eq '1'))
+try { Trace 'INFO' ('PowerShell ' + $PSVersionTable.PSVersion.ToString() + ' on ' + [System.Environment]::OSVersion.VersionString) } catch {}
+
+# Top-level trap: NOTHING fails silently anymore. Any unhandled terminating
+# error is written (with position + script stack) to the trace log before the
+# script unwinds, and a stable copy of the log is kept for support.
+trap {
+  Trace 'FATAL' ($_.Exception.GetType().FullName + ': ' + $_.Exception.Message)
+  try { Trace 'FATAL' ('at ' + $_.InvocationInfo.PositionMessage) } catch {}
+  try { Trace 'FATAL' ('stack:' + [Environment]::NewLine + $_.ScriptStackTrace) } catch {}
+  try { if ($global:TtLogWriter) { $global:TtLogWriter.Flush() } } catch {}
+  try { Copy-Item -LiteralPath $LogFile -Destination $LastLog -Force -ErrorAction SilentlyContinue } catch {}
+  try { Set-TtProgress 'error' ('Installer crashed: ' + $_.Exception.Message) } catch {}
+  continue
+}
+
+# TLS: enable the strongest protocols this runtime ACTUALLY supports. Older
+# Windows PowerShell / .NET builds do not define the Tls13 enum member, and
+# merely referencing it throws - which (under ErrorActionPreference=Stop) is
+# exactly what used to kill the installer before any log existed. Build the
+# value defensively: start from Tls12 and OR in newer protocols only if defined.
+try {
+  $proto = [Net.SecurityProtocolType]::Tls12
+  foreach ($name in @('Tls13')) {
+    if ([Enum]::IsDefined([Net.SecurityProtocolType], $name)) {
+      $proto = $proto -bor ([Net.SecurityProtocolType]$name)
+    }
+  }
+  [Net.ServicePointManager]::SecurityProtocol = $proto
+  Trace 'TRACE' ('TLS protocols: ' + [Net.ServicePointManager]::SecurityProtocol)
+} catch { Trace 'WARN' ('could not set TLS protocols (continuing): ' + $_.Exception.Message) }
+
+# Only NOW is it safe to make errors terminating (we have logging + a trap).
+$ErrorActionPreference = 'Stop'
 
 $Repo  = '${psRepo}'
 $Ref   = '${psRef}'
@@ -79,18 +208,14 @@ $ApiBase = 'https://api.github.com/repos/' + $Repo + '/contents/'
 $Concurrency = 4
 if ($env:TT_CONCURRENCY -match '^[1-9][0-9]*$') { $Concurrency = [int]$env:TT_CONCURRENCY }
 $MaxRetries  = 6
-$Verbose = ($env:TT_VERBOSE -eq '1')
 # Fresh install: ignore any previously downloaded parts and pull everything
 # again from scratch. Injected by the server for reinstall downloads.
 $Fresh = ${fresh ? "$true" : "$false"}
-
-# --- Console + transcript logging ----------------------------------------
-$LogFile = Join-Path $env:TEMP ('TestingToolkit-installer-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
+# Start-Transcript is intentionally NOT used: it starts too late and is silently
+# unavailable in some constrained runtimes. Our own StreamWriter trace log above
+# captures everything from the first line instead.
 $Transcribing = $false
-try { Start-Transcript -Path $LogFile -Force | Out-Null; $Transcribing = $true } catch {}
-
-function Write-Step($m) { Write-Host ""; Write-Host "==> $m" -ForegroundColor Cyan }
-function Write-Dbg($m)  { if ($Verbose) { Write-Host ("    [debug] " + $m) -ForegroundColor DarkGray } }
+Trace 'INFO' ('repo=' + $Repo + ' ref=' + $Ref + ' concurrency=' + $Concurrency + ' fresh=' + $Fresh)
 # A single in-place progress bar (overwrites itself with a leading CR) so the
 # download shows clean forward motion instead of a wall of per-part lines.
 function Show-Bar($done, $total) {
@@ -218,7 +343,7 @@ try {
   Write-Host "  -----------------------------------------"
   Write-Dbg ("repo=" + $Repo + " ref=" + $Ref + " concurrency=" + $Concurrency + " verbose=" + $Verbose)
   Write-Dbg ("PowerShell " + $PSVersionTable.PSVersion.ToString() + " on " + [System.Environment]::OSVersion.VersionString)
-  Write-Dbg ("transcript: " + $(if ($Transcribing) { $LogFile } else { 'unavailable' }))
+  Write-Dbg ("trace log: " + $LogFile)
 
   # GitHub API headers. 'application/vnd.github.raw' returns the file bytes
   # directly. The token is read-only and scoped to this single repo.
@@ -402,6 +527,11 @@ try {
         catch { $r = [pscustomobject]@{ Name = $j.Name; Status = 'failed'; Error = $_.Exception.Message; Attempts = $MaxRetries; Bytes = 0; Redirect = $false; Log = $null } }
         finally { $j.PS.Dispose() }
         $pending.RemoveAt($i)
+        # Flush this part's full per-attempt detail (proxy/redirect/retry/checksum)
+        # into the trace log so download failures are fully diagnosable offline.
+        Trace 'PART' ($r.Name + ' -> ' + $r.Status + ' (attempts=' + $r.Attempts + ', bytes=' + $r.Bytes + ', redirect=' + $r.Redirect + ')')
+        if ($r.Error) { Trace 'PART' ($r.Name + ' error: ' + $r.Error) }
+        if ($r.Log) { foreach ($ll in $r.Log) { Trace 'PART' ($r.Name + '  ' + $ll) } }
         if ($r.Status -eq 'failed') { $failures += $r } else { $done++ }
         $seen = $done + $failures.Count
         Show-Bar $seen $total
@@ -500,21 +630,47 @@ try {
   Write-Host ""
   if ($code -eq 0) {
     Write-Host "  Done. Testing Toolkit is installed." -ForegroundColor Green
+    Trace 'INFO' 'offline installer finished successfully (exit 0)'
   } else {
     Write-Host ("  Installer exited with code " + $code) -ForegroundColor Yellow
+    Trace 'WARN' ('offline installer exited with code ' + $code)
   }
 } catch {
-  Set-TtProgress 'error' ("Install failed: " + $_.Exception.Message)
+  $errMsg = $_.Exception.Message
+  Trace 'ERROR' ('install failed: ' + $errMsg)
+  try { Trace 'ERROR' ('at ' + $_.InvocationInfo.PositionMessage) } catch {}
+  try { Trace 'ERROR' ('stack:' + [Environment]::NewLine + $_.ScriptStackTrace) } catch {}
+  Set-TtProgress 'error' ("Install failed: " + $errMsg)
   Write-Host ""
-  Write-Host ("  ERROR: " + $_.Exception.Message) -ForegroundColor Red
+  Write-Host ("  ERROR: " + $errMsg) -ForegroundColor Red
   Write-Host ("  Debug log: " + $LogFile) -ForegroundColor Yellow
   Write-Host "  Nothing was installed. You can safely re-run this installer (finished parts are cached)."
+  # The worker runs hidden, so a failure would otherwise be invisible. Pop a
+  # best-effort message box pointing at the trace log so the user is never left
+  # staring at a window that flashed and vanished with nothing to go on.
+  if ($env:TT_HIDDEN -eq '1') {
+    try {
+      Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+      [void][System.Windows.Forms.MessageBox]::Show(
+        ("Testing Toolkit could not finish installing." + [Environment]::NewLine + [Environment]::NewLine +
+         $errMsg + [Environment]::NewLine + [Environment]::NewLine +
+         "A full diagnostic log was saved to:" + [Environment]::NewLine + $LastLog + [Environment]::NewLine + [Environment]::NewLine +
+         "You can safely re-run the installer (finished downloads are cached)."),
+        "Testing Toolkit Installer",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Error) 
+    } catch {}
+  }
 } finally {
   # Stop the progress beacon (it usually exits on its own once install.py
   # signals release_port, but force it down in case of an early failure).
   try { if ($beaconPs) { $beaconPs.Stop() } } catch {}
   try { if ($beaconRs) { $beaconRs.Close() } } catch {}
-  if ($Transcribing) { try { Stop-Transcript | Out-Null } catch {} }
+  # Always keep a stable copy of this run's trace log at installer-last.log so
+  # there is a single, predictable file to open / send to support.
+  try { if ($global:TtLogWriter) { $global:TtLogWriter.Flush() } } catch {}
+  try { Copy-Item -LiteralPath $LogFile -Destination $LastLog -Force -ErrorAction SilentlyContinue } catch {}
+  try { if ($global:TtLogWriter) { $global:TtLogWriter.Dispose(); $global:TtLogWriter = $null } } catch {}
   # Only prompt when we actually have a visible console. When relaunched hidden
   # (TT_HIDDEN=1) the web app is the UI, so a Read-Host would hang invisibly.
   if (-not ($env:TT_HIDDEN -eq '1')) {
@@ -603,30 +759,69 @@ AUTH_HEADERS = {
 }
 MAX_RETRIES = 6
 CONCURRENCY = int(os.environ.get("TT_CONCURRENCY") or "4")
-VERBOSE = os.environ.get("TT_VERBOSE") == "1"
+# Trace logging is ON by default (the file always gets full detail). Set
+# TT_VERBOSE=0 only to quiet the on-console debug echo.
+VERBOSE = os.environ.get("TT_VERBOSE") != "0"
 
-# --- logging: console + transcript file ----------------------------------
-_log_path = os.path.join(
-    tempfile.gettempdir(),
-    "TestingToolkit-installer-%s.log" % datetime.datetime.now().strftime("%Y%m%d-%H%M%S"),
+# --- logging: console + durable trace file -------------------------------
+# Always write a trace-level log to a documented, stable folder shared with the
+# offline installer and the agent so failures are always diagnosable:
+#   ~/TestingToolkit/logs/installer-<stamp>.log  (this run)
+#   ~/TestingToolkit/logs/installer-last.log      (stable, latest run)
+_stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+_log_dir = os.environ.get("TT_LOG_DIR") or os.path.join(
+    os.path.expanduser("~"), "TestingToolkit", "logs"
 )
+_log_path = None
+_last_log_path = None
 _log_fh = None
-try:
-    _log_fh = open(_log_path, "w", encoding="utf-8")
-except Exception:
-    _log_fh = None
+for _cand in (_log_dir, os.path.join(tempfile.gettempdir(), "TestingToolkit", "logs"), tempfile.gettempdir()):
+    try:
+        os.makedirs(_cand, exist_ok=True)
+        _log_path = os.path.join(_cand, "installer-%s.log" % _stamp)
+        _last_log_path = os.path.join(_cand, "installer-last.log")
+        _log_fh = open(_log_path, "w", encoding="utf-8")
+        break
+    except Exception:
+        _log_path = None; _last_log_path = None; _log_fh = None
 
 def log(msg=""):
     print(msg, flush=True)
     if _log_fh:
         try:
-            _log_fh.write(msg + "\\n"); _log_fh.flush()
+            _log_fh.write(str(msg) + "\\n"); _log_fh.flush()
         except Exception:
             pass
 
 def dbg(msg):
+    # File always gets trace detail; console echo gated by VERBOSE.
+    if _log_fh:
+        try:
+            _log_fh.write("    [trace] " + str(msg) + "\\n"); _log_fh.flush()
+        except Exception:
+            pass
     if VERBOSE:
-        log("    [debug] " + msg)
+        print("    [debug] " + str(msg), flush=True)
+
+def _finish_log():
+    # Flush + keep a stable copy at installer-last.log, then close the handle.
+    global _log_fh
+    try:
+        if _log_fh:
+            _log_fh.flush()
+    except Exception:
+        pass
+    try:
+        if _log_path and _last_log_path and os.path.exists(_log_path):
+            shutil.copyfile(_log_path, _last_log_path)
+    except Exception:
+        pass
+    try:
+        if _log_fh:
+            _log_fh.close()
+    except Exception:
+        pass
+    _log_fh = None
 
 def step(m):
     log("")
@@ -924,6 +1119,9 @@ try:
     # Share the progress file so install.py reports clean/install/copy/start
     # into the same beacon (its default path matches PROGRESS_PATH anyway).
     env["TT_INSTALL_PROGRESS"] = PROGRESS_PATH
+    # Forward the resolved log folder so install.py logs into the SAME place.
+    if _log_path:
+        env["TT_LOG_DIR"] = os.path.dirname(_log_path)
     if os.path.exists(install_sh):
         os.chmod(install_sh, 0o755)
         code = subprocess.call(["bash", install_sh], cwd=dest, env=env)
@@ -936,19 +1134,19 @@ try:
         log("  Done. Testing Toolkit is installed and will start on login.")
     else:
         log("  Installer exited with code %d" % code)
-    if _log_fh:
-        try: _log_fh.close()
-        except Exception: pass
+    _finish_log()
     sys.exit(code)
 except Exception as e:
+    import traceback as _tb
     write_progress("error", "Install failed: %s" % e)
     log("")
     log("  ERROR: %s" % e)
-    log("  Debug log: %s" % _log_path)
-    log("  Nothing was installed. You can safely re-run this installer (finished parts are cached).")
     if _log_fh:
-        try: _log_fh.close()
+        try: _log_fh.write("    [fatal] " + _tb.format_exc() + "\\n"); _log_fh.flush()
         except Exception: pass
+    log("  Debug log: %s" % (_last_log_path or _log_path))
+    log("  Nothing was installed. You can safely re-run this installer (finished parts are cached).")
+    _finish_log()
     sys.exit(1)
 TT_PYEOF
 `
