@@ -28,7 +28,6 @@ import argparse
 import json
 import os
 import platform
-import re
 import shutil
 import signal
 import socket
@@ -46,22 +45,6 @@ MIN_PY = (3, 9)
 # so we can pass it unconditionally and keep the whole install windowless.
 CREATE_NO_WINDOW = 0x08000000
 _CF = CREATE_NO_WINDOW if os.name == "nt" else 0
-
-# Shared progress file the installer writes throughout the install. The smart
-# bootstrap installer points us at the SAME file (via TT_INSTALL_PROGRESS) and
-# serves it over http://127.0.0.1:7842/install/progress so the web app can show
-# a live progress bar even before the real agent is up.
-# Default lives inside the single centralized root (~/TestingToolkitWeb/.cache)
-# so nothing install-related is scattered in %TEMP%. The bootstrap installer
-# normally overrides this via TT_INSTALL_PROGRESS (and points its beacon at the
-# same file). INSTALL_DIR is resolved further down, so recompute the root here.
-_TT_ROOT = Path(
-    os.environ.get("TT_INSTALL_DIR", Path.home() / "TestingToolkitWeb")
-).expanduser()
-PROGRESS_PATH = Path(
-    os.environ.get("TT_INSTALL_PROGRESS")
-    or (_TT_ROOT / ".cache" / "install-progress.json")
-)
 
 # --- Resolve bundle layout (everything is relative to this file) ----------
 BUNDLE_DIR = Path(__file__).resolve().parent
@@ -193,43 +176,21 @@ def trace(msg: str) -> None:
 
 
 # --------------------------------------------------------------------------
-# Install progress (relayed to the web app via the bootstrap's beacon)
+# Install progress (printed to the visible installer console)
 # --------------------------------------------------------------------------
-def _bundle_version() -> str:
-    """Best-effort read of the agent version that is ABOUT to be installed.
-
-    Read straight from the (possibly overlaid) source tree, since the agent
-    package is not importable yet during install.
-    """
-    try:
-        txt = (SRC_DIR / "agent" / "version.py").read_text(encoding="utf-8")
-        m = re.search(r'AGENT_VERSION\s*=\s*["\']([^"\']+)["\']', txt)
-        if m:
-            return m.group(1)
-    except Exception:
-        pass
-    return ""
-
-
 def progress(phase: str, message: str, percent: float | None = None, **extra) -> None:
-    """Write a single progress snapshot to the shared progress file.
+    """Print a single progress line to the console.
 
-    Never raises: progress reporting must never break an install.
+    The installer runs in a visible terminal, so progress is shown to the user
+    directly on stdout (there is no install beacon / shared progress file). The
+    extra kwargs (e.g. release_port) are accepted for call-site compatibility
+    and ignored. Never raises: progress reporting must never break an install.
     """
     try:
-        data: dict = {
-            "phase": phase,
-            "message": message,
-            "ts": int(time.time() * 1000),
-        }
         if percent is not None:
-            data["percent"] = max(0, min(100, round(percent)))
-        v = _bundle_version()
-        if v:
-            data["version"] = v
-        data.update(extra)
-        PROGRESS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        PROGRESS_PATH.write_text(json.dumps(data), encoding="utf-8")
+            print("  [%3d%%] %s" % (max(0, min(100, round(percent))), message))
+        else:
+            print("  %s" % message)
     except Exception:
         pass
 
@@ -1009,7 +970,6 @@ def main() -> int:
             for k in (
                 "TT_INSTALL_DIR",
                 "TT_LOG_DIR",
-                "TT_INSTALL_PROGRESS",
                 "TT_OFFLINE_ONLY",
                 "TT_ENFORCE_DENSE",
                 "TT_UPDATE_TOKEN",
