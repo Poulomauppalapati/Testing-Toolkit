@@ -30,10 +30,11 @@
  *     Location WITHOUT the Authorization header.
  *   - Progress is reported as each part COMPLETES (not in submission order),
  *     plus a periodic heartbeat, so the user always sees forward motion.
- *   - Every part is cached under %TEMP%\\TestingToolkit-cache\\<ref> and skipped
+ *   - Every part is cached under the centralized workspace
+ *     (%USERPROFILE%\\TestingToolkitWeb\\.cache\\downloads\\<ref>) and skipped
  *     on re-run if its checksum already matches (true resume).
  *   - A full, trace-level log is ALWAYS written to a documented, stable folder
- *     (%USERPROFILE%\\TestingToolkit\\logs, with %TEMP% fallback). Each run gets
+ *     (%USERPROFILE%\\TestingToolkitWeb\\logs, with %TEMP% fallback). Each run gets
  *     a timestamped installer-<stamp>.log plus a stable installer-last.log that
  *     always points at the most recent run. The cmd bootstrap additionally
  *     writes installer-bootstrap.log BEFORE PowerShell starts, so even a failure
@@ -71,9 +72,9 @@ rem (policy, antivirus, missing runtime) still leaves a breadcrumb on
 rem disk instead of a window that flashes and vanishes with no trace.
 rem All installer logs live together in one place.
 rem ====================================================================
-set "TT_LOG_DIR=%USERPROFILE%\\TestingToolkit\\logs"
+set "TT_LOG_DIR=%USERPROFILE%\\TestingToolkitWeb\\logs"
 mkdir "%TT_LOG_DIR%" >nul 2>&1
-if not exist "%TT_LOG_DIR%" set "TT_LOG_DIR=%TEMP%\\TestingToolkit\\logs"
+if not exist "%TT_LOG_DIR%" set "TT_LOG_DIR=%TEMP%\\TestingToolkitWeb\\logs"
 mkdir "%TT_LOG_DIR%" >nul 2>&1
 if not exist "%TT_LOG_DIR%" set "TT_LOG_DIR=%TEMP%"
 set "TT_BOOT_LOG=%TT_LOG_DIR%\\installer-bootstrap.log"
@@ -132,12 +133,13 @@ $ProgressPreference = 'SilentlyContinue'
 # window that flashed and vanished with no log. We now open a trace log in a
 # documented, stable folder FIRST, define a crash trap, and only THEN make
 # errors terminating. The folder is shared with the offline installer and the
-# agent so every log lives in one place: %USERPROFILE%\\TestingToolkit\\logs.
+# agent so every log lives in one centralized place: the single
+# TestingToolkitWeb workspace (%USERPROFILE%\\TestingToolkitWeb\\logs).
 $LogDir = $env:TT_LOG_DIR
-if (-not $LogDir) { $LogDir = Join-Path $env:USERPROFILE 'TestingToolkit\\logs' }
+if (-not $LogDir) { $LogDir = Join-Path $env:USERPROFILE 'TestingToolkitWeb\\logs' }
 try { New-Item -ItemType Directory -Force -Path $LogDir -ErrorAction Stop | Out-Null }
 catch {
-  $LogDir = Join-Path $env:TEMP 'TestingToolkit\\logs'
+  $LogDir = Join-Path $env:TEMP 'TestingToolkitWeb\\logs'
   try { New-Item -ItemType Directory -Force -Path $LogDir -ErrorAction Stop | Out-Null } catch { $LogDir = $env:TEMP }
 }
 $stamp   = (Get-Date -Format 'yyyyMMdd-HHmmss')
@@ -358,7 +360,14 @@ try {
   $work = Join-Path $env:TEMP ('TestingToolkit_' + [Guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Force -Path $work | Out-Null
   # Stable cache keyed by ref => completed parts survive a re-run (true resume).
-  $cacheRoot = Join-Path $env:TEMP 'TestingToolkit-cache'
+  # Kept inside the single centralized workspace so EVERYTHING (downloads, logs,
+  # install, data) lives under %USERPROFILE%\\TestingToolkitWeb. Falls back to
+  # %TEMP% only if that folder cannot be created.
+  $wsRoot = $env:TT_WORKSPACE_DIR
+  if (-not $wsRoot) { $wsRoot = Join-Path $env:USERPROFILE 'TestingToolkitWeb' }
+  $cacheRoot = Join-Path $wsRoot '.cache\\downloads'
+  try { New-Item -ItemType Directory -Force -Path $cacheRoot -ErrorAction Stop | Out-Null }
+  catch { $cacheRoot = Join-Path $env:TEMP 'TestingToolkitWeb-cache'; Write-Dbg ('cache fell back to TEMP: ' + $cacheRoot) }
   # On a fresh (reinstall) download, wipe any previously downloaded parts so
   # nothing stale is reused and the whole bundle is fetched again.
   if ($Fresh) {
@@ -699,10 +708,11 @@ try {
  *
  * Same download robustness as the Windows installer: redirects from GitHub's
  * Contents API are followed WITHOUT the Authorization header (otherwise storage
- * rejects >1 MB blobs), completed parts are cached under
- * $TMPDIR/TestingToolkit-cache/<ref> for true resume, every part is logged in
- * real time, and a full transcript is written to a log file. Set TT_VERBOSE=1
- * for per-attempt / redirect detail.
+ * rejects >1 MB blobs), completed parts are cached under the centralized
+ * workspace (~/TestingToolkitWeb/.cache/downloads/<ref>) for true resume, every
+ * part is logged in real time, and a full trace log is written to
+ * ~/TestingToolkitWeb/logs. Trace logging is on by default; set TT_VERBOSE=0 to
+ * quiet only the on-console echo.
  *
  * `repo`, `ref`, and `token` are injected server-side at download time, exactly
  * like the Windows installer, so the token never lives in the repo or client.
@@ -766,16 +776,17 @@ VERBOSE = os.environ.get("TT_VERBOSE") != "0"
 # --- logging: console + durable trace file -------------------------------
 # Always write a trace-level log to a documented, stable folder shared with the
 # offline installer and the agent so failures are always diagnosable:
-#   ~/TestingToolkit/logs/installer-<stamp>.log  (this run)
-#   ~/TestingToolkit/logs/installer-last.log      (stable, latest run)
+#   ~/TestingToolkitWeb/logs/installer-<stamp>.log  (this run)
+#   ~/TestingToolkitWeb/logs/installer-last.log      (stable, latest run)
 _stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-_log_dir = os.environ.get("TT_LOG_DIR") or os.path.join(
-    os.path.expanduser("~"), "TestingToolkit", "logs"
+_ws_root = os.environ.get("TT_WORKSPACE_DIR") or os.path.join(
+    os.path.expanduser("~"), "TestingToolkitWeb"
 )
+_log_dir = os.environ.get("TT_LOG_DIR") or os.path.join(_ws_root, "logs")
 _log_path = None
 _last_log_path = None
 _log_fh = None
-for _cand in (_log_dir, os.path.join(tempfile.gettempdir(), "TestingToolkit", "logs"), tempfile.gettempdir()):
+for _cand in (_log_dir, os.path.join(tempfile.gettempdir(), "TestingToolkitWeb", "logs"), tempfile.gettempdir()):
     try:
         os.makedirs(_cand, exist_ok=True)
         _log_path = os.path.join(_cand, "installer-%s.log" % _stamp)
@@ -954,8 +965,15 @@ try:
 
     work = tempfile.mkdtemp(prefix="TestingToolkit_")
     # Stable cache keyed by ref => completed parts survive a re-run (resume).
+    # Kept inside the single centralized workspace (~/TestingToolkitWeb/.cache/
+    # downloads) so EVERYTHING lives in one place; falls back to TMPDIR if that
+    # cannot be created.
     safe_ref = "".join(c if (c.isalnum() or c in "_.-") else "_" for c in ref)
-    cache_root = os.path.join(tempfile.gettempdir(), "TestingToolkit-cache")
+    cache_root = os.path.join(_ws_root, ".cache", "downloads")
+    try:
+        os.makedirs(cache_root, exist_ok=True)
+    except Exception:
+        cache_root = os.path.join(tempfile.gettempdir(), "TestingToolkitWeb-cache")
     # On a fresh (reinstall) download, wipe any previously downloaded parts so
     # nothing stale is reused and the whole bundle is fetched again.
     if fresh:

@@ -70,8 +70,15 @@ SRC_DIR = BUNDLE_DIR / "src"
 RUNTIME_DIR = BUNDLE_DIR / "runtime"
 REQUIREMENTS = BUNDLE_DIR / "requirements.txt"
 
+# EVERYTHING lives under one centralized root: ~/TestingToolkitWeb
+# (e.g. C:\\Users\\cnr002\\TestingToolkitWeb). The installed agent code, venv,
+# bundled models, update.json, pid, caches AND all logs go here, right next to
+# the runtime workspace (projects/KB/runs/outputs/settings) which already uses
+# this same root. This matches updater.install_dir() and core.app_config so the
+# on-login autostart (which passes no env vars and relies on these defaults)
+# finds update.json and the workspace in the same place the installer wrote them.
 INSTALL_DIR = Path(
-    os.environ.get("TT_INSTALL_DIR", Path.home() / "TestingToolkit")
+    os.environ.get("TT_INSTALL_DIR", Path.home() / "TestingToolkitWeb")
 ).expanduser()
 AGENT_DIR = INSTALL_DIR / "agent"
 VENV_DIR = INSTALL_DIR / "venv"
@@ -103,7 +110,7 @@ def _setup_logging() -> None:
     """Open the trace log file. Never raises; falls back to TEMP, then off."""
     global _LOG_FH, _LOG_PATH, _LAST_LOG_PATH
     stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    candidates = [LOG_DIR, Path(tempfile.gettempdir()) / "TestingToolkit" / "logs"]
+    candidates = [LOG_DIR, Path(tempfile.gettempdir()) / "TestingToolkitWeb" / "logs"]
     for d in candidates:
         try:
             d.mkdir(parents=True, exist_ok=True)
@@ -641,7 +648,7 @@ def write_update_config() -> None:
 
     The smart installer passes the repo + read-only token via env vars
     (TT_UPDATE_TOKEN / TT_UPDATE_REPO / TT_UPDATE_REF). We store them in
-    ~/TestingToolkit/update.json, which the agent's updater reads on every poll.
+    ~/TestingToolkitWeb/update.json, which the agent's updater reads on every poll.
     Without this, auto-update is simply disabled (non-fatal).
     """
     token = os.environ.get("TT_UPDATE_TOKEN", "")
@@ -678,9 +685,9 @@ def clean_previous_install(os_name: str) -> None:
     """Remove an earlier build before installing the new one.
 
     Only the program directories are removed (agent code, venv, portable lib).
-    User data that lives alongside them in ~/TestingToolkit - settings.json,
-    projects/, runs/, outputs/, logs/, ui_prefs.json - is intentionally
-    preserved so a re-install keeps your configuration.
+    User data that lives alongside them in the single ~/TestingToolkitWeb root -
+    settings.json, projects/, runs/, outputs/, logs/, ui_prefs.json - is
+    intentionally preserved so a re-install keeps your configuration.
     """
     stop_running_agent()
     unregister_autostart(os_name)
