@@ -485,7 +485,7 @@ function TemplatesSection({
       <div className="flex items-center gap-2">
         <label className="text-sm text-[#bfc4cc]">Phase:</label>
         <select
-          className="tt-input w-44 cursor-pointer text-sm"
+          className="tt-input w-auto min-w-44 cursor-pointer text-sm"
           value={phase}
           onChange={(e) => setPhase(e.target.value)}
         >
@@ -621,7 +621,7 @@ function PromptsSection({
         <h4 className="text-sm font-bold text-[#edf0f5]">System prompt</h4>
         <label className="ml-2 text-sm text-[#bfc4cc]">Scope:</label>
         <select
-          className="tt-input w-56 cursor-pointer text-sm"
+          className="tt-input w-auto min-w-56 cursor-pointer text-sm"
           value={scope}
           disabled={busy || !project}
           onChange={(e) => changeScope(e.target.value)}
