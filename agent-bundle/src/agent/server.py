@@ -91,6 +91,15 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:  # noqa: BLE001
         print(f"[agent] autostart self-heal skipped (non-fatal): {exc}", flush=True)
 
+    # Also drop the simple OS-agnostic startup-folder launcher (shell:startup
+    # on Windows, XDG autostart on Linux). This is the most portable autostart
+    # and works even if the scheduler task could not be created. Existing users
+    # get it automatically after the agent auto-updates - no reinstall.
+    try:
+        _ensure_startup_folder_entry()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[agent] startup-folder self-heal skipped (non-fatal): {exc}", flush=True)
+
     yield
 
 
@@ -235,6 +244,76 @@ def _ensure_windowless_autostart() -> None:
                 tmp_path.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+# Bump when the startup-folder launcher format changes so existing entries get
+# rewritten by the self-heal check below.
+_STARTUP_MARKER = "TT_STARTUP_V1"
+
+
+def _windows_startup_vbs(pythonw: str, src_dir: str, pythonpath: str = "") -> str:
+    """A .vbs that launches the agent fully hidden and returns immediately so
+    logon is never blocked. Mirrors install.py:_windows_startup_vbs."""
+    set_env = ""
+    if pythonpath:
+        set_env = f'WshShell.Environment("PROCESS")("PYTHONPATH") = "{pythonpath}"\n'
+    return (
+        f"' Testing Toolkit agent autostart ({_STARTUP_MARKER})\n"
+        'Set WshShell = CreateObject("WScript.Shell")\n'
+        f'WshShell.CurrentDirectory = "{src_dir}"\n'
+        f"{set_env}"
+        f'WshShell.Run """{pythonw}"" -m agent", 0, False\n'
+    )
+
+
+def _linux_autostart_desktop(python_exe: str, src_dir: str, pythonpath: str = "") -> str:
+    """XDG autostart entry. Mirrors install.py:_linux_autostart_desktop."""
+    env_prefix = f"env PYTHONPATH={pythonpath} " if pythonpath else ""
+    return (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Testing Toolkit Agent\n"
+        f"Exec={env_prefix}{python_exe} -m agent\n"
+        f"Path={src_dir}\n"
+        "Terminal=false\n"
+        "X-GNOME-Autostart-enabled=true\n"
+        f"Comment={_STARTUP_MARKER}\n"
+    )
+
+
+def _ensure_startup_folder_entry() -> None:
+    """Ensure the per-user startup-folder launcher exists (Windows shell:startup
+    .vbs / Linux XDG autostart .desktop). Best-effort and idempotent: only
+    writes when the file is missing or out of date. The currently-running agent
+    was launched with a correct environment, so we reuse its PYTHONPATH."""
+    src_dir = str(_SRC_DIR)
+    pythonpath = os.environ.get("PYTHONPATH", "")
+
+    if os.name == "nt":
+        exe = Path(sys.executable)
+        pyw = exe.with_name("pythonw.exe")
+        launch = str(pyw) if pyw.exists() else str(exe)
+        base = os.environ.get("APPDATA")
+        root = Path(base) if base else (Path.home() / "AppData" / "Roaming")
+        startup = root / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+        target = startup / "TestingToolkitAgent.vbs"
+        desired = _windows_startup_vbs(launch, src_dir, pythonpath)
+    elif sys.platform.startswith("linux"):
+        startup = Path.home() / ".config" / "autostart"
+        target = startup / "testingtoolkit-agent.desktop"
+        desired = _linux_autostart_desktop(sys.executable, src_dir, pythonpath)
+    else:
+        # macOS: the LaunchAgents plist already provides the startup entry.
+        return
+
+    try:
+        if target.exists() and target.read_text() == desired:
+            return  # already current
+        startup.mkdir(parents=True, exist_ok=True)
+        target.write_text(desired)
+        print(f"[agent] wrote startup-folder launcher: {target}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[agent] could not write startup-folder launcher (non-fatal): {exc}", flush=True)
 
 
 app = FastAPI(

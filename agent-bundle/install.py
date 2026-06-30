@@ -612,6 +612,10 @@ def unregister_autostart(os_name: str) -> None:
                  capture_output=True, text=True)
             _run(["schtasks", "/delete", "/tn", "TestingToolkitAgent", "/f"],
                  capture_output=True, text=True)
+            # Remove the shell:startup launcher too.
+            vbs = _windows_startup_dir() / "TestingToolkitAgent.vbs"
+            if vbs.exists():
+                vbs.unlink()
         elif os_name == "macos":
             plist = Path.home() / "Library/LaunchAgents/com.testingtoolkit.agent.plist"
             _run(["launchctl", "unload", str(plist)],
@@ -625,6 +629,10 @@ def unregister_autostart(os_name: str) -> None:
             _run(
                 ["systemctl", "--user", "disable", "testingtoolkit-agent.service"],
                 capture_output=True, text=True)
+            # Remove the XDG autostart entry too.
+            desktop = Path.home() / ".config" / "autostart" / "testingtoolkit-agent.desktop"
+            if desktop.exists():
+                desktop.unlink()
     except Exception:
         pass
 
@@ -794,6 +802,86 @@ def _windows_autostart_xml(pythonw: str, src_dir: str) -> str:
 """
 
 
+# --------------------------------------------------------------------------
+# OS-agnostic per-user startup-folder registration (shell:startup style)
+# --------------------------------------------------------------------------
+# On top of the OS service (Task Scheduler / launchd / systemd, which provide
+# the watchdog + restart behavior), we also drop a plain per-user "startup
+# folder" launcher on every OS. This is the simplest, most portable autostart:
+# no admin rights, no scheduler service, just a file in the login startup
+# location - Windows Startup folder (shell:startup) via a hidden .vbs, Linux
+# XDG autostart (~/.config/autostart/*.desktop), and macOS LaunchAgents (the
+# plist register_autostart already writes IS the per-user startup entry).
+# Running both layers is safe: the agent binds a fixed localhost port, so a
+# duplicate launch simply fails to bind and exits.
+_STARTUP_MARKER = "TT_STARTUP_V1"
+
+
+def _windows_startup_dir() -> Path:
+    """The per-user shell:startup folder."""
+    base = os.environ.get("APPDATA")
+    root = Path(base) if base else (Path.home() / "AppData" / "Roaming")
+    return root / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def _windows_startup_vbs(pythonw: str, src_dir: str, pythonpath: str = "") -> str:
+    """A .vbs that launches the agent fully hidden (window style 0, no console)
+    and returns immediately so logon is never blocked. Sets cwd + PYTHONPATH so
+    `-m agent` resolves for both venv and --target installs."""
+    set_env = ""
+    if pythonpath:
+        set_env = f'WshShell.Environment("PROCESS")("PYTHONPATH") = "{pythonpath}"\n'
+    return (
+        f"' Testing Toolkit agent autostart ({_STARTUP_MARKER})\n"
+        'Set WshShell = CreateObject("WScript.Shell")\n'
+        f'WshShell.CurrentDirectory = "{src_dir}"\n'
+        f"{set_env}"
+        f'WshShell.Run """{pythonw}"" -m agent", 0, False\n'
+    )
+
+
+def _linux_autostart_desktop(python_exe: str, src_dir: str, pythonpath: str = "") -> str:
+    """An XDG autostart .desktop entry (the Linux startup-folder equivalent)."""
+    env_prefix = f"env PYTHONPATH={pythonpath} " if pythonpath else ""
+    return (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Testing Toolkit Agent\n"
+        f"Exec={env_prefix}{python_exe} -m agent\n"
+        f"Path={src_dir}\n"
+        "Terminal=false\n"
+        "X-GNOME-Autostart-enabled=true\n"
+        f"Comment={_STARTUP_MARKER}\n"
+    )
+
+
+def register_startup_folder(os_name: str, launch_python: str, use_pythonpath: bool) -> None:
+    """Write the simple per-user startup-folder launcher (complements the OS
+    service registered by register_autostart). Best-effort and idempotent."""
+    src_path = AGENT_DIR / "src"
+    pythonpath = (
+        os.pathsep.join([str(LIB_DIR), str(src_path)]) if use_pythonpath else ""
+    )
+    try:
+        if os_name == "windows":
+            startup = _windows_startup_dir()
+            startup.mkdir(parents=True, exist_ok=True)
+            pyw = windowless_python(launch_python)
+            (startup / "TestingToolkitAgent.vbs").write_text(
+                _windows_startup_vbs(pyw, str(src_path), pythonpath)
+            )
+        elif os_name == "linux":
+            autostart = Path.home() / ".config" / "autostart"
+            autostart.mkdir(parents=True, exist_ok=True)
+            (autostart / "testingtoolkit-agent.desktop").write_text(
+                _linux_autostart_desktop(launch_python, str(src_path), pythonpath)
+            )
+        # macOS: the LaunchAgents plist already provides the per-user startup
+        # entry, so there is nothing extra to write here.
+    except Exception as exc:  # noqa: BLE001
+        warn(f"Could not register startup-folder launcher (non-fatal): {exc}")
+
+
 def register_autostart(os_name: str, launch_python: str, use_pythonpath: bool) -> None:
     info("Registering auto-start on login...")
     src_path = AGENT_DIR / "src"
@@ -856,6 +944,11 @@ def register_autostart(os_name: str, launch_python: str, use_pythonpath: bool) -
             )
     except Exception as exc:
         warn(f"Could not register auto-start (non-fatal): {exc}")
+
+    # Belt-and-suspenders: also drop the simple OS-agnostic startup-folder
+    # launcher so the agent still starts on login even if the scheduler
+    # service above could not be registered.
+    register_startup_folder(os_name, launch_python, use_pythonpath)
 
 
 def _macos_plist(python_exe: str, workdir: Path) -> str:
