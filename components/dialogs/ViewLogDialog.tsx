@@ -7,9 +7,8 @@ import { useAppState } from "@/lib/app-state";
 
 /**
  * ViewLogDialog
- * Port of MainWindow._view_recent_log() from the desktop app. Shows the tail of
- * the log file in a scrollable, read-only monospace view so it can be copied
- * into a bug report. Footer mirrors the desktop: Copy all / Open log folder /
+ * Shows the tail of the log file in a scrollable, read-only monospace view so
+ * it can be copied into a bug report. Footer: Copy all / Open log folder /
  * Close.
  */
 export function ViewLogDialog({ onClose }: { onClose: () => void }) {

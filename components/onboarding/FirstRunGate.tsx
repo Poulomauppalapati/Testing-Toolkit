@@ -69,7 +69,7 @@ function SetupWizard({
   onConnected: (s: Awaited<ReturnType<typeof agent.getSettings>>) => void;
   onSkip: () => void;
 }) {
-  // Match the desktop first-run form: every field starts empty so the
+  // The first-run form starts every field empty so the
   // Base URL shows its placeholder and is directly editable (the backend
   // supplies the default endpoint when none is submitted on save).
   const { values, setValues } = useConnectionFields();

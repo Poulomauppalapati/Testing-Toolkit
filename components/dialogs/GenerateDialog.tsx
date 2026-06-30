@@ -48,7 +48,7 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
   const [pushed, setPushed] = useState<string>("");
   const [runLog, setRunLog] = useState<string[]>([]);
 
-  // Custom options (ADO target fields) — desktop parity (I03).
+  // Custom options (ADO target fields).
   const [optsOpen, setOptsOpen] = useState(true);
   const [areaPath, setAreaPath] = useState("");
   const [iterationPath, setIterationPath] = useState("");
@@ -269,9 +269,6 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
             disabled={busy}
           >
             Manual mode
-          </button>
-          <button className="tt-btn-ghost" disabled title="Stop (desktop only)">
-            Stop
           </button>
           <label className="flex items-center gap-1.5 px-1 text-xs text-[#bfc4cc]">
             <input

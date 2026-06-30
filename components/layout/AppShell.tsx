@@ -48,8 +48,7 @@ export function AppShell() {
   // The agent version reported by /health, used for the (A) handshake below.
   const agentVersion = health?.version ?? null;
 
-  // Bootstrap: once connected & configured, load the project list (desktop
-  // main.py _bootstrap -> reload_projects).
+  // Bootstrap: once connected & configured, load the project list.
   useEffect(() => {
     if (
       status === "connected" &&

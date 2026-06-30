@@ -335,13 +335,6 @@ function DocumentsSection({
         </button>
         <button
           className="tt-btn-ghost !px-3 !py-1.5 text-xs"
-          disabled
-          title="Opening the KB folder requires the desktop app"
-        >
-          Open KB folder
-        </button>
-        <button
-          className="tt-btn-ghost !px-3 !py-1.5 text-xs"
           disabled={indexing || !project}
           onClick={reindex}
         >

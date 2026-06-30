@@ -3,11 +3,10 @@
  * Typed client for the local compute agent at localhost:7842.
  *
  * This mirrors the REAL agent route contract (agent-bundle/src/agent/routes/*)
- * so the web GUI drives the exact same Python backend the desktop app uses.
- * Long operations (generate / push / defect upload / package) run as background
- * jobs on the agent; the browser starts a job, gets a {job_id}, and polls
- * /jobs/{id} for live logs + progress — exactly like the desktop worker + log
- * panel.
+ * so the web GUI drives the Python backend directly. Long operations
+ * (generate / push / defect upload / package) run as background jobs on the
+ * agent; the browser starts a job, gets a {job_id}, and polls /jobs/{id} for
+ * live logs + progress.
  */
 
 const AGENT_URL = "http://127.0.0.1:7842";
@@ -687,8 +686,8 @@ export const agent = {
     handlers: JobHandlers = {},
     force = false
   ): Promise<{ n_chunks: number; n_documents: number; has_dense?: boolean }> {
-    // Background job mirroring the desktop _kick_kb_index worker: returns a job
-    // id we poll for live per-file progress + logs, then read the final result.
+    // Background job: returns a job id we poll for live per-file progress +
+    // logs, then read the final result.
     // The agent runs the job detached, so it KEEPS RUNNING if this tab closes.
     // The agent dedupes: if an index for this project is already running it
     // returns that same job id, so we just reattach to it.

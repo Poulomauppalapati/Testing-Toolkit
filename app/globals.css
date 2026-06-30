@@ -45,7 +45,7 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
-  /* Desktop surface hierarchy (raw) */
+  /* Surface hierarchy (raw) */
   --color-surface-deepest: #0d1017;
   --color-surface-base: #13161d;
   --color-surface-container: #1a1d26;
@@ -57,7 +57,7 @@
   --color-action-hover: #0077ed;
   --color-action-press: #005bb5;
 
-  /* Desktop OS-style title bar (teal) used on the app frame and dialog frames */
+  /* OS-style title bar (teal) used on the app frame and dialog frames */
   --color-titlebar: #159a9a;
   --color-titlebar-text: #eafdfd;
 
@@ -72,7 +72,7 @@
 }
 
 :root {
-  /* Dark-only app: tokens map directly to the desktop palette */
+  /* Dark-only app: tokens map directly to the app palette */
   --background: #0d1017;
   --foreground: #edf0f5;
   --card: #1a1d26;
@@ -455,7 +455,7 @@
     }
   }
 
-  /* ---- Board tree group row (desktop: plain text + disclosure triangle) ---- */
+  /* ---- Board tree group row (plain text + disclosure triangle) ---- */
   .tt-group-row {
     background: #0d1017;
     color: #cfd4dc;
@@ -468,7 +468,7 @@
     font-size: 10px;
     user-select: none;
   }
-  /* Segmented per-cell selection band (desktop QTableView selection) */
+  /* Segmented per-cell selection band */
   .tt-row-selected > td {
     background: #16466e;
     color: #ffffff;

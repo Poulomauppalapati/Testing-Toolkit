@@ -2,9 +2,9 @@
 
 /**
  * app-state.tsx
- * Central UI state mirroring the desktop MainWindow: project/board selection,
- * the loaded board view, the selection set, the log/progress panel feed, KB
- * indexing status, and nav/log panel visibility.
+ * Central UI state: project/board selection, the loaded board view, the
+ * selection set, the log/progress panel feed, KB indexing status, and nav/log
+ * panel visibility.
  */
 
 import {

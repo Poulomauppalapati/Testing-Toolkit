@@ -37,7 +37,7 @@ function Dot({ color, pulse }: { color: string; pulse?: boolean }) {
   );
 }
 
-/** Right-side status chip: colored dot + label (desktop footer G04). */
+/** Right-side status chip: colored dot + label. */
 function Chip({
   label,
   ok,
@@ -105,7 +105,7 @@ export function StatusBar() {
         uploadTotal
       : 0;
 
-  // Left side: activity label + KB status (green when ready), matching desktop.
+  // Left side: activity label + KB status (green when ready).
   const activity = kbUploading ? "Uploading" : working ? "Working" : "Idle";
   const kbReady = kbState === "ready";
 

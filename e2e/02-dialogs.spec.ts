@@ -1,13 +1,13 @@
 import { test, expect } from "@playwright/test";
 import { guardAdoWrites, enterApp } from "./helpers";
 
-test.describe("Shell dialogs (desktop parity)", () => {
+test.describe("Shell dialogs", () => {
   test.beforeEach(async ({ page }) => {
     guardAdoWrites(page);
     await enterApp(page);
   });
 
-  test("Settings dialog matches desktop layout and masks Base URL when stored", async ({
+  test("Settings dialog shows all fields and masks Base URL when stored", async ({
     page,
   }) => {
     await page.getByTitle("Settings").click();
@@ -26,7 +26,7 @@ test.describe("Shell dialogs (desktop parity)", () => {
     await expect(page.getByText("Testing Toolkit - Settings")).toHaveCount(0);
   });
 
-  test("Help menu exposes the desktop actions and About dialog", async ({ page }) => {
+  test("Help menu exposes the log/about actions and About dialog", async ({ page }) => {
     await page.getByTitle("Help").click();
 
     await expect(page.getByText("Open log folder")).toBeVisible();

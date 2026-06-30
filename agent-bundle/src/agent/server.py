@@ -80,10 +80,12 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:  # noqa: BLE001
         print(f"[agent] updater not started (non-fatal): {exc}", flush=True)
 
-    # Self-heal the Windows login task so it launches headlessly (pythonw).
-    # Earlier installs registered the task with python.exe, which pops a black
-    # console window on every login. Re-registering here means existing users
-    # get the fix automatically after the agent auto-updates - no reinstall.
+    # Self-heal the Windows login task so it (a) launches headlessly (pythonw),
+    # and (b) actually survives a cold boot / Windows Fast Startup. Older tasks
+    # were a bare `/sc onlogon` with no catch-up or watchdog, so a missed logon
+    # trigger (the usual Fast-Startup resume) left the agent down forever.
+    # Re-registering here means existing users get the fix automatically after
+    # the agent auto-updates - no reinstall.
     try:
         _ensure_windowless_autostart()
     except Exception as exc:  # noqa: BLE001
@@ -92,34 +94,147 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
 
+# Bump this when the autostart XML changes so existing tasks get re-registered
+# by the self-heal check below.
+_AUTOSTART_TASK_MARKER = "TT_AUTOSTART_V2"
+
+
+def _windows_autostart_xml(pythonw: str, src_dir: str) -> str:
+    """Build a Task Scheduler XML that keeps the agent alive across cold boots.
+
+    Key resilience settings vs. the old `schtasks /sc onlogon` one-liner:
+      * StartWhenAvailable - if the logon trigger is missed (Windows Fast
+        Startup resumes a hibernated session instead of firing a fresh logon),
+        the task runs as soon as the scheduler notices it didn't.
+      * A repeating watchdog trigger (every 5 min, indefinitely) combined with
+        MultipleInstancesPolicy=IgnoreNew: while the agent is alive its task
+        instance is alive so repeats are ignored; if it ever died/never started
+        the next repeat relaunches it within 5 minutes.
+      * RestartOnFailure and ExecutionTimeLimit=PT0S (no 3-day kill).
+      * WorkingDirectory=src so `-m agent` always resolves the package.
+    The marker in <Description> lets the self-heal check detect an already
+    hardened task and skip re-registering.
+    """
+    from xml.sax.saxutils import escape
+
+    cmd = escape(pythonw)
+    wd = escape(src_dir)
+    return f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Testing Toolkit local agent - keeps the localhost bridge running for the web app. {_AUTOSTART_TASK_MARKER}</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+    <CalendarTrigger>
+      <StartBoundary>2020-01-01T00:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <Repetition>
+        <Interval>PT5M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{cmd}</Command>
+      <Arguments>-m agent</Arguments>
+      <WorkingDirectory>{wd}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"""
+
+
 def _ensure_windowless_autostart() -> None:
-    """On Windows, ensure the 'TestingToolkitAgent' login task uses pythonw.exe
-    so no console window appears at startup. Best-effort and idempotent."""
+    """On Windows, ensure the 'TestingToolkitAgent' task is headless (pythonw)
+    AND resilient to cold boot / Fast Startup. Best-effort and idempotent."""
     if os.name != "nt":
         return
     import subprocess
+    import tempfile
 
     exe = Path(sys.executable)
     pyw = exe.with_name("pythonw.exe")
     launch = str(pyw) if pyw.exists() else str(exe)
-    # Only the interpreter matters for the windowless behavior; if we are
-    # already pointed at pythonw there is nothing to fix.
-    cmd = f'"{launch}" -m agent'
+    src_dir = str(_SRC_DIR)
+
+    # Skip only when the task is BOTH headless and already the hardened version.
     try:
         existing = subprocess.run(
-            ["schtasks", "/query", "/tn", "TestingToolkitAgent", "/fo", "list", "/v"],
+            ["schtasks", "/query", "/tn", "TestingToolkitAgent", "/xml"],
             capture_output=True, text=True, timeout=15,
         )
-        if existing.returncode == 0 and "pythonw.exe" in (existing.stdout or "").lower():
-            return  # already headless
+        out = (existing.stdout or "")
+        if (
+            existing.returncode == 0
+            and "pythonw.exe" in out.lower()
+            and _AUTOSTART_TASK_MARKER in out
+        ):
+            return  # already headless + hardened
     except Exception:
         pass
-    subprocess.run(
-        ["schtasks", "/create", "/tn", "TestingToolkitAgent",
-         "/tr", cmd, "/sc", "onlogon", "/rl", "limited", "/f"],
-        capture_output=True, text=True,
-    )
-    print("[agent] re-registered login task to run headlessly (pythonw).", flush=True)
+
+    xml = _windows_autostart_xml(launch, src_dir)
+    tmp_path: Path | None = None
+    try:
+        # schtasks /xml wants a Unicode (UTF-16) file.
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".xml", encoding="utf-16", delete=False
+        ) as tmp:
+            tmp.write(xml)
+            tmp_path = Path(tmp.name)
+        res = subprocess.run(
+            ["schtasks", "/create", "/tn", "TestingToolkitAgent",
+             "/xml", str(tmp_path), "/f"],
+            capture_output=True, text=True,
+        )
+        if res.returncode == 0:
+            print("[agent] re-registered autostart task (headless + cold-boot resilient).", flush=True)
+        else:
+            # Fall back to the old one-liner so we never leave the user with no
+            # autostart at all if the XML registration is rejected.
+            subprocess.run(
+                ["schtasks", "/create", "/tn", "TestingToolkitAgent",
+                 "/tr", f'"{launch}" -m agent', "/sc", "onlogon",
+                 "/rl", "limited", "/f"],
+                capture_output=True, text=True,
+            )
+            print(f"[agent] hardened autostart rejected ({(res.stderr or '').strip()}); kept basic login task.", flush=True)
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 app = FastAPI(

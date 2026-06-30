@@ -63,7 +63,7 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
     window.open(url, "_blank", "noopener");
   };
 
-  // Desktop tabs: selected tab is gray/inset (not bright blue) — D01.
+  // Tabs: selected tab is gray/inset (not bright blue).
   const tabStyle = (active: boolean): React.CSSProperties =>
     active
       ? { background: "#252830", color: "#edf0f5", borderColor: "#2d313c" }
@@ -150,7 +150,7 @@ function DetailContent({
       </p>
     );
 
-  // Desktop metadata line: "User Story · State: Backlog · Column: ... · Assigned: ..."
+  // Metadata line: "User Story · State: Backlog · Column: ... · Assigned: ..."
   const metaParts: string[] = [];
   if (detail.wi_type) metaParts.push(detail.wi_type);
   if (detail.state) metaParts.push(`State: ${detail.state}`);
@@ -366,8 +366,8 @@ const GENERAL_GROUP = "General";
 // hyphen-joined board token (no underscores — underscore is the delimiter).
 const ARTIFACT_NAME_RE =
   /^review_([a-z]+)_(?:(.+)_)?(\d{8}_\d{6})$/i;
-// Legacy desktop name kept for back-compat with older artifacts:
-//   testcases_<review|template>_[<phase>_][<board>_]<YYYYMMDD_HHMMSS>.xlsx
+  // Legacy name kept for back-compat with older artifacts:
+  //   testcases_<review|template>_[<phase>_][<board>_]<YYYYMMDD_HHMMSS>.xlsx
 const LEGACY_NAME_RE =
   /^testcases_(review|template)_(?:(.*)_)?(\d{8}_\d{6})$/;
 
@@ -419,7 +419,7 @@ function parseArtifact(file: ArtifactFile): ParsedArtifact {
     };
   }
 
-  // Legacy desktop format: testcases_<review|template>_[<phase>_][<board>_]<stamp>
+  // Legacy format: testcases_<review|template>_[<phase>_][<board>_]<stamp>
   const lm = LEGACY_NAME_RE.exec(stem);
   if (lm) {
     const genKind = lm[1];
@@ -465,7 +465,7 @@ function parseArtifact(file: ArtifactFile): ParsedArtifact {
   };
 }
 
-/** Generated artifacts pane — desktop layout (O01-O04). */
+/** Generated artifacts pane. */
 function OutputsContent({
   project,
   projectLabel,
@@ -498,7 +498,7 @@ function OutputsContent({
 
   useEffect(refresh, [project]);
 
-  // Parse + sort by stamp descending, exactly like the desktop browser.
+  // Parse + sort by stamp descending.
   const parsed = useMemo(
     () =>
       files
@@ -528,8 +528,8 @@ function OutputsContent({
     }
   };
 
-  // Right-click actions (desktop parity): load an artifact back into the
-  // Generate dialog for regeneration with feedback, or push it to ADO.
+  // Right-click actions: load an artifact back into the Generate dialog for
+  // regeneration with feedback, or push it to ADO.
   const loadRegen = (art: ParsedArtifact) => {
     setGenerateCtx({ tcType: art.tcType, loadArtifactPath: art.file.path });
     openDialog("generate");

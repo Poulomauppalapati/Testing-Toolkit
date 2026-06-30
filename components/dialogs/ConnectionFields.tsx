@@ -8,7 +8,7 @@ import {
   type SaveSettingsPayload,
 } from "@/lib/agent-client";
 
-// Mirrors ConnectionFields._SEED_MODELS in the desktop app.
+// Default model suggestions seeded into the model comboboxes.
 const SEED_MODELS = [
   "bedrock.anthropic.claude-opus-4-6",
   "bedrock.anthropic.claude-sonnet-4-6",
@@ -79,8 +79,8 @@ export function toPayload(v: ConnectionValues): SaveSettingsPayload {
     organization: v.organization,
     project_prefix: v.project_prefix,
   };
-  // Base URL is masked like a secret (desktop T02): only send it when the user
-  // typed a fresh value, otherwise the backend keeps the stored URL.
+  // Base URL is masked like a secret: only send it when the user typed a fresh
+  // value, otherwise the backend keeps the stored URL.
   if (v.base_url && v.base_url !== MASK) p.base_url = v.base_url;
   if (v.api_key && v.api_key !== MASK) p.api_key = v.api_key;
   if (v.pat && v.pat !== MASK) p.pat = v.pat;
@@ -107,8 +107,8 @@ function Field({
 }
 
 /**
- * Masked secret field with an Edit button (desktop T02). Shows dots for a saved
- * value; clicking Edit clears it and enables typing a new value.
+ * Masked secret field with an Edit button. Shows dots for a saved value;
+ * clicking Edit clears it and enables typing a new value.
  */
 function MaskedField({
   value,
@@ -154,10 +154,9 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Editable model combobox that mirrors the desktop QComboBox built in
- * ConnectionFields._populate_model_combos(): a free-text field plus a dropdown
- * grouped by provider, with bold, non-selectable provider headers and an
- * optional leading blank row (for fast/fallback "reuse primary" selection).
+ * Editable model combobox: a free-text field plus a dropdown grouped by
+ * provider, with bold, non-selectable provider headers and an optional leading
+ * blank row (for fast/fallback "reuse primary" selection).
  */
 function ModelCombo({
   value,

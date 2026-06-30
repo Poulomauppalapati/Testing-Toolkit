@@ -20,8 +20,7 @@ interface ModalProps {
  * through a portal gets promoted to its own compositor layer (will-change) and
  * can fail to paint until a reflow is forced — the overlay stays in the DOM,
  * hit-testable and opacity:1, but never composites. A plain mounted overlay
- * paints reliably, matches the desktop (Qt dialogs appear instantly), and is
- * cheaper to render.
+ * paints reliably (dialogs appear instantly) and is cheaper to render.
  */
 export function Modal({
   open,

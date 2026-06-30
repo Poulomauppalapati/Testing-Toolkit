@@ -726,6 +726,74 @@ def windowless_python(launch_python: str) -> str:
     return str(pyw) if pyw.exists() else launch_python
 
 
+# Keep this marker in sync with agent/server.py so the running agent's
+# self-heal recognises an install-time hardened task and won't re-register it.
+_AUTOSTART_TASK_MARKER = "TT_AUTOSTART_V2"
+
+
+def _windows_autostart_xml(pythonw: str, src_dir: str) -> str:
+    """Task Scheduler XML that keeps the agent alive across cold boots / Fast
+    Startup. Mirrors agent/server.py:_windows_autostart_xml (see that for the
+    rationale behind StartWhenAvailable + the watchdog repetition)."""
+    from xml.sax.saxutils import escape
+
+    cmd = escape(pythonw)
+    wd = escape(src_dir)
+    return f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Testing Toolkit local agent - keeps the localhost bridge running for the web app. {_AUTOSTART_TASK_MARKER}</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+    <CalendarTrigger>
+      <StartBoundary>2020-01-01T00:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <Repetition>
+        <Interval>PT5M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{cmd}</Command>
+      <Arguments>-m agent</Arguments>
+      <WorkingDirectory>{wd}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"""
+
+
 def register_autostart(os_name: str, launch_python: str, use_pythonpath: bool) -> None:
     info("Registering auto-start on login...")
     src_path = AGENT_DIR / "src"
@@ -734,12 +802,38 @@ def register_autostart(os_name: str, launch_python: str, use_pythonpath: bool) -
             # Use pythonw.exe so Task Scheduler launches the agent headlessly
             # (a plain python.exe task pops a console window on every login).
             launch_pyw = windowless_python(launch_python)
-            cmd = f'"{launch_pyw}" -m agent'
-            _run(
-                ["schtasks", "/create", "/tn", "TestingToolkitAgent",
-                 "/tr", cmd, "/sc", "onlogon", "/rl", "limited", "/f"],
-                capture_output=True, text=True,
-            )
+            # Register from a hardened XML so the agent survives cold boot /
+            # Windows Fast Startup (StartWhenAvailable + a 5-min watchdog that
+            # only relaunches if it actually died). See _windows_autostart_xml.
+            xml = _windows_autostart_xml(launch_pyw, str(src_path))
+            registered = False
+            try:
+                import tempfile
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".xml", encoding="utf-16", delete=False
+                ) as tmp:
+                    tmp.write(xml)
+                    xml_path = tmp.name
+                res = _run(
+                    ["schtasks", "/create", "/tn", "TestingToolkitAgent",
+                     "/xml", xml_path, "/f"],
+                    capture_output=True, text=True,
+                )
+                registered = getattr(res, "returncode", 1) == 0
+                try:
+                    Path(xml_path).unlink()
+                except Exception:
+                    pass
+            except Exception as exc:  # noqa: BLE001
+                warn(f"Hardened autostart XML failed ({exc}); using basic login task.")
+            if not registered:
+                # Fall back to the simple login task so autostart still works.
+                cmd = f'"{launch_pyw}" -m agent'
+                _run(
+                    ["schtasks", "/create", "/tn", "TestingToolkitAgent",
+                     "/tr", cmd, "/sc", "onlogon", "/rl", "limited", "/f"],
+                    capture_output=True, text=True,
+                )
         elif os_name == "macos":
             plist = Path.home() / "Library/LaunchAgents/com.testingtoolkit.agent.plist"
             plist.parent.mkdir(parents=True, exist_ok=True)

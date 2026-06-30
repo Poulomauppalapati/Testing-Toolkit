@@ -21,9 +21,9 @@ export function LogPanel() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [log]);
 
-  // Desktop LogProgressPanel: no in-panel header or trash/close icons — just
-  // the scrolling log view (Hide lives in the action strip) — L02. The top
-  // edge is a free-hand resize handle whose height persists to preferences.
+  // Log panel: no in-panel header or trash/close icons — just the scrolling
+  // log view (Hide lives in the action strip). The top edge is a free-hand
+  // resize handle whose height persists to preferences.
   return (
     <div className="flex shrink-0 flex-col" style={{ height }}>
       <ResizeHandle
@@ -42,7 +42,7 @@ export function LogPanel() {
           <p className="text-[#5a5f6a]">No activity yet.</p>
         ) : (
           log.map((line) => {
-            // Desktop log lines are "[LEVEL] text" with no timestamp (L03).
+            // Log lines are "[LEVEL] text" with no timestamp.
             // The agent already emits lines like "[INFO] ..."; strip a leading
             // duplicate level tag so we render exactly one.
             const text = line.text.replace(

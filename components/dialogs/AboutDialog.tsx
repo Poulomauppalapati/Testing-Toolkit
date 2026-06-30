@@ -7,7 +7,6 @@ const APP_VERSION = "2.0.0";
 
 /**
  * AboutDialog
- * 1:1 port of MainWindow._about() from the desktop app (ui/main_window.py).
  * Shows the app name, version, a short description, and the feature list.
  */
 export function AboutDialog({ onClose }: { onClose: () => void }) {
