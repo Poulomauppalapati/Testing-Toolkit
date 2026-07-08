@@ -1195,6 +1195,45 @@ def _install_playwright_optional(launch_python: str, use_pythonpath: bool) -> No
         warn(f"Playwright browser install raised an exception (non-fatal): {exc}")
 
 
+def _install_mcp_python_optional(launch_python: str, use_pythonpath: bool) -> None:
+    """Install the mcp Python SDK from the bundled wheelhouse (offline, non-fatal).
+
+    mcp>=1.0 and all its transitive deps are pre-downloaded as wheels and
+    committed in agent-bundle/wheelhouse/ so this step works with zero
+    network access.  It is kept separate from the core requirements.txt so
+    a wheelhouse gap never blocks the primary pip install.
+    """
+    info("Installing mcp Python SDK (optional, from bundled wheelhouse)...")
+    progress("installing_mcp_sdk", "Installing mcp SDK (optional)", 91)
+
+    # Determine the pip executable for the installed environment.
+    if os.name == "nt":
+        pip_exe = VENV_DIR / "Scripts" / "python.exe"
+    else:
+        pip_exe = VENV_DIR / "bin" / "python"
+    if not pip_exe.exists():
+        pip_exe = Path(launch_python)
+
+    wheelhouse = BUNDLE_DIR / "wheelhouse"
+
+    try:
+        r = _run(
+            [str(pip_exe), "-m", "pip", "install",
+             *_PIP_QUIET,
+             "--no-index", f"--find-links={wheelhouse}",
+             "mcp>=1.0"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if r.returncode == 0:
+            ok("mcp SDK installed from wheelhouse.")
+        else:
+            warn("mcp SDK install from wheelhouse failed (non-fatal).")
+            warn("MCP bridge will be unavailable until mcp is installed.")
+            trace(f"pip stderr: {r.stderr[:1000]}")
+    except Exception as exc:  # noqa: BLE001
+        warn(f"mcp SDK install raised an exception (non-fatal): {exc}")
+
+
 # --------------------------------------------------------------------------
 # MCP server install (ADO, JIRA, Playwright) -- fully offline, PwC-safe
 # --------------------------------------------------------------------------
@@ -1693,13 +1732,14 @@ def main() -> int:
     else:
         info("Skipping optional playwright install (TT_OFFLINE_ONLY=1).")
 
+    # --- Optional: mcp Python SDK from bundled wheelhouse ------------------
+    # Wheels ship in agent-bundle/wheelhouse/ so this is always offline.
+    # Kept outside requirements.txt so a wheelhouse gap never blocks the core.
+    _install_mcp_python_optional(launch_python, use_pythonpath)
+
     # --- Optional MCP servers (ADO, JIRA, Playwright) via npm -------------
-    # Non-fatal: agent starts without them; mcp_bridge degrades gracefully.
-    # Skipped in offline-only mode since npm must pull packages from the internet.
-    # MCP servers are always attempted even with TT_OFFLINE_ONLY=1 because
-    # the npm-cache.tar.gz and Node.js parts are bundled in the repo -- no
-    # internet access is needed. The function degrades gracefully if anything
-    # is missing.
+    # node_modules_bundle is committed in the repo -- no internet needed.
+    # Non-fatal: agent starts without MCP tools; mcp_bridge degrades gracefully.
     _install_mcp_servers()
 
     # --- Copy source + models --------------------------------------------

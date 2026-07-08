@@ -50,10 +50,11 @@ olefile>=0.47
 numpy>=1.26
 
 # --- MCP (Model Context Protocol) client SDK ---
-# Required by core/mcp_bridge.py to communicate with all bundled MCP servers
-# (ADO, JIRA, Playwright) over stdio transport. Optional in the same way as
-# playwright: if install fails the bridge degrades gracefully (no MCP tools).
-mcp>=1.0
+# NOT in this file: mcp is installed as a SEPARATE optional step by
+# install.py after the core deps succeed. All mcp wheels ship in the
+# bundled wheelhouse (mcp-1.28.1-py3-none-any.whl + deps). If the optional
+# install fails or is skipped, the agent still boots; only the MCP bridge
+# is unavailable (mcp_bridge.py degrades gracefully with a try/except).
 
 # --- Vector DB (large KBs, embedded/local) ---
 lancedb>=0.6
