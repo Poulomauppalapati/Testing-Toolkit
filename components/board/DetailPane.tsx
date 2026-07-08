@@ -14,6 +14,9 @@ import {
   GitBranch,
   Layers,
   Cpu,
+  FileSpreadsheet,
+  FileCheck2,
+  FileCog,
   ExternalLink as OpenIcon,
 } from "lucide-react";
 import {
@@ -750,6 +753,18 @@ function OutputsContent({
           parsed.map((p) => {
             const f = p.file;
             const isSel = f.path === selected;
+            const isPdf = /\.pdf$/i.test(f.name);
+            const ArtIcon = isPdf ? FileText : p.tcType === "implementation"
+              ? FileCog
+              : p.tcType === "sit"
+                ? FileCheck2
+                : FileSpreadsheet;
+            const phaseBadgeClass =
+              p.tcType === "implementation" ? "tt-badge-info"
+              : p.tcType === "sit"            ? "tt-badge-epic"
+              : p.tcType === "uat"            ? "tt-badge-feature"
+              : isPdf                         ? "tt-badge-neutral"
+              :                                 "tt-badge-neutral";
             return (
               <button
                 key={f.path}
@@ -760,19 +775,41 @@ function OutputsContent({
                   setSelected(f.path);
                   setMenu({ x: e.clientX, y: e.clientY, art: p });
                 }}
-                className="block w-full truncate px-3 py-1.5 text-left text-sm"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors"
                 style={{
                   background: isSel ? "var(--tt-row-sel)" : "transparent",
                   color: isSel ? "#ffffff" : "var(--tt-text-secondary)",
                 }}
                 title={f.name}
               >
-                <span className="text-[var(--tt-text-muted)]">▸ </span>
-                {`${p.board || GENERAL_GROUP} - ${p.when}${
-                  p.phaseLabel && p.phaseLabel !== "General"
-                    ? `  (${p.phaseLabel})`
-                    : ""
-                }`}
+                {/* File type icon */}
+                <ArtIcon
+                  className="h-3.5 w-3.5 shrink-0"
+                  style={{ color: isSel ? "rgba(255,255,255,0.7)" : "var(--tt-primary)" }}
+                />
+                {/* Board + group label */}
+                <span className="min-w-0 flex-1 truncate">
+                  {p.board || GENERAL_GROUP}
+                </span>
+                {/* Phase badge */}
+                {p.phaseLabel && p.phaseLabel !== "General" && (
+                  <span
+                    className={`tt-badge ${phaseBadgeClass} shrink-0`}
+                    style={isSel ? { background: "rgba(255,255,255,0.18)", color: "white" } : undefined}
+                  >
+                    {p.phaseLabel}
+                  </span>
+                )}
+                {/* Timestamp chip */}
+                <span
+                  className="shrink-0 font-mono tabular-nums"
+                  style={{
+                    fontSize: "9px",
+                    color: isSel ? "rgba(255,255,255,0.55)" : "var(--tt-text-faint)",
+                  }}
+                >
+                  {p.when}
+                </span>
               </button>
             );
           })
