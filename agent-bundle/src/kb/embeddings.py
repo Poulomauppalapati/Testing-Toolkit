@@ -1,13 +1,11 @@
 """
 embeddings.py
-Text embeddings via API (primary) or local ONNX (offline fallback).
+Text embeddings via API only (no local ONNX / fastembed).
 
-Primary path: call the GenAI proxy /embeddings endpoint with the configured
-embedding model (e.g. azure.text-embedding-3-small). Uses the same API key
-and base URL as the LLM chat completions.
-
-Fallback (offline / no API key): local fastembed (ONNX) or sentence-transformers.
-If all backends fail, the system runs in lexical-only (BM25) mode.
+Call the GenAI gateway /embeddings endpoint with the configured embedding
+model (e.g. azure.text-embedding-3-small). Uses the same API key and base URL
+as the LLM. If no API key is configured, the system runs in lexical-only
+(BM25) mode.
 
 All vectors are returned L2-normalized float32, so cosine similarity is a
 plain dot product.
@@ -24,8 +22,6 @@ from typing import Any, Final, Protocol
 
 import httpx
 import numpy as np
-
-from kb.model_bundle import bundled_models_dir
 
 # -------------------------------------------------------------------------
 # Constants
@@ -212,70 +208,6 @@ class _APIEmbedder:
 
 
 # -------------------------------------------------------------------------
-# Local Embedders (fallback only)
-# -------------------------------------------------------------------------
-def _build_text_embedding(text_embedding_cls: Any, model_name: str) -> Any:
-    """Construct a fastembed TextEmbedding with optional bundled cache."""
-    models_dir: str | None = bundled_models_dir()
-    if models_dir is not None:
-        try:
-            return text_embedding_cls(
-                model_name=model_name,
-                cache_dir=models_dir,
-                local_files_only=True,
-            )
-        except TypeError:
-            return text_embedding_cls(model_name=model_name, cache_dir=models_dir)
-    return text_embedding_cls(model_name=model_name)
-
-
-class _FastEmbedEmbedder:
-    """Wraps fastembed.TextEmbedding (ONNX, CPU)."""
-
-    def __init__(self, model_name: str = DEFAULT_MODEL) -> None:
-        from fastembed import TextEmbedding  # type: ignore
-
-        self._model = _build_text_embedding(TextEmbedding, model_name)
-        self.name = f"fastembed:{model_name}"
-        probe = np.asarray(list(self._model.embed(["probe"]))[0],
-                           dtype=np.float32)
-        self.dim = int(probe.shape[-1])
-
-    def embed(self, texts: list[str]) -> np.ndarray:
-        if not texts:
-            return np.zeros((0, self.dim), dtype=np.float32)
-        vecs = list(self._model.embed(texts, batch_size=_EMBED_BATCH))
-        return _l2_normalize(np.asarray(vecs, dtype=np.float32))
-
-
-class _SentenceTransformerEmbedder:
-    """Secondary backend if sentence-transformers is present instead."""
-
-    def __init__(self, model_name: str = DEFAULT_MODEL) -> None:
-        from sentence_transformers import SentenceTransformer  # type: ignore
-
-        device = "cpu"
-        try:
-            from core.hardware import gpu_available
-            if gpu_available():
-                device = "cuda"
-        except Exception:
-            pass
-        self._model = SentenceTransformer(model_name, device=device)
-        self.name = f"sentence-transformers:{model_name}"
-        self.dim = int(self._model.get_sentence_embedding_dimension())
-
-    def embed(self, texts: list[str]) -> np.ndarray:
-        if not texts:
-            return np.zeros((0, self.dim), dtype=np.float32)
-        vecs = self._model.encode(
-            texts, batch_size=_EMBED_BATCH, convert_to_numpy=True,
-            normalize_embeddings=True, show_progress_bar=False,
-        )
-        return np.asarray(vecs, dtype=np.float32)
-
-
-# -------------------------------------------------------------------------
 # Factory
 # -------------------------------------------------------------------------
 _DEFAULT_MODEL_NAME = DEFAULT_MODEL
@@ -316,41 +248,20 @@ def embedding_backend_available() -> bool:
 
 
 def embedding_backend_status() -> "tuple[bool, str]":
-    """Return (available, reason). Checks API first, then local backends."""
-    import sys
-
-    # API embedder available if key is configured
+    """Return (available, reason). Embedding is API-only: available iff an API
+    key is configured."""
     try:
         from core.app_config import EMBED_MODEL, LLM_API_KEY
         from core.settings_store import load_api_key
         api_key = (load_api_key() or "").strip() or LLM_API_KEY
         if api_key:
             return True, f"API embedding ({EMBED_MODEL})"
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001
+        return False, f"embedding config error: {type(e).__name__}: {e}"
 
-    # Local fallback check
-    errors: list[str] = []
-    for mod in ("fastembed", "sentence_transformers"):
-        try:
-            __import__(mod)
-            return True, f"{mod} is importable"
-        except ImportError as e:
-            errors.append(f"{mod}: {e}")
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"{mod}: {type(e).__name__}: {e}")
-    frozen = bool(getattr(sys, "frozen", False))
-    if frozen:
-        return False, (
-            "no embedding backend in this PACKAGED build. A 'pip install' "
-            "into your system Python is NOT visible to the packaged app - "
-            "bundle fastembed+onnxruntime into the build (see TestingToolkit"
-            ".spec) or run from source. Details: " + "; ".join(errors)
-        )
     return False, (
-        "no embedding backend importable in the running interpreter "
-        f"({sys.executable}). Install with: pip install fastembed onnxruntime "
-        "- into THIS interpreter. Details: " + "; ".join(errors)
+        "no embedding API key configured. Add an LLM API key + base URL in "
+        "Settings, or set TT_ENFORCE_DENSE=0 to allow lexical-only retrieval."
     )
 
 
