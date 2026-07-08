@@ -1,7 +1,7 @@
 {
-  "version": "2.6.0",
+  "version": "2.7.0",
   "ref": "main",
-  "generatedAt": "2026-07-08T07:38:11.317Z",
+  "generatedAt": "2026-07-08T08:24:03.244Z",
   "files": [
     {
       "path": "ado/__init__.py",
@@ -61,7 +61,7 @@
     {
       "path": "agent/routes/ado.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/ado.py?ref=main",
-      "hash": "f1d90d9d76009efee9bad3ea44af9b7c3d22a11a9a6229b518ccf795c60d82fe"
+      "hash": "b2f34962ddcc675df7c03f9dec5292718dfcd77e0d8a648311dbe9cf95d545dd"
     },
     {
       "path": "agent/routes/artifacts.py",
@@ -126,7 +126,7 @@
     {
       "path": "agent/routes/sources.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/sources.py?ref=main",
-      "hash": "7d7b14ade333a9516af1eb39d6470fcc5dda727ce69ca38037af279fbc630569"
+      "hash": "683bedc1dc973c88e8045dea04ed47cb40d87788103889ebc04c8a5a64117c25"
     },
     {
       "path": "agent/routes/tools.py",
@@ -151,7 +151,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "4c6003eeaffe23f6a212558714833e60b601f76567ed65330d661d4152ca9095"
+      "hash": "830242386a4ac230e21ec7235c1caec590e910b3aa7f9c3fcd988685e7b04875"
     },
     {
       "path": "automation/__init__.py",
@@ -206,12 +206,12 @@
     {
       "path": "core/anthropic_client.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/anthropic_client.py?ref=main",
-      "hash": "3eed3f20b7a96d6a35605707d58cecd1f720876a4a1c9a5b91d1632046256e11"
+      "hash": "aa6cfa59155265a6d7b9b765246edbc4932f6644ca6793396751f1bc90c70bbf"
     },
     {
       "path": "core/app_config.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/app_config.py?ref=main",
-      "hash": "5107eb3aa3b896ffc101f20edd5f6533ea45a3244c2fa62361b2d116eb00da0a"
+      "hash": "22765a58b8a787bb23d97f8aeb4c71aa093a637ac258b8e05723094073249ab5"
     },
     {
       "path": "core/app_logging.py",
@@ -236,7 +236,7 @@
     {
       "path": "core/hardware.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/hardware.py?ref=main",
-      "hash": "ae9ea95c41b305f44b852b18aca0b36842f294b8f522da3a93fddcadee58957a"
+      "hash": "8f0d787b68194a38c39c34ac8b24e2385dcdf888f09bae2c1740dfffaf2f3ed6"
     },
     {
       "path": "core/http_retry.py",
@@ -279,9 +279,19 @@
       "hash": "9f8de9cc9505ef7a453bb7b9fe77766f6439e5a96beab2f6c1193b07692f5ca2"
     },
     {
+      "path": "core/process_metrics.py",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/process_metrics.py?ref=main",
+      "hash": "34a7e02e5f0cdd787ce41f1b350bcc214692d02c709283acb1e93e06ced6073c"
+    },
+    {
       "path": "core/project_store.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/project_store.py?ref=main",
       "hash": "8b27be399f788be0622ff26e5244b82b2f50f4a51af3a94a1090f57c3d2cb43c"
+    },
+    {
+      "path": "core/protocols.py",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/protocols.py?ref=main",
+      "hash": "757829c50edcf9f0baee6440b7055c42b3860048cc47a0e97589884c1f29f062"
     },
     {
       "path": "core/runtime_config.py",
