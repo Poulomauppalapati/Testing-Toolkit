@@ -32,13 +32,37 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const test = async () => {
+  // Test ADO — verifies the ADO PAT AND the backend-managed AI API, matching
+  // the desktop "Test ADO" button ("Testing ADO + AI API connections...").
+  const testAdo = async () => {
     setBusy(true);
-    setStatus("Testing connection...");
+    setStatus("Testing ADO + AI API connections...");
     try {
       await agent.saveSettings(toPayload(values));
-      const r = await agent.verifyPat();
-      setStatus(r.ok ? "Connection OK." : `Failed: ${r.detail}`);
+      const [ado, llm] = await Promise.all([
+        agent.verifyAdo(),
+        agent.verifyLlm(),
+      ]);
+      const parts = [
+        ado.ok ? "[OK] ADO connected" : `[FAIL] ADO: ${ado.detail}`,
+        llm.ok ? "[OK] AI API reachable" : `[FAIL] AI API: ${llm.detail}`,
+      ];
+      setStatus(parts.join("  ·  "));
+    } catch (e) {
+      setStatus(`Failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Test Jira — verifies the stored JIRA credentials only.
+  const testJira = async () => {
+    setBusy(true);
+    setStatus("Testing Jira connection...");
+    try {
+      await agent.saveSettings(toPayload(values));
+      const r = await agent.verifyJira();
+      setStatus(r.ok ? "[OK] Jira connected" : `[FAIL] Jira: ${r.detail}`);
     } catch (e) {
       setStatus(`Failed: ${(e as Error).message}`);
     } finally {
@@ -73,18 +97,18 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       width={680}
       footer={
         <>
-          <button
-            className="tt-btn-ghost mr-auto"
-            onClick={test}
-            disabled={busy}
-          >
-            Test Connection
+          <button className="tt-btn-ghost" onClick={testAdo} disabled={busy}>
+            Test ADO
+          </button>
+          <button className="tt-btn-ghost" onClick={testJira} disabled={busy}>
+            Test Jira
           </button>
           {status && (
-            <span className="mr-auto text-xs text-muted-foreground">
+            <span className="mr-auto ml-2 text-xs text-muted-foreground">
               {status}
             </span>
           )}
+          {!status && <span className="mr-auto" />}
           <button className="tt-btn-ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>

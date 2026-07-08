@@ -766,6 +766,35 @@ export const agent = {
     return { ok: r.ok, detail: r.detail ?? "" };
   },
 
+  // Azure DevOps PAT verify (mirrors desktop "Test ADO"). Separate from the
+  // merged /sources/verify so the Settings dialog can report ADO on its own.
+  async verifyAdo(): Promise<{ ok: boolean; detail: string }> {
+    const r = await agentFetch<{ ok: boolean; detail?: string }>("/ado/verify");
+    return { ok: r.ok, detail: r.detail ?? "" };
+  },
+
+  // JIRA credentials verify (mirrors desktop "Test Jira").
+  async verifyJira(): Promise<{ ok: boolean; detail: string }> {
+    const r = await agentFetch<{ ok: boolean; detail?: string }>(
+      "/jira/verify"
+    );
+    return { ok: r.ok, detail: r.detail ?? "" };
+  },
+
+  // Minimal AI-API reachability probe (mirrors desktop's "AI API reachable"
+  // check inside Test ADO): a tiny backend-managed completion. Throws on error.
+  async verifyLlm(): Promise<{ ok: boolean; detail: string }> {
+    try {
+      await agentFetch<{ text: string }>("/llm/complete", {
+        method: "POST",
+        body: JSON.stringify({ user: "ping", max_tokens: 1, temperature: 0 }),
+      });
+      return { ok: true, detail: "AI API reachable" };
+    } catch (e) {
+      return { ok: false, detail: (e as Error).message };
+    }
+  },
+
   async listProjects(): Promise<string[]> {
     return agentFetch<string[]>("/sources/projects");
   },
