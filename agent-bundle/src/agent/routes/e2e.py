@@ -253,6 +253,10 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
             tc_statuses[tc_id] = status
             job.result = {**job.result, "tc_statuses": dict(tc_statuses)}
 
+        def _on_screenshot(path: "Path", step_num: int, status: str) -> None:
+            # Stream screenshot path to job log so the UI can surface it.
+            job.log(f"[SCREENSHOT] step={step_num} status={status} path={path}")
+
         results = await run_e2e_tests(
             test_cases=picked,
             login_url=cred.login_url,
@@ -260,8 +264,10 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
             password=cred.password,
             output_dir=output_dir,
             ai_instructions=cred.ai_instructions,
+            stop_fn=lambda: job.stopped,
             on_progress=lambda cur, tot: job.set_progress("running", cur, tot),
             on_log=lambda msg: job.log(msg),
+            on_screenshot=_on_screenshot,
             on_tc_done=_on_tc_done,
         )
 

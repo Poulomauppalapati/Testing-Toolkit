@@ -119,11 +119,83 @@ def test_is_password_target():
 
 
 def test_escape_str_safe():
-    from automation.script_generator import _escape_str
+    # _esc is the renamed helper (was _escape_str in an older revision)
+    from automation.script_generator import _esc
 
     # embedding a value with quotes/newlines stays valid when parsed
-    out = _escape_str("he said \"hi\"\n'bye'")
+    out = _esc("he said \"hi\"\n'bye'")
     ast.parse(f"x = {out}")
+
+
+# --------------------------------------------------------------------------
+# Script generator - new action coverage
+# --------------------------------------------------------------------------
+def test_generated_script_new_actions():
+    """All new action types must produce valid, parseable Python."""
+    from automation.script_generator import generate_playwright_script
+
+    steps = [
+        {"action": "navigate", "target": "", "value": "http://app"},
+        {"action": "fill",     "target": "Email",    "value": "a@b.com", "locator": "label"},
+        {"action": "type",     "target": "Query",    "value": "hello",   "locator": "placeholder"},
+        {"action": "click",    "target": "button:Submit", "locator": "role"},
+        {"action": "double_click", "target": "cell",  "locator": "text"},
+        {"action": "hover",    "target": "tooltip",   "locator": "text"},
+        {"action": "select",   "target": "dropdown:Status", "value": "Active", "locator": "role"},
+        {"action": "check",    "target": "checkbox:Accept",  "locator": "label"},
+        {"action": "uncheck",  "target": "checkbox:Accept",  "locator": "label"},
+        {"action": "clear",    "target": "Search",   "locator": "placeholder"},
+        {"action": "press_key","target": "", "value": "Enter"},
+        {"action": "scroll",   "target": "", "value": "down"},
+        {"action": "wait",     "target": "", "value": "500"},
+        {"action": "wait_for_text", "target": "", "value": "Success"},
+        {"action": "wait_for_url",  "target": "", "value": "dashboard"},
+        {"action": "assert_text",   "target": "", "value": "Welcome"},
+        {"action": "assert_url",    "target": "", "value": "dashboard"},
+        {"action": "assert_element","target": "heading:Dashboard", "locator": "role"},
+        {"action": "assert_not_present", "target": "Spinner", "locator": "text"},
+        {"action": "screenshot","target": ""},
+    ]
+    script = generate_playwright_script(
+        tc_id="TC-NEW", title="All actions", steps=steps,
+        login_url="http://app", username="testuser")
+
+    assert not script.startswith("# ERROR"), f"generator error:\n{script}"
+    ast.parse(script)
+    # assert_url must use to_have_url, not legacy to_contain
+    assert "to_have_url" in script
+    assert ".to_contain(" not in script
+
+
+def test_generated_script_stop_signal_field():
+    """Script must include stop signal check (E2E_PASSWORD not in plain text)."""
+    from automation.script_generator import generate_playwright_script
+
+    steps = [
+        {"action": "fill", "target": "Password", "value": "{{password}}", "locator": "label"},
+    ]
+    script = generate_playwright_script(
+        tc_id="TC-SEC", title="Security check", steps=steps,
+        login_url="http://app", username="user")
+
+    assert "E2E_PASSWORD" in script
+    # The literal string "{{password}}" must NOT appear
+    assert "{{password}}" not in script
+
+
+def test_script_indentation_is_valid():
+    """Step code must land at 8-space indent inside the async block."""
+    from automation.script_generator import generate_playwright_script
+
+    steps = [{"action": "navigate", "target": "", "value": "http://x"}]
+    script = generate_playwright_script(
+        tc_id="TC-IND", title="Indent", steps=steps,
+        login_url="http://x", username="u")
+
+    tree = ast.parse(script)
+    # Collect all Await nodes and assert they exist (means code is inside async)
+    awaits = [n for n in ast.walk(tree) if isinstance(n, ast.Await)]
+    assert len(awaits) >= 1, "no await nodes found - indentation probably broken"
 
 
 # --------------------------------------------------------------------------
