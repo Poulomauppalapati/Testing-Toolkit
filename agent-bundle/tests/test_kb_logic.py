@@ -1,0 +1,224 @@
+# Deterministic tests for kb/ modules: text extraction, archive safety,
+# BM25, RRF fusion, crypto round-trip, file signatures, retriever availability.
+from __future__ import annotations
+
+import io
+import zipfile
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+
+# --------------------------------------------------------------------------
+# rrf_fuse
+# --------------------------------------------------------------------------
+def test_rrf_fuse_orders_by_consensus():
+    from kb.retrieval import rrf_fuse
+
+    # id "a" ranks high in both lists -> should win.
+    fused = rrf_fuse([["a", "b", "c"], ["a", "c", "b"]])
+    assert fused[0] == "a"
+    assert set(fused) == {"a", "b", "c"}
+
+
+def test_rrf_fuse_top_n_and_empty():
+    from kb.retrieval import rrf_fuse
+
+    assert rrf_fuse([], top_n=5) == []
+    assert rrf_fuse([["x", "y", "z"]], top_n=2) == ["x", "y"]
+
+
+def test_rrf_fuse_stable_ties():
+    from kb.retrieval import rrf_fuse
+
+    # single list -> order preserved (ties broken by first appearance)
+    assert rrf_fuse([["p", "q", "r"]]) == ["p", "q", "r"]
+
+
+# --------------------------------------------------------------------------
+# BM25
+# --------------------------------------------------------------------------
+def test_bm25_build_and_rank():
+    from kb.bm25 import BM25Index
+
+    ids = ["d1", "d2", "d3"]
+    texts = [
+        "the quick brown fox jumps",
+        "a lazy dog sleeps all day",
+        "quick foxes and quick dogs",
+    ]
+    idx = BM25Index.build(ids, texts)
+    ranked = idx.top_n("quick fox", 3)
+    assert ranked, "expected results"
+    top_ids = [r[0] for r in ranked]
+    # documents mentioning 'quick'/'fox' should outrank the lazy-dog doc
+    assert "d2" != top_ids[0]
+
+
+def test_bm25_roundtrip_dict():
+    from kb.bm25 import BM25Index
+
+    idx = BM25Index.build(["a", "b"], ["hello world", "world peace"])
+    restored = BM25Index.from_dict(idx.to_dict())
+    assert restored.top_n("world", 2)
+
+
+def test_bm25_tokenize():
+    from kb.bm25 import tokenize
+
+    toks = tokenize("The Quick, Brown FOX!")
+    assert "quick" in toks and "brown" in toks
+    assert "the" not in toks  # stopword dropped by default
+
+
+# --------------------------------------------------------------------------
+# kb_crypto round-trip
+# --------------------------------------------------------------------------
+def test_kb_crypto_roundtrip():
+    from kb import kb_crypto
+
+    data = b"sensitive knowledge base bytes \x00\x01\x02"
+    enc = kb_crypto.encrypt_bytes(data)
+    assert enc != data
+    assert kb_crypto.is_encrypted(enc)
+    dec = kb_crypto.decrypt_bytes(enc)
+    assert dec == data
+
+
+def test_kb_crypto_file_roundtrip(tmp_path):
+    from kb import kb_crypto
+
+    p = tmp_path / "secret.bin"
+    kb_crypto.write_encrypted_text(p, "hello secret")
+    assert kb_crypto.read_decrypted_text(p) == "hello secret"
+
+
+def test_kb_crypto_decrypt_garbage_is_safe():
+    from kb import kb_crypto
+
+    # decrypting non-encrypted bytes must not raise
+    out = kb_crypto.decrypt_bytes(b"not-encrypted-plain")
+    assert out is None or isinstance(out, bytes)
+
+
+# --------------------------------------------------------------------------
+# file signatures
+# --------------------------------------------------------------------------
+def test_file_sha_stable_and_cached(tmp_path):
+    from kb.file_sig import file_sha
+
+    f = tmp_path / "a.txt"
+    f.write_text("content")
+    cache: dict = {}
+    s1 = file_sha(f, cache)
+    s2 = file_sha(f, cache)  # served from cache
+    assert s1 == s2 and len(s1) >= 16
+
+
+def test_prune_hash_cache(tmp_path):
+    from kb.file_sig import file_sha, prune_hash_cache
+
+    a = tmp_path / "a.txt"; a.write_text("a")
+    b = tmp_path / "b.txt"; b.write_text("b")
+    cache: dict = {}
+    file_sha(a, cache)
+    file_sha(b, cache)
+    prune_hash_cache(cache, [a])  # b no longer live
+    # b's entry should be pruned; a retained. Entries nest under "entries",
+    # keyed by str(path).
+    keys = " ".join(cache.get("entries", {}))
+    assert "a.txt" in keys
+    assert "b.txt" not in keys
+
+
+# --------------------------------------------------------------------------
+# text extraction + archive safety
+# --------------------------------------------------------------------------
+def test_extract_text_plaintext(tmp_path):
+    from kb.store import extract_text
+
+    f = tmp_path / "note.txt"
+    f.write_text("plain text content here")
+    assert "plain text content" in extract_text(f)
+
+
+def test_extract_text_never_raises_on_bad_file(tmp_path):
+    from kb.store import extract_text
+
+    f = tmp_path / "broken.pdf"
+    f.write_bytes(b"\x00\x01not a real pdf")
+    # must return '' rather than raising
+    assert extract_text(f) == "" or isinstance(extract_text(f), str)
+
+
+def test_extract_archive_reads_members(tmp_path):
+    from kb.store import extract_text
+
+    zpath = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("inside.txt", "archived body text")
+    out = extract_text(zpath)
+    assert "archived body text" in out
+
+
+def test_extract_archive_zip_slip_guard(tmp_path):
+    from kb.store import extract_text
+
+    zpath = tmp_path / "evil.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("../../escape.txt", "should not escape")
+        zf.writestr("safe.txt", "safe body")
+    # must not crash; traversal member skipped, safe member read
+    out = extract_text(zpath)
+    assert "safe body" in out
+    # the escaped file must NOT have been written outside the temp dir
+    assert not (tmp_path.parent / "escape.txt").exists()
+
+
+def test_extract_archive_skips_nested(tmp_path):
+    from kb.store import extract_text
+
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as z2:
+        z2.writestr("deep.txt", "deep")
+    zpath = tmp_path / "outer.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("nested.zip", inner.getvalue())
+        zf.writestr("top.txt", "top level body")
+    out = extract_text(zpath)
+    assert "top level body" in out
+    assert "deep" not in out  # nested archive skipped
+
+
+def test_approx_tokens():
+    from kb.store import approx_tokens
+
+    # intentional floor of 1 (used for budgeting, never zero)
+    assert approx_tokens("") == 1
+    assert approx_tokens("hello world" * 100) > approx_tokens("hello world")
+
+
+# --------------------------------------------------------------------------
+# HybridRetriever availability on an empty project
+# --------------------------------------------------------------------------
+def test_retriever_unavailable_when_no_index(tmp_path):
+    from kb.retrieval import HybridRetriever
+
+    r = HybridRetriever(tmp_path)
+    # No index built -> not available, and must not raise.
+    assert r.is_available() is False
+
+
+# --------------------------------------------------------------------------
+# embeddings L2 normalize
+# --------------------------------------------------------------------------
+def test_l2_normalize():
+    from kb.embeddings import _l2_normalize
+
+    mat = np.array([[3.0, 4.0], [0.0, 0.0]], dtype=np.float32)
+    out = _l2_normalize(mat)
+    # first row normalized to unit length
+    assert abs(float(np.linalg.norm(out[0])) - 1.0) < 1e-5
+    # zero row stays finite (no NaN)
+    assert np.all(np.isfinite(out))

@@ -177,8 +177,13 @@ def generate_playwright_script(
     for idx, step in enumerate(steps, start=1):
         action = step.get("action", "")
         target = step.get("target", "")
-        body.append(f"    # Step {idx}: {action} {target}")
-        body.extend(_step_to_code(step, username))
+        # Step code lives inside the `async with async_playwright()` block
+        # (8-space indent), where `page` is defined. _step_to_code emits at a
+        # 4-space base, so add 4 more to align with the surrounding block and
+        # the 8-space footer -- otherwise the script is invalid Python.
+        body.append(f"        # Step {idx}: {action} {target}")
+        body.extend("    " + line if line else line
+                    for line in _step_to_code(step, username))
         body.append("")
 
     footer = [
