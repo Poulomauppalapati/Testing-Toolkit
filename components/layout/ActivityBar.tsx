@@ -43,7 +43,7 @@ function RailButton({
       title={label}
       aria-label={label}
       disabled={disabled}
-      className="group relative h-8 w-8 shrink-0 rounded-lg border border-transparent p-0 text-[var(--tt-text-muted)] transition-all duration-150 hover:border-[var(--tt-primary)] hover:bg-[var(--tt-surface-container)] hover:text-[var(--tt-text-primary)] hover:shadow-[0_0_0_2px_rgba(91,168,255,0.18)] disabled:pointer-events-none disabled:opacity-40 flex items-center justify-center"
+      className="group relative h-8 w-8 shrink-0 rounded-lg border border-transparent p-0 text-[var(--tt-text-muted)] transition-all duration-150 hover:border-[var(--tt-primary)] hover:bg-[var(--tt-surface-container)] hover:text-[var(--tt-text-primary)] hover:shadow-[0_0_0_2px_rgba(111,154,201,0.16)] disabled:pointer-events-none disabled:opacity-40 flex items-center justify-center"
     >
       <Icon className="h-[18px] w-[18px]" strokeWidth={2} />
       {badge && (
@@ -92,7 +92,7 @@ export function ActivityBar() {
         title="Check for updates"
         aria-label="Check for updates"
         disabled={updateBusy}
-        className="group relative h-8 w-8 shrink-0 rounded-lg border border-transparent p-0 text-[var(--tt-text-muted)] transition-all duration-150 hover:border-[var(--tt-primary)] hover:bg-[var(--tt-surface-container)] hover:text-[var(--tt-text-primary)] hover:shadow-[0_0_0_2px_rgba(91,168,255,0.18)] disabled:pointer-events-none disabled:opacity-40 flex items-center justify-center"
+        className="group relative h-8 w-8 shrink-0 rounded-lg border border-transparent p-0 text-[var(--tt-text-muted)] transition-all duration-150 hover:border-[var(--tt-primary)] hover:bg-[var(--tt-surface-container)] hover:text-[var(--tt-text-primary)] hover:shadow-[0_0_0_2px_rgba(111,154,201,0.16)] disabled:pointer-events-none disabled:opacity-40 flex items-center justify-center"
       >
         <RefreshCw
           className={`h-[18px] w-[18px] ${updateBusy ? "animate-spin" : ""}`}

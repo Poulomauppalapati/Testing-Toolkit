@@ -60,15 +60,15 @@ function Chip({
     (ok ? "var(--tt-success)" : warn ? "var(--tt-warn)" : "var(--tt-text-faint)");
   // Derive a translucent background from the dot color
   const bg = ok
-    ? "rgba(26,171,92,0.12)"
+    ? "rgba(61,143,102,0.12)"
     : warn
-      ? "rgba(245,158,11,0.12)"
+      ? "rgba(194,152,74,0.12)"
       : colorOverride === "var(--tt-success)"
-        ? "rgba(26,171,92,0.12)"
+        ? "rgba(61,143,102,0.12)"
         : colorOverride === "var(--tt-warn)"
-          ? "rgba(245,158,11,0.12)"
+          ? "rgba(194,152,74,0.12)"
           : colorOverride === "var(--tt-danger)"
-            ? "rgba(229,62,62,0.12)"
+            ? "rgba(192,95,95,0.12)"
             : "rgba(138,143,153,0.10)";
   return (
     <span
