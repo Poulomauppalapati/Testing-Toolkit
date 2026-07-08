@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { sortWiIds, splitWiIds, agentLogLevel } from "../agent-client";
+import {
+  sortWiIds,
+  splitWiIds,
+  agentLogLevel,
+  mergeCommentsHtml,
+} from "../agent-client";
 import type { WorkItemRow } from "../agent-client";
 import { userStoryIds } from "../board-utils";
 import { humanSize } from "../../components/ui/download-links";
@@ -78,6 +83,30 @@ describe("agentLogLevel", () => {
   });
   it("defaults to INFO for unprefixed lines", () => {
     expect(agentLogLevel("plain line")).toBe("INFO");
+  });
+});
+
+describe("mergeCommentsHtml (detail-pane comment fallthrough)", () => {
+  const html = [{ when: "t1", author: "A", html: "<p>hi</p>" }];
+  const text = [{ when: "t2", author: "B", text: "plain\nline" }];
+
+  it("prefers rendered HTML comments when present", () => {
+    expect(mergeCommentsHtml(html, text)).toEqual(html);
+  });
+  it("falls through to plain-text comments when comments_html is EMPTY", () => {
+    // Regression: `[] ?? text` would wrongly yield [] and drop comments.
+    const out = mergeCommentsHtml([], text);
+    expect(out).toHaveLength(1);
+    expect(out[0].author).toBe("B");
+    expect(out[0].html).toBe("plain<br/>line");
+  });
+  it("falls through when comments_html is undefined/null", () => {
+    expect(mergeCommentsHtml(undefined, text)).toHaveLength(1);
+    expect(mergeCommentsHtml(null, text)[0].author).toBe("B");
+  });
+  it("returns empty when both are empty/missing", () => {
+    expect(mergeCommentsHtml([], [])).toEqual([]);
+    expect(mergeCommentsHtml(undefined, undefined)).toEqual([]);
   });
 });
 

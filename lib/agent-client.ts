@@ -588,6 +588,25 @@ function textToHtml(s: string): string {
   return escapeHtml(trimmed).replace(/\r?\n/g, "<br/>");
 }
 
+/**
+ * Resolve the comment list to render, preferring rendered-HTML comments but
+ * falling back to plain-text comments when `comments_html` is MISSING *or
+ * EMPTY*. Using `comments_html ?? comments` would be wrong: `[] ?? x` yields
+ * `[]`, so an empty `comments_html` array would silently drop populated
+ * plain-text comments. Kept as a pure exported helper so it is unit-testable.
+ */
+export function mergeCommentsHtml(
+  commentsHtml: Array<{ when: string; author: string; html: string }> | undefined | null,
+  comments: Array<{ when: string; author: string; text: string }> | undefined | null
+): Array<{ when: string; author: string; html: string }> {
+  if (commentsHtml && commentsHtml.length > 0) return commentsHtml;
+  return (comments ?? []).map((c) => ({
+    when: c.when,
+    author: c.author,
+    html: textToHtml(c.text),
+  }));
+}
+
 interface RawWorkItemsResponse {
   columns: string[];
   groups: Array<{ column: string; items: WorkItemRow[] }>;
@@ -954,14 +973,7 @@ export const agent = {
         d.acceptance_html || textToHtml(d.acceptance_text),
         project
       ),
-      comments_html: (
-        d.comments_html ??
-        (d.comments ?? []).map((c) => ({
-          when: c.when,
-          author: c.author,
-          html: textToHtml(c.text),
-        }))
-      ).map(
+      comments_html: mergeCommentsHtml(d.comments_html, d.comments).map(
         (c) =>
           [c.author, c.when, rewriteHtmlMedia(c.html, project)] as [
             string,
