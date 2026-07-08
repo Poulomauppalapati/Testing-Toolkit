@@ -164,6 +164,7 @@ export interface SaveSettingsPayload {
   project_prefix?: string;
   api_key?: string;
   pat?: string;
+  tls_mode?: string;
   // -- JIRA source --
   jira_url?: string;
   jira_user?: string;

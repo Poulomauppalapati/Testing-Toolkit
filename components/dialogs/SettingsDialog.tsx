@@ -21,6 +21,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     fallback_model: settings?.fallback_model ?? "",
     organization: settings?.organization ?? "",
     project_prefix: settings?.project_prefix ?? "",
+    tls_mode: settings?.tls_mode ?? "system",
     api_key: settings?.has_api_key ? "************" : "",
     pat: settings?.has_pat ? "************" : "",
     jira_url: settings?.jira_url ?? "",

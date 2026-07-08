@@ -67,6 +67,7 @@ export interface ConnectionValues {
   pat: string;
   organization: string;
   project_prefix: string;
+  tls_mode: string;
   // -- JIRA source (optional second work-item source) --
   jira_url: string;
   jira_user: string;
@@ -86,6 +87,7 @@ export function useConnectionFields(initial?: Partial<ConnectionValues>) {
     pat: initial?.pat ?? "",
     organization: initial?.organization ?? "",
     project_prefix: initial?.project_prefix ?? "",
+    tls_mode: initial?.tls_mode ?? "system",
     jira_url: initial?.jira_url ?? "",
     jira_user: initial?.jira_user ?? "",
     jira_pat: initial?.jira_pat ?? "",
@@ -101,6 +103,7 @@ export function toPayload(v: ConnectionValues): SaveSettingsPayload {
     fallback_model: v.fallback_model,
     organization: v.organization,
     project_prefix: v.project_prefix,
+    tls_mode: v.tls_mode || "system",
   };
   // Base URL is masked like a secret: only send it when the user typed a fresh
   // value, otherwise the backend keeps the stored URL.
@@ -475,6 +478,26 @@ export function ConnectionFields({
         />
       </Field>
       <p className="pl-[152px] text-xs text-[var(--tt-danger)]">* required</p>
+      {!readOnlyModels && (
+        <>
+          <Field label="TLS mode">
+            <select
+              className="tt-input"
+              value={values.tls_mode || "system"}
+              onChange={(e) => set("tls_mode", e.target.value)}
+              title="How server certificates are verified for ADO / LLM / JIRA requests. Use 'system' unless you are behind a proxy with self-signed certs."
+            >
+              <option value="system">system (combined CAs - recommended)</option>
+              <option value="truststore">truststore (OS native)</option>
+              <option value="off">off (insecure, testing only)</option>
+            </select>
+          </Field>
+          <p className="pl-[152px] text-xs text-muted-foreground">
+            Controls certificate verification for outbound requests. Only use
+            &quot;off&quot; for local testing — it disables TLS verification.
+          </p>
+        </>
+      )}
 
       <SectionHeader>Display</SectionHeader>
       <Field label="Strip project prefix">
