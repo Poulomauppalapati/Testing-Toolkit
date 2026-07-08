@@ -111,6 +111,12 @@ MODEL_GENERATE:     Final[str] = (os.environ.get("MODEL_GENERATE") or "").strip(
 MODEL_CHAT:         Final[str] = (os.environ.get("MODEL_CHAT") or "").strip()
 MODEL_OCR:          Final[str] = (os.environ.get("MODEL_OCR") or "").strip()
 
+# --- Embedding model (consumed by kb.embeddings API embedder) ---
+# API-based embeddings (matches desktop). Override via env for a different
+# embedding model/dimension.
+EMBED_MODEL: Final[str] = (os.environ.get("EMBED_MODEL") or "").strip() or "azure.text-embedding-3-small"
+EMBED_DIM:   Final[int] = int((os.environ.get("EMBED_DIM") or "").strip() or "512")
+
 # Token budgets for the Recursive Language Model (approximate; we count
 # characters at ~4 chars/token). If the whole project KB fits under
 # RLM_DIRECT_CONTEXT_TOKENS it is passed in one shot; otherwise the

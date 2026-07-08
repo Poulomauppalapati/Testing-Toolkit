@@ -44,21 +44,19 @@ def _build_cross_encoder(cross_encoder_cls: Any, model_name: str) -> Any:
 
     Mirrors the embedder logic: when a project-local model cache is bundled,
     load strictly offline via cache_dir + local_files_only=True (falling back
-    to cache_dir only on older fastembed builds), and request the accelerated
-    ONNX providers when a GPU is detected so reranking runs on the GPU. Reuses
-    the embedder's construction ladder so both models behave identically.
+    to cache_dir only on older fastembed builds). Otherwise default behavior.
     """
-    from kb.embeddings import _construct_with_fallbacks
-
     models_dir: str | None = bundled_models_dir()
     if models_dir is not None:
-        return _construct_with_fallbacks(
-            cross_encoder_cls,
-            {"model_name": model_name, "cache_dir": models_dir},
-        )
-    return _construct_with_fallbacks(
-        cross_encoder_cls, {"model_name": model_name}
-    )
+        try:
+            return cross_encoder_cls(
+                model_name=model_name,
+                cache_dir=models_dir,
+                local_files_only=True,
+            )
+        except TypeError:
+            return cross_encoder_cls(model_name=model_name, cache_dir=models_dir)
+    return cross_encoder_cls(model_name=model_name)
 
 
 class _FastEmbedReranker:
@@ -69,14 +67,6 @@ class _FastEmbedReranker:
 
         self._model = _build_cross_encoder(TextCrossEncoder, model_name)
         self.name = f"fastembed:{model_name}"
-        # Record the ACTUAL execution provider(s) this session bound to, so
-        # diagnostics report GPU-vs-CPU truthfully for the reranker too.
-        try:
-            from kb.embeddings import record_model_runtime
-
-            record_model_runtime("reranker", self.name, self._model)
-        except Exception:
-            pass
 
     def rerank(
         self, query: str, candidates: list[tuple[str, str]], top_k: int,
@@ -101,30 +91,24 @@ def reranker_available() -> bool:
 
 
 def get_reranker(model_name: str | None = None) -> "Reranker | None":
-    """Best available local reranker, or None. Never raises."""
-    try:
-        return _FastEmbedReranker(model_name or DEFAULT_RERANKER)
-    except Exception:
-        return None
+    """Returns None - all reranking now goes through LLM API via llm_rerank().
+    Local ONNX reranker removed; callers should use llm_rerank() directly."""
+    # ponytail: local reranker disabled; all reranking via API (llm_rerank)
+    return None
 
 
-def get_reranker_strict(model_name: str | None = None) -> "Reranker":
-    """Like get_reranker() but RAISES instead of returning None.
+def get_reranker_strict(model_name: str | None = None) -> "Reranker | None":
+    """Web-compat verification gate used on the enforced-dense index path.
 
-    Used when dense indexing is enforced so that BOTH local models (the dense
-    embedder and this cross-encoder reranker) are verified at index time. The
-    error message includes the underlying construction error so a missing
-    bundled model file is actionable.
+    Reranking now runs via the LLM API (llm_rerank) using the SAME client the
+    embedder already verified, so there is no separate local reranker model to
+    load here. Returns None without raising: the enforced path only needs the
+    dense EMBEDDER to be strictly available (verified separately); the reranker
+    is an API call at retrieval time and must not fail indexing.
     """
-    try:
-        return _FastEmbedReranker(model_name or DEFAULT_RERANKER)
-    except Exception as e:  # noqa: BLE001
-        raise RuntimeError(
-            "Dense indexing is enforced but the local reranker model could "
-            f"not be initialized: {type(e).__name__}: {e}. (Ensure the bundled "
-            "model files are present; reinstall the agent to restore them, or "
-            "set TT_ENFORCE_DENSE=0 to allow lexical-only retrieval.)"
-        ) from e
+    # ponytail: no local reranker to verify; API rerank shares the embedder's
+    # verified client. Return None (non-fatal) to preserve the enforced flow.
+    return get_reranker(model_name)
 
 
 # ---------------------------------------------------------------------
@@ -160,11 +144,21 @@ def llm_rerank(
     try:
         import asyncio
 
-        out = asyncio.run(client.complete_async(
+        coro = client.complete_async(
             model=model,
             system="You are a precise passage reranker. Output JSON only.",
             user=user, max_tokens=256, temperature=0.0,
-        ))
+        )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(1) as ex:
+                out = ex.submit(asyncio.run, coro).result(timeout=30)
+        else:
+            out = asyncio.run(coro)
         text = getattr(out, "text", "") or ""
         m = re.search(r"\[[^\]]*\]", text)
         if not m:
