@@ -57,3 +57,6 @@ test-results/
 # (it carries its own Git LFS objects that would break pushes here).
 desktop-reference/
 agent-bundle/.venv/
+
+# Local-only in-sandbox test rig (mock agent launcher). Never committed.
+.localtest/
