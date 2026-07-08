@@ -1,7 +1,7 @@
 {
-  "version": "2.8.2",
+  "version": "2.9.0",
   "ref": "main",
-  "generatedAt": "2026-07-08T12:07:57.383Z",
+  "generatedAt": "2026-07-08T12:59:40.212Z",
   "files": [
     {
       "path": "ado/__init__.py",
@@ -151,7 +151,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "7fd089c115a189391fdfea24bb8fa2edd6e47bea6dc0cb78d8189bc699b42cf0"
+      "hash": "7d0add9bacafd4915a335e572d14e6d462dd766332303e8005ae09cb08334447"
     },
     {
       "path": "automation/__init__.py",
@@ -246,7 +246,7 @@
     {
       "path": "core/mcp_bridge.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/mcp_bridge.py?ref=main",
-      "hash": "3051ad40a2af0895bc444a9e51c271573310f4185cdc3be53094f39a152111ca"
+      "hash": "fc8f46af2afd55640f94b9fde043b5c5becf92724085fe56c38503280e46ab5d"
     },
     {
       "path": "core/model_cache.py",
