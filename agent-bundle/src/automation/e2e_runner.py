@@ -14,7 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from playwright.async_api import Page, TimeoutError as PwTimeout
+try:
+    from playwright.async_api import Page, TimeoutError as PwTimeout
+except ImportError:
+    Page = object  # type: ignore[assignment,misc]
+    PwTimeout = Exception  # type: ignore[assignment,misc]
 
 from .artifact_collector import ArtifactCollector
 from .playwright_bridge import BrowserProfile, browser_session

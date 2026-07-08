@@ -1143,6 +1143,59 @@ def _model_populated(model_dir: Path) -> bool:
 
 
 # --------------------------------------------------------------------------
+# Optional playwright post-install (E2E browser automation)
+# --------------------------------------------------------------------------
+def _install_playwright_optional(launch_python: str, use_pythonpath: bool) -> None:
+    """Install playwright from PyPI as a non-fatal optional step.
+
+    Called after the core deps succeed. Any failure is logged and ignored so a
+    corporate proxy, air-gapped network, or platform restriction never breaks the
+    core install. The agent still boots without playwright; /e2e/* routes return
+    503 until it is available.
+    """
+    info("Installing playwright (optional, E2E automation)...")
+    progress("installing_deps", "Installing playwright (optional)", 92)
+
+    # Determine the pip executable for the installed environment.
+    if os.name == "nt":
+        pip_exe = VENV_DIR / "Scripts" / "python.exe"
+    else:
+        pip_exe = VENV_DIR / "bin" / "python"
+
+    if not pip_exe.exists():
+        # --target install: use the launch_python directly.
+        pip_exe = Path(launch_python)
+
+    try:
+        r = _run(
+            [str(pip_exe), "-m", "pip", "install",
+             *_PIP_QUIET, "playwright>=1.44"],
+            capture_output=True, text=True, timeout=180,
+        )
+        if r.returncode != 0:
+            warn("Optional playwright install from PyPI failed (non-fatal).")
+            warn("E2E routes will return 503 until you run: pip install playwright && playwright install chromium")
+            return
+        ok("playwright installed.")
+    except Exception as exc:  # noqa: BLE001
+        warn(f"Optional playwright install raised an exception (non-fatal): {exc}")
+        return
+
+    # Install the Chromium browser binary (also optional/non-fatal).
+    try:
+        r = _run(
+            [str(pip_exe), "-m", "playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=300,
+        )
+        if r.returncode == 0:
+            ok("Playwright Chromium browser installed.")
+        else:
+            warn("Playwright browser install failed (non-fatal). Run `playwright install chromium` manually.")
+    except Exception as exc:  # noqa: BLE001
+        warn(f"Playwright browser install raised an exception (non-fatal): {exc}")
+
+
+# --------------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------------
 def main() -> int:
@@ -1290,6 +1343,19 @@ def main() -> int:
         else:
             error("Install Python 3.9+ (e.g. from the Microsoft Store) and re-run.")
         return 1
+
+    # --- Optional: playwright (E2E browser automation) -------------------
+    # playwright is NOT in requirements.txt because it ships no Windows wheel
+    # in the bundled wheelhouse and its browsers (~200 MB) can't be bundled.
+    # We try to install it here from PyPI as a best-effort post-install step so
+    # the E2E routes work out of the box. The main install already succeeded by
+    # this point, so ANY failure here is logged but non-fatal: the agent starts
+    # cleanly and all non-E2E routes work; only /e2e/* endpoints return 503
+    # until the user manually runs `playwright install chromium`.
+    if not offline_only:
+        _install_playwright_optional(launch_python, use_pythonpath)
+    else:
+        info("Skipping optional playwright install (TT_OFFLINE_ONLY=1).")
 
     # --- Copy source + models --------------------------------------------
     progress("copying", "Installing agent files", 91)

@@ -28,10 +28,11 @@ truststore>=0.9
 keyring>=24.0
 
 # --- E2E browser automation (Playwright over CDP attach) ---
-# Drives the user's real Chrome/Edge profile so SSO/MFA state is preserved.
-# The E2E routes import this lazily, so the agent still starts without it;
-# users run `playwright install` once (or attach to their system browser).
-playwright>=1.44
+# NOT in this file: playwright is installed as a SEPARATE optional step by
+# install.py after the core deps succeed (it ships no Windows wheel in the
+# bundled wheelhouse, and its browsers must be downloaded anyway).
+# If the optional install fails or is skipped, the agent still boots and all
+# non-E2E routes work; only the /e2e/* endpoints raise 503.
 
 # --- Document extraction (KB + PDF packaging) ---
 openpyxl>=3.1

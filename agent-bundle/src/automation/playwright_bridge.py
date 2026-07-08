@@ -26,7 +26,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator
 
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+try:
+    from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+    _PLAYWRIGHT_AVAILABLE = True
+except ImportError:  # playwright not installed (optional dep)
+    _PLAYWRIGHT_AVAILABLE = False
+    # Provide stubs so type annotations in function signatures resolve at
+    # import time without playwright present.
+    Browser = object  # type: ignore[assignment,misc]
+    BrowserContext = object  # type: ignore[assignment,misc]
+    Page = object  # type: ignore[assignment,misc]
+    async_playwright = None  # type: ignore[assignment]
+
+
+def _require_playwright() -> None:
+    """Raise a clear RuntimeError if playwright is not installed."""
+    if not _PLAYWRIGHT_AVAILABLE:
+        raise RuntimeError(
+            "playwright is not installed. Run: pip install playwright && playwright install chromium"
+        )
 
 
 # -------------------------------------------------------------------
@@ -358,6 +376,7 @@ async def browser_session(
         viewport_height: Viewport height for new context.
         reuse_session: Try to reattach to an existing CDP session first.
     """
+    _require_playwright()
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
 
