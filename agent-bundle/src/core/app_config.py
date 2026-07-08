@@ -58,6 +58,39 @@ def _dpapi_decrypt_bytes(data: bytes) -> bytes | None:
     return None
 
 
+def _portable_fernet_key() -> bytes:
+    """Derive the Fernet key used to seal/open the bundled .env.enc.
+
+    Unlike DPAPI (which is bound to the Windows user+machine that encrypted the
+    blob), this is portable: the same key is derived on every end-user machine,
+    so a single .env.enc encrypted once at build time opens everywhere.
+
+    ponytail: obfuscation only -- the passphrase below ships inside the agent,
+    so a determined operator on the machine can re-derive the key and read the
+    credentials. This blocks casual/accidental exposure, not a motivated
+    attacker. For true secrecy route calls through a server-side proxy the
+    end user never holds (see app/api/llm), or rotate the service key.
+    """
+    import base64
+    import hashlib
+
+    # Non-secret (by cryptographic standards) passphrase. Its only job is to
+    # keep the bundled service-account credentials out of plain sight.
+    secret = b"TestingToolkit/GenAI/bundled-env/v1"
+    return base64.urlsafe_b64encode(hashlib.sha256(secret).digest())
+
+
+def _portable_decrypt_bytes(data: bytes) -> bytes | None:
+    """Open a Fernet-sealed .env.enc. Portable across OSes and machines.
+    Returns None on any failure (wrong format, missing lib, tampered token)."""
+    try:
+        from cryptography.fernet import Fernet
+
+        return Fernet(_portable_fernet_key()).decrypt(data)
+    except Exception:
+        return None
+
+
 def _parse_env_text(text: str) -> dict[str, str]:
     """Parse KEY=VALUE lines from env text, skipping comments and blanks."""
     result: dict[str, str] = {}
@@ -82,7 +115,10 @@ def _load_env() -> dict[str, str]:
     enc_path = base / ".env.enc"
     if enc_path.exists():
         try:
-            decrypted = _dpapi_decrypt_bytes(enc_path.read_bytes())
+            raw = enc_path.read_bytes()
+            # Portable Fernet (the format the web agent ships) first, then fall
+            # back to a DPAPI blob (desktop frozen build) for compatibility.
+            decrypted = _portable_decrypt_bytes(raw) or _dpapi_decrypt_bytes(raw)
             if decrypted:
                 return _parse_env_text(decrypted.decode("utf-8"))
         except Exception:

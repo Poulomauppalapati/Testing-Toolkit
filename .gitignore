@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the SEALED (encrypted) bundled credentials ship to the agent via git.
+# Only the ciphertext is committed; plaintext .env stays ignored above.
+!agent-bundle/src/.env.enc
 
 # vercel
 .vercel

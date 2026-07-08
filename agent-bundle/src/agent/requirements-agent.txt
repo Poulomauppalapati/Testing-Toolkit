@@ -28,6 +28,11 @@ truststore>=0.9
 # --- Secure credential storage ---
 keyring>=24.0
 
+# --- Bundled-credential decryption (portable Fernet for .env.enc) ---
+# Also a transitive dep (mcp/pyjwt), declared explicitly so the offline
+# installer always pulls it. Wheels for both platforms are in ../wheelhouse.
+cryptography>=42.0
+
 # --- Document extraction (KB + PDF packaging) ---
 openpyxl>=3.1
 selectolax>=0.3.21

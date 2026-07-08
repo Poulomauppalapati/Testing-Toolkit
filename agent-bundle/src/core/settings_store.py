@@ -344,7 +344,10 @@ def is_configured() -> bool:
 
 
 def has_api_key() -> bool:
-    return bool((load_api_key() or "").strip())
+    # True if the user configured a key OR the agent ships a bundled one.
+    from core.app_config import LLM_API_KEY
+
+    return bool((load_api_key() or "").strip() or LLM_API_KEY)
 
 
 # Convenience wrapper so callers do not need to import pat_store too.
@@ -423,15 +426,18 @@ def build_llm_client(cfg: "RuntimeConfig | None" = None):
     """Return a configured LLMClient, or None when no API key is
     stored (the signal that the app must use Manual Mode)."""
     from core.anthropic_client import LLMClient
-    from core.app_config import LLM_PROVIDER_FORMAT
-    key = (load_api_key() or "").strip()
+    from core.app_config import LLM_API_KEY, LLM_BASE_URL, LLM_PROVIDER_FORMAT
+    # A user-entered key (settings/keyring) wins; otherwise fall back to the
+    # bundled service-account key shipped in .env.enc. Only truly keyless
+    # installs (no user key AND no bundle) drop to Manual Mode.
+    key = (load_api_key() or "").strip() or LLM_API_KEY
     if not key:
         return None
     if cfg is None:
         cfg = build_runtime_config()
     return LLMClient(
         api_key=key,
-        base_url=get_setting(KEY_BASE_URL),
+        base_url=get_setting(KEY_BASE_URL) or LLM_BASE_URL,
         ssl_verify=cfg.build_ssl(),
         provider_format=LLM_PROVIDER_FORMAT,
     )
