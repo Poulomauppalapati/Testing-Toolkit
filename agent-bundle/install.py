@@ -391,10 +391,15 @@ _PIP_QUIET = [
 
 
 def pip_args_offline(extra: list[str]) -> list[str]:
+    # --upgrade ensures the bundled wheelhouse version always wins over any
+    # older package that may already be present in the environment. Without it,
+    # pip silently keeps a stale installed version even when the wheelhouse
+    # contains a newer one.
     return [
         "-m",
         "pip",
         "install",
+        "--upgrade",
         *_PIP_QUIET,
         "--no-index",
         f"--find-links={WHEELHOUSE}",
@@ -414,10 +419,43 @@ def pip_args_online(extra: list[str]) -> list[str]:
         "-m",
         "pip",
         "install",
+        "--upgrade",
         *_PIP_QUIET,
         f"--find-links={WHEELHOUSE}",
         *extra,
     ]
+
+
+def _pkg_satisfies(python_exe: str, requirement: str) -> bool:
+    """Return True if `requirement` (e.g. 'mcp>=1.0') is already satisfied
+    in the Python environment at `python_exe`.
+
+    Uses `importlib.metadata` via a subprocess so it queries the same env
+    that will actually run the agent, not the installer's own environment.
+    Non-fatal: any error returns False (triggers a fresh install attempt).
+    """
+    try:
+        script = (
+            "import importlib.metadata as m, sys; "
+            "from importlib.metadata import requires; "
+            "import re; "
+            f"req = {requirement!r}; "
+            "# parse name and version spec from 'pkg>=x.y' style strings; "
+            "match = re.match(r'([A-Za-z0-9_.-]+)(.*)', req); "
+            "name, spec = match.group(1), match.group(2).strip(); "
+            "ver = m.version(name); "
+            "from packaging.version import Version; "
+            "from packaging.specifiers import SpecifierSet; "
+            "ok = (not spec) or Version(ver) in SpecifierSet(spec); "
+            "sys.exit(0 if ok else 1)"
+        )
+        r = _run(
+            [python_exe, "-c", script],
+            capture_output=True, text=True, timeout=15,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
 
 
 def wheelhouse_supports(os_name: str, arch: str) -> bool:
@@ -1152,10 +1190,8 @@ def _install_playwright_optional(launch_python: str, use_pythonpath: bool) -> No
     corporate proxy, air-gapped network, or platform restriction never breaks the
     core install. The agent still boots without playwright; /e2e/* routes return
     503 until it is available.
+    Skipped entirely when playwright>=1.44 is already present and up-to-date.
     """
-    info("Installing playwright (optional, E2E automation)...")
-    progress("installing_deps", "Installing playwright (optional)", 92)
-
     # Determine the pip executable for the installed environment.
     if os.name == "nt":
         pip_exe = VENV_DIR / "Scripts" / "python.exe"
@@ -1165,6 +1201,13 @@ def _install_playwright_optional(launch_python: str, use_pythonpath: bool) -> No
     if not pip_exe.exists():
         # --target install: use the launch_python directly.
         pip_exe = Path(launch_python)
+
+    if _pkg_satisfies(str(pip_exe), "playwright>=1.44"):
+        ok("playwright>=1.44 already installed -- skipping.")
+        return
+
+    info("Installing playwright (optional, E2E automation)...")
+    progress("installing_deps", "Installing playwright (optional)", 92)
 
     try:
         r = _run(
@@ -1202,10 +1245,8 @@ def _install_mcp_python_optional(launch_python: str, use_pythonpath: bool) -> No
     committed in agent-bundle/wheelhouse/ so this step works with zero
     network access.  It is kept separate from the core requirements.txt so
     a wheelhouse gap never blocks the primary pip install.
+    Skipped entirely when mcp>=1.0 is already present at the required version.
     """
-    info("Installing mcp Python SDK (optional, from bundled wheelhouse)...")
-    progress("installing_mcp_sdk", "Installing mcp SDK (optional)", 91)
-
     # Determine the pip executable for the installed environment.
     if os.name == "nt":
         pip_exe = VENV_DIR / "Scripts" / "python.exe"
@@ -1214,11 +1255,19 @@ def _install_mcp_python_optional(launch_python: str, use_pythonpath: bool) -> No
     if not pip_exe.exists():
         pip_exe = Path(launch_python)
 
+    if _pkg_satisfies(str(pip_exe), "mcp>=1.0"):
+        ok("mcp>=1.0 already installed -- skipping.")
+        return
+
+    info("Installing mcp Python SDK (optional, from bundled wheelhouse)...")
+    progress("installing_mcp_sdk", "Installing mcp SDK (optional)", 91)
+
     wheelhouse = BUNDLE_DIR / "wheelhouse"
 
     try:
         r = _run(
             [str(pip_exe), "-m", "pip", "install",
+             "--upgrade",
              *_PIP_QUIET,
              "--no-index", f"--find-links={wheelhouse}",
              "mcp>=1.0"],
@@ -1457,24 +1506,47 @@ def _install_mcp_servers() -> None:
     # -----------------------------------------------------------------------
     # Step 1: extract pre-built node_modules from bundle (PRIMARY, no npm)
     # -----------------------------------------------------------------------
+    # Version-aware: we write a sentinel file .tt-nm-version next to
+    # node_modules containing the bundled version string. If node_modules
+    # exists AND the sentinel matches the bundle version, skip extraction
+    # (already up-to-date). If the bundle is newer, re-extract so the
+    # installed packages are never stale.
     nm_dir = MCP_SERVERS_DIR / "node_modules"
-    nm_installed = (
+    sentinel = MCP_SERVERS_DIR / ".tt-nm-version"
+
+    bundle_info: dict = {}
+    manifest_path = src / "node-bins.json"
+    if manifest_path.exists():
+        try:
+            with open(manifest_path) as f:
+                bundle_info = json.load(f)
+        except Exception:
+            pass
+
+    bundled_nm_version: str = (
+        bundle_info.get("node_modules_bundle", {}).get("version", "")
+    )
+    installed_nm_version: str = ""
+    if sentinel.exists():
+        try:
+            installed_nm_version = sentinel.read_text().strip()
+        except Exception:
+            pass
+
+    nm_up_to_date = (
         nm_dir.is_dir()
         and any(True for _ in nm_dir.iterdir())  # non-empty
+        and bool(bundled_nm_version)              # bundle has a version
+        and installed_nm_version == bundled_nm_version
     )
 
-    if nm_installed:
-        ok("node_modules already present, skipping extraction.")
+    if nm_up_to_date:
+        ok(f"node_modules already at v{bundled_nm_version} -- skipping extraction.")
+        nm_installed = True
     else:
-        bundle_info = {}
-        manifest_path = src / "node-bins.json"
-        if manifest_path.exists():
-            try:
-                with open(manifest_path) as f:
-                    bundle_info = json.load(f)
-            except Exception:
-                pass
-
+        if nm_dir.is_dir() and installed_nm_version and installed_nm_version != bundled_nm_version:
+            info(f"node_modules v{installed_nm_version} -> v{bundled_nm_version}: re-extracting...")
+        nm_installed = False
         nm_parts = bundle_info.get("node_modules_bundle", {}).get("parts", [])
         if nm_parts:
             info(f"Extracting pre-built node_modules ({len(nm_parts)} parts)...")
@@ -1485,6 +1557,11 @@ def _install_mcp_servers() -> None:
                 if _reassemble_parts(nm_parts, src, archive):
                     with _tarfile.open(archive, "r:gz") as tf:
                         tf.extractall(MCP_SERVERS_DIR)
+                    if bundled_nm_version:
+                        try:
+                            sentinel.write_text(bundled_nm_version)
+                        except Exception:
+                            pass
                     ok("node_modules extracted from bundle.")
                     nm_installed = nm_dir.is_dir()
                 else:

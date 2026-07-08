@@ -58,6 +58,7 @@
   },
   "node_modules_bundle": {
     "note": "Pre-built node_modules for @azure-devops/mcp, mcp-atlassian, @playwright/mcp. install.py extracts directly -- no npm execution needed at all.",
+    "version": "2026-07-08-ado2.7.0-atlassian2.1.0-pw0.0.77",
     "parts": [
       "node_modules_bundle/node_modules.tar.gz.000",
       "node_modules_bundle/node_modules.tar.gz.001"
