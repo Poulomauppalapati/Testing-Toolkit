@@ -1,7 +1,7 @@
 {
-  "version": "2.8.0",
+  "version": "2.8.1",
   "ref": "main",
-  "generatedAt": "2026-07-08T11:06:16.243Z",
+  "generatedAt": "2026-07-08T11:51:24.729Z",
   "files": [
     {
       "path": "ado/__init__.py",
@@ -151,7 +151,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "fb9d1c53648979fc1445331f383fbb769bb4d5931a01b07cd927131ebd1cce82"
+      "hash": "ddc33794a9d26a9450f50e0d5f4294f031e6b8fe804e366758828e327c2102f1"
     },
     {
       "path": "automation/__init__.py",
@@ -171,7 +171,7 @@
     {
       "path": "automation/e2e_runner.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/automation/e2e_runner.py?ref=main",
-      "hash": "0d207ecbc8d97a0d58d4edb7fec68aa9a974eea10a9c5e6d21941416accdc5ca"
+      "hash": "0dc872d3dc655b563d3e49ab7983568a9a059bd9fd025de81fd74b452297aa63"
     },
     {
       "path": "automation/execution_store.py",
@@ -181,7 +181,7 @@
     {
       "path": "automation/playwright_bridge.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/automation/playwright_bridge.py?ref=main",
-      "hash": "7c08bfd3414d3ebcbee077fc92401854028af24ed6b5b0b082c8045d324f2c4b"
+      "hash": "912f6db1b091753882b4bc8e97224234c36ce0134aa23ed190ab0c42f440b444"
     },
     {
       "path": "automation/report_excel.py",
