@@ -1,7 +1,7 @@
 {
   "version": "2.9.0",
   "ref": "main",
-  "generatedAt": "2026-07-08T12:59:40.212Z",
+  "generatedAt": "2026-07-08T13:12:23.768Z",
   "files": [
     {
       "path": "ado/__init__.py",
@@ -246,7 +246,7 @@
     {
       "path": "core/mcp_bridge.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/mcp_bridge.py?ref=main",
-      "hash": "fc8f46af2afd55640f94b9fde043b5c5becf92724085fe56c38503280e46ab5d"
+      "hash": "3e87a38669b03500737a14711b6da9070e46d2b81db470c0c316eb9ef335b95e"
     },
     {
       "path": "core/model_cache.py",
