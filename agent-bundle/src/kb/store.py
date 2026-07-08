@@ -77,6 +77,14 @@ _TEXT_EXT: Final[frozenset[str]] = frozenset({
     ".md", ".markdown", ".txt", ".csv", ".tsv", ".json", ".jsonl",
     ".ndjson", ".yaml", ".yml", ".xml", ".log", ".rst", ".text",
 })
+# Archive formats whose contained files are extracted and indexed.
+# .zip is implemented; the others are listed for future extension.
+_ARCHIVE_EXT: Final[frozenset[str]] = frozenset(
+    {".zip", ".7z", ".tar", ".gz", ".tgz"}
+)
+# Per-file text cap: prevents OOM on huge logs/dumps and bounds archive
+# decompression (bomb guard). ~16 MB of text is far more than any doc needs.
+_MAX_TEXT_BYTES: Final[int] = 16 * 1024 * 1024
 _HEADING_RE: Final[re.Pattern[str]] = re.compile(r"^(#{1,6})\s+(.*)$")
 _HTML_TAG_RE: Final[re.Pattern[str]] = re.compile(r"<[^>]+>")
 _MULTI_BLANK_RE: Final[re.Pattern[str]] = re.compile(r"\n\s*\n\s*\n+")

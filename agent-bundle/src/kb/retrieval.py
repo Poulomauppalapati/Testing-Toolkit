@@ -295,13 +295,35 @@ class HybridRetriever:
         return self._embedder
 
     def _ensure_reranker(self) -> Any | None:
+        """Build an API-based LLM reranker (no local ONNX). Returns a
+        lightweight wrapper with .rerank(query, candidates, top_k)."""
         if self._reranker_tried:
             return self._reranker
         self._reranker_tried = True
         try:
-            from kb.reranker import get_reranker
+            from core.model_router import Task, route
+            from core.settings_store import build_llm_client
 
-            self._reranker = get_reranker()
+            model = route(Task.LLM_RERANK)
+            client = build_llm_client()
+            if client is None:
+                self._reranker = None
+                return None
+
+            class _LLMRerankerWrapper:
+                name = f"llm:{model}"
+
+                def rerank(self, query: str,
+                           candidates: list[tuple[str, str]],
+                           top_k: int) -> list[tuple[str, float]]:
+                    from kb.reranker import llm_rerank
+                    ids = llm_rerank(client, model, query, candidates, top_k)
+                    if ids:
+                        return [(cid, 1.0 / (1 + i))
+                                for i, cid in enumerate(ids)]
+                    return []
+
+            self._reranker = _LLMRerankerWrapper()
         except Exception:
             self._reranker = None
         return self._reranker

@@ -224,6 +224,22 @@ class AnthropicClient:
             except Exception:
                 pass
 
+    @staticmethod
+    def _report_nw_success() -> None:
+        try:
+            from core.network_status import report_success
+            report_success()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _report_nw_failure() -> None:
+        try:
+            from core.network_status import report_failure
+            report_failure()
+        except Exception:
+            pass
+
     async def complete_async(
         self,
         model: str,
@@ -286,16 +302,19 @@ class AnthropicClient:
                 try:
                     resp = await client.post(self._url(), json=body)
                 except httpx.ConnectError as e:
+                    self._report_nw_failure()
                     raise AnthropicConnectionError(
                         f"Cannot reach {self._url()} (DNS/firewall): {e!r}"
                     ) from e
                 except (_ssl.SSLError, _ssl.SSLCertVerificationError) as e:
+                    self._report_nw_failure()
                     raise AnthropicConnectionError(
                         f"TLS error reaching the API (proxy interception?): "
                         f"{e!r}. Try Rebuild TLS in Settings."
                     ) from e
                 except httpx.TimeoutException as e:
                     last_exc = e
+                    self._report_nw_failure()
                     self._log(
                         f"[WARN] LLM API timeout after "
                         f"{effective_timeout:.0f}s (attempt "
@@ -313,6 +332,7 @@ class AnthropicClient:
                         f"{detail}"
                     )
                 if resp.status_code in _RETRY_STATUS:
+                    self._report_nw_failure()
                     last_exc = AnthropicAPIError(
                         f"HTTP {resp.status_code}: {self._error_detail(resp)}"
                     )
@@ -336,6 +356,7 @@ class AnthropicClient:
                         f"HTTP {resp.status_code}: {detail}"
                     )
 
+                self._report_nw_success()
                 return self._parse(resp)
 
         if isinstance(last_exc, AnthropicAPIError) and "429" in str(last_exc):
