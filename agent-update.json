@@ -1,7 +1,7 @@
 {
-  "version": "2.7.0",
+  "version": "2.7.1",
   "ref": "main",
-  "generatedAt": "2026-07-08T08:24:03.244Z",
+  "generatedAt": "2026-07-08T09:40:24.249Z",
   "files": [
     {
       "path": "ado/__init__.py",
@@ -71,7 +71,7 @@
     {
       "path": "agent/routes/chat.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/chat.py?ref=main",
-      "hash": "983eb3144d92f50f4716f76140d181d4a4c20a51997d011799db3f591650f777"
+      "hash": "da868f8efccb8c300d4fa1ba015853dbe9abf51398625597a2a18a7d523a2eb3"
     },
     {
       "path": "agent/routes/credentials.py",
@@ -111,7 +111,7 @@
     {
       "path": "agent/routes/kb.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/kb.py?ref=main",
-      "hash": "6aec4433469493809d214cc7995cbf75f24698e68fad52dc62eed30c8bf63a5a"
+      "hash": "8f5b424c5d19ff1476f548cf9d39602d1441169f451bed9b931e0aa4048986a2"
     },
     {
       "path": "agent/routes/llm.py",
@@ -151,7 +151,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "830242386a4ac230e21ec7235c1caec590e910b3aa7f9c3fcd988685e7b04875"
+      "hash": "d75d97819a9f2a66f0743ddf22f65d662f7cd18a7c6439dbd1964879a0c91b5f"
     },
     {
       "path": "automation/__init__.py",
