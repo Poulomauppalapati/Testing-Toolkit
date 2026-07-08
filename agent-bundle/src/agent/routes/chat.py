@@ -18,6 +18,7 @@ grounded in the project's knowledge base.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -179,23 +180,40 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
             return
 
         try:
-            deltas: list[str] = []
-
-            def _on_delta(chunk: str) -> None:
-                deltas.append(chunk)
+            loop = asyncio.get_running_loop()
+            _DONE = object()
 
             for _round in range(_MAX_TOOL_ROUNDS):
-                deltas.clear()
-                result = await client.stream_message_with_tools_async(
-                    model=model,
-                    messages=api_messages,
-                    system=system,
-                    tools=tools or None,
-                    on_text_delta=_on_delta,
-                )
-                # Forward the text produced this round.
-                for chunk in deltas:
-                    yield await _sse({"type": "text", "text": chunk})
+                # Bridge the per-chunk callback to this async generator via a
+                # queue so text streams to the client in real time instead of
+                # buffering until the whole round completes. call_soon_threadsafe
+                # keeps it correct whether the client streams the response on
+                # the loop or in a worker thread.
+                queue: asyncio.Queue[Any] = asyncio.Queue()
+
+                def _on_delta(chunk: str) -> None:
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+
+                async def _run():
+                    try:
+                        return await client.stream_message_with_tools_async(
+                            model=model,
+                            messages=api_messages,
+                            system=system,
+                            tools=tools or None,
+                            on_text_delta=_on_delta,
+                        )
+                    finally:
+                        loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+
+                task = asyncio.ensure_future(_run())
+                # Forward text chunks as they arrive.
+                while True:
+                    item = await queue.get()
+                    if item is _DONE:
+                        break
+                    yield await _sse({"type": "text", "text": item})
+                result = await task  # propagate result / re-raise errors
 
                 if not result.has_tool_use:
                     yield await _sse(
