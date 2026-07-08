@@ -18,6 +18,7 @@ Public API:
 from __future__ import annotations
 
 import asyncio
+import json
 import ssl as _ssl
 from dataclasses import dataclass, field
 from typing import Any, Callable, Final
@@ -30,6 +31,30 @@ LogFn = Callable[[str], None]
 
 _MESSAGES_PATH: Final[str] = "/v1/messages"
 _RETRY_STATUS: Final[frozenset[int]] = frozenset({429, 500, 502, 503, 529})
+
+# Appended to the system prompt of the agentic chat so the assistant stays
+# on-topic (testing / QA / project work items). Mirrors the desktop client.
+_GUARDRAIL_SUFFIX: Final[str] = (
+    "\n\n--- GUARDRAILS (STRICTLY ENFORCED) ---\n"
+    "You are a specialized testing and quality assurance assistant.\n"
+    "You MUST ONLY respond to queries directly related to:\n"
+    "- Test case creation, review, or modification\n"
+    "- Requirements analysis and test coverage\n"
+    "- Bug/defect analysis and reporting\n"
+    "- Quality assurance processes and methodologies\n"
+    "- Project-specific work items, user stories, or features\n"
+    "- Test data generation and test environment setup\n"
+    "- Code review from a testing/quality perspective\n\n"
+    "If the user asks ANYTHING outside these topics (general knowledge, "
+    "coding unrelated to testing, weather, recipes, math problems, general "
+    "programming puzzles, personal questions, etc.), respond EXACTLY with:\n"
+    '"I can only assist with tasks related to your current project and '
+    "testing activities. Please ask me something about your project "
+    'requirements, test cases, or quality assurance work."\n\n'
+    "Do NOT attempt to be helpful with off-topic requests. Do NOT explain "
+    "why you cannot help. Simply give the refusal message above.\n"
+    "--- END GUARDRAILS ---"
+)
 
 
 # ---------------------------------------------------------------------
@@ -70,6 +95,30 @@ class CompletionResult:
     text: str = ""
     stop_reason: str = ""
     usage: Usage = field(default_factory=Usage)
+
+
+@dataclass(slots=True)
+class StreamResult:
+    """Result from stream_message_with_tools_async(). Holds the content
+    blocks (text and/or tool_use) plus the stop_reason so the caller can
+    drive the agentic loop."""
+    content: list[dict[str, Any]] = field(default_factory=list)
+    stop_reason: str = ""
+
+    @property
+    def has_tool_use(self) -> bool:
+        return any(b.get("type") == "tool_use" for b in self.content)
+
+    @property
+    def text(self) -> str:
+        return "".join(
+            b.get("text", "") for b in self.content
+            if b.get("type") == "text"
+        )
+
+    @property
+    def tool_calls(self) -> list[dict[str, Any]]:
+        return [b for b in self.content if b.get("type") == "tool_use"]
 
 
 @dataclass(slots=True)
@@ -429,6 +478,147 @@ class AnthropicClient:
 
     def verify(self, model: str) -> tuple[bool, str]:
         return asyncio.run(self.verify_async(model))
+
+    async def stream_message_with_tools_async(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        system: str = "",
+        tools: list[dict[str, Any]] | None = None,
+        max_tokens: int = 8192,
+        temperature: float = 0.7,
+        on_text_delta: "Callable[[str], Any] | None" = None,
+    ) -> "StreamResult":
+        """Async streaming completion with tool_use support (SSE).
+
+        Returns a StreamResult with content blocks (text and/or tool_use).
+        The caller drives the agentic loop: if the result has tool_use
+        blocks, execute them, append tool_result messages, and call again;
+        repeat until the model returns text only.
+
+        on_text_delta (sync or async) is invoked with each text chunk as it
+        arrives so the route can forward tokens over SSE.
+        """
+        if not self.api_key.strip():
+            raise AnthropicAuthError(
+                "No LLM API key configured. Open Settings to add one."
+            )
+
+        body: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": float(temperature),
+            "messages": messages,
+            "stream": True,
+        }
+        body["system"] = (
+            (system + _GUARDRAIL_SUFFIX) if system.strip()
+            else _GUARDRAIL_SUFFIX.lstrip()
+        )
+        if tools:
+            body["tools"] = tools
+
+        headers = self._headers()
+        headers["accept"] = "text/event-stream"
+
+        content_blocks: list[dict[str, Any]] = []
+        current_block: dict[str, Any] | None = None
+        text_accum = ""
+        tool_input_json = ""
+        stop_reason = ""
+
+        async def _emit(chunk: str) -> None:
+            if not (on_text_delta and chunk):
+                return
+            res = on_text_delta(chunk)
+            if asyncio.iscoroutine(res):
+                await res
+
+        async with httpx.AsyncClient(
+            headers=headers,
+            verify=self.ssl_verify,
+            timeout=httpx.Timeout(self.timeout_sec, read=300.0),
+        ) as client:
+            async with client.stream(
+                "POST", self._url(), json=body
+            ) as resp:
+                if resp.status_code in (401, 403):
+                    await resp.aread()
+                    raise AnthropicAuthError(
+                        f"HTTP {resp.status_code}: API key rejected."
+                    )
+                if resp.status_code != 200:
+                    await resp.aread()
+                    raise AnthropicAPIError(
+                        f"HTTP {resp.status_code}: {self._error_detail(resp)}"
+                    )
+
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload.strip() == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(payload)
+                    except Exception:
+                        continue
+                    etype = event.get("type", "")
+
+                    if etype == "content_block_start":
+                        cb = event.get("content_block", {})
+                        cb_type = cb.get("type", "")
+                        if cb_type == "text":
+                            current_block = {"type": "text", "text": ""}
+                            text_accum = ""
+                        elif cb_type == "tool_use":
+                            current_block = {
+                                "type": "tool_use",
+                                "id": cb.get("id", ""),
+                                "name": cb.get("name", ""),
+                                "input": {},
+                            }
+                            tool_input_json = ""
+
+                    elif etype == "content_block_delta":
+                        delta = event.get("delta", {})
+                        dtype = delta.get("type", "")
+                        if dtype == "text_delta" and current_block:
+                            chunk = delta.get("text", "")
+                            text_accum += chunk
+                            await _emit(chunk)
+                        elif dtype == "input_json_delta" and current_block:
+                            tool_input_json += delta.get("partial_json", "")
+
+                    elif etype == "content_block_stop":
+                        if current_block:
+                            if current_block["type"] == "text":
+                                current_block["text"] = text_accum
+                            elif current_block["type"] == "tool_use":
+                                try:
+                                    current_block["input"] = (
+                                        json.loads(tool_input_json)
+                                        if tool_input_json else {}
+                                    )
+                                except json.JSONDecodeError:
+                                    current_block["input"] = {}
+                            content_blocks.append(current_block)
+                            current_block = None
+
+                    elif etype == "message_delta":
+                        delta = event.get("delta", {})
+                        stop_reason = delta.get("stop_reason", stop_reason)
+
+                    elif etype == "message_stop":
+                        break
+                    elif etype == "error":
+                        err_msg = (
+                            event.get("error", {}).get("message", "")
+                            or "Stream error"
+                        )
+                        raise AnthropicAPIError(f"Stream error: {err_msg}")
+
+        return StreamResult(content=content_blocks, stop_reason=stop_reason)
 
     async def list_working_models_async(
         self,

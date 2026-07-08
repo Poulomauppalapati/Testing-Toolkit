@@ -65,6 +65,14 @@ export function ActionBar() {
       >
         Retrieval Preview
       </button>
+      <button
+        className="tt-btn-ghost !px-4 !py-1.5 text-sm"
+        disabled={!currentProject}
+        title="Chat with the assistant — search, read, update, and create ADO work items with KB grounding"
+        onClick={() => openDialog("chat")}
+      >
+        Custom Generate
+      </button>
 
       <div className="flex-1" />
 

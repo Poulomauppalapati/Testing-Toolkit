@@ -756,6 +756,97 @@ export const agent = {
   },
 
   /**
+   * Agentic chat over Server-Sent Events. Streams the assistant reply token
+   * by token and reports ADO tool activity between rounds. The backend runs
+   * the tool_use loop (search / read / update / create work items) and folds
+   * in KB retrieval when `use_kb` is set. Resolves when the stream ends.
+   *
+   * `signal` lets the caller stop generation (mirrors the desktop Stop button).
+   */
+  async chatStream(
+    req: {
+      project: string;
+      messages: { role: "user" | "assistant"; content: string }[];
+      use_kb?: boolean;
+      use_tools?: boolean;
+      model?: string;
+      attachment_text?: string;
+    },
+    handlers: {
+      onText?: (delta: string) => void;
+      onTool?: (name: string, phase: "start" | "done") => void;
+      onError?: (message: string) => void;
+      onDone?: (stopReason: string) => void;
+    },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const res = await fetch(`${AGENT_URL}/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project: req.project,
+        messages: req.messages,
+        use_kb: req.use_kb ?? true,
+        use_tools: req.use_tools ?? true,
+        model: req.model,
+        attachment_text: req.attachment_text ?? "",
+      }),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      const body = await res.text().catch(() => "");
+      throw new Error(humanizeError(res.status, body));
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE frames are separated by a blank line.
+        let sep: number;
+        while ((sep = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          for (const line of frame.split("\n")) {
+            if (!line.startsWith("data: ")) continue;
+            const payload = line.slice(6);
+            let evt: {
+              type: string;
+              text?: string;
+              name?: string;
+              phase?: "start" | "done";
+              message?: string;
+              stop_reason?: string;
+            };
+            try {
+              evt = JSON.parse(payload);
+            } catch {
+              continue;
+            }
+            if (evt.type === "text" && evt.text) handlers.onText?.(evt.text);
+            else if (evt.type === "tool" && evt.name)
+              handlers.onTool?.(evt.name, evt.phase ?? "start");
+            else if (evt.type === "error")
+              handlers.onError?.(evt.message ?? "Unknown error");
+            else if (evt.type === "done")
+              handlers.onDone?.(evt.stop_reason ?? "");
+          }
+        }
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* already released */
+      }
+    }
+  },
+
+  /**
    * Upload a single KB document while reporting byte-level progress (0..1).
    * Uses XMLHttpRequest because the fetch API cannot surface upload progress.
    * onProgress(null) signals an indeterminate state (bytes total unknown).

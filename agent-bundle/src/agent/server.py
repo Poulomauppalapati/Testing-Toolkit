@@ -383,6 +383,7 @@ from agent.routes.settings import router as settings_router
 from agent.routes.ado import router as ado_router
 from agent.routes.kb import router as kb_router
 from agent.routes.llm import router as llm_router
+from agent.routes.chat import router as chat_router
 from agent.routes.generate import router as generate_router
 from agent.routes.defects import router as defects_router
 from agent.routes.jobs import router as jobs_router
@@ -395,6 +396,7 @@ app.include_router(settings_router, prefix="/settings")
 app.include_router(ado_router, prefix="/ado")
 app.include_router(kb_router, prefix="/kb")
 app.include_router(llm_router, prefix="/llm")
+app.include_router(chat_router, prefix="/chat")
 app.include_router(generate_router, prefix="/generate")
 app.include_router(defects_router, prefix="/defects")
 app.include_router(jobs_router, prefix="/jobs")

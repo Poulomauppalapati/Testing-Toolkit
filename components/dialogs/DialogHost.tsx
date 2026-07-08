@@ -8,6 +8,7 @@ import { UploadDialog } from "./UploadDialog";
 import { PackageDialog } from "./PackageDialog";
 import { DefectDialog } from "./DefectDialog";
 import { RetrievalDialog } from "./RetrievalDialog";
+import { ChatDialog } from "./ChatDialog";
 import { AboutDialog } from "./AboutDialog";
 import { ViewLogDialog } from "./ViewLogDialog";
 
@@ -29,6 +30,8 @@ export function DialogHost() {
       return <DefectDialog onClose={closeDialog} />;
     case "retrieval":
       return <RetrievalDialog onClose={closeDialog} />;
+    case "chat":
+      return <ChatDialog onClose={closeDialog} />;
     case "about":
       return <AboutDialog onClose={closeDialog} />;
     case "viewlog":
