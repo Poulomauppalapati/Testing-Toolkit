@@ -8,13 +8,16 @@ import {
   type SaveSettingsPayload,
 } from "@/lib/agent-client";
 
-// Default model suggestions — real model IDs from the GenAI LiteLLM proxy
-// (GenAI Documentation v1.0.0, OAS 3.0). Override via Settings > Fetch models
-// once the API key and base URL are configured.
+// Default model suggestions shown in the dropdowns BEFORE "Fetch models" is
+// run (and as the read-only fallback in the first-run wizard). These MUST match
+// the agent's real tier defaults in core/app_config.py
+// (DEFAULT_MODEL / DEFAULT_FAST_MODEL / DEFAULT_FALLBACK_MODEL) so a fresh user
+// sees the correct primary/fast/fallback models — the Bedrock Claude trio, not
+// Azure GPT. Order matters: [0]=primary, [1]=fast, [2]=fallback.
 const SEED_MODELS = [
-  "azure.gpt-4o",
-  "azure.gpt-4-turbo",
-  "azure.gpt-4",
+  "bedrock.anthropic.claude-opus-4-6",
+  "bedrock.anthropic.claude-sonnet-4-6",
+  "bedrock.anthropic.claude-haiku-4-5",
 ];
 
 // Embedding models from the GenAI proxy doc.
@@ -27,11 +30,20 @@ const SEED_EMBED_MODELS = [
 function seedGroups(): ModelGroup[] {
   return [
     {
+      provider: "Bedrock (Anthropic)",
+      items: SEED_MODELS.map((id) => ({
+        id,
+        provider: "Bedrock (Anthropic)",
+        label: id,
+      })),
+    },
+    {
       provider: "Azure OpenAI (GenAI Proxy)",
-      items: [
-        ...SEED_MODELS.map((id) => ({ id, provider: "Azure OpenAI (GenAI Proxy)", label: id })),
-        ...SEED_EMBED_MODELS.map((id) => ({ id, provider: "Azure OpenAI (GenAI Proxy)", label: id })),
-      ],
+      items: SEED_EMBED_MODELS.map((id) => ({
+        id,
+        provider: "Azure OpenAI (GenAI Proxy)",
+        label: id,
+      })),
     },
   ];
 }
