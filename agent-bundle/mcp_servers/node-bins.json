@@ -2,8 +2,7 @@
   "node_version": "20.18.0",
   "lts": "Iron",
   "generated": "2026-07-08",
-  "repo": "nrcharanvignesh/Testing-Toolkit",
-  "branch": "parts",
+  "note": "Binaries bundled directly in the repo under agent-bundle/mcp_servers/node-bins/. install.py reassembles parts from the repo checkout -- zero internet required.",
   "platforms": {
     "win32-x64": {
       "archive_type": "zip",
@@ -11,9 +10,9 @@
       "node_exe_path": "node-v20.18.0-win-x64/node.exe",
       "sha256": "f5cea43414cc33024bbe5867f208d1c9c915d6a38e92abeee07ed9e563662297",
       "parts": [
-        "node-bins/win-x64/node-win-x64.000",
-        "node-bins/win-x64/node-win-x64.001",
-        "node-bins/win-x64/node-win-x64.002"
+        "node-bins/win-x64/node-win-x64.zip.000",
+        "node-bins/win-x64/node-win-x64.zip.001",
+        "node-bins/win-x64/node-win-x64.zip.002"
       ]
     },
     "linux-x64": {
@@ -22,12 +21,46 @@
       "node_exe_path": "node-v20.18.0-linux-x64/bin/node",
       "sha256": "24a5d58a1d4c2903478f4b7c3cfd2eeb5cea2cae3baee11a4dc6a1fed25fec6c",
       "parts": [
-        "node-bins/linux-x64/node-linux-x64.000",
-        "node-bins/linux-x64/node-linux-x64.001",
-        "node-bins/linux-x64/node-linux-x64.002",
-        "node-bins/linux-x64/node-linux-x64.003",
-        "node-bins/linux-x64/node-linux-x64.004"
+        "node-bins/linux-x64/node-linux-x64.tar.gz.000",
+        "node-bins/linux-x64/node-linux-x64.tar.gz.001",
+        "node-bins/linux-x64/node-linux-x64.tar.gz.002",
+        "node-bins/linux-x64/node-linux-x64.tar.gz.003",
+        "node-bins/linux-x64/node-linux-x64.tar.gz.004"
+      ]
+    },
+    "darwin-arm64": {
+      "archive_type": "tar.gz",
+      "archive_name": "node-v20.18.0-darwin-arm64.tar.gz",
+      "node_exe_path": "node-v20.18.0-darwin-arm64/bin/node",
+      "sha256": "92e180624259d082562592bb12548037c6a417069be29e452ec5d158d657b4be",
+      "parts": [
+        "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.000",
+        "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.001",
+        "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.002",
+        "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.003",
+        "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.004"
+      ]
+    },
+    "darwin-x64": {
+      "archive_type": "tar.gz",
+      "archive_name": "node-v20.18.0-darwin-arm64.tar.gz",
+      "node_exe_path": "node-v20.18.0-darwin-arm64/bin/node",
+      "sha256": "92e180624259d082562592bb12548037c6a417069be29e452ec5d158d657b4be",
+      "note": "Falls back to arm64 binary; runs via Rosetta 2 on Intel Macs",
+      "parts": [
+        "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.000",
+        "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.001",
+        "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.002",
+        "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.003",
+        "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.004"
       ]
     }
+  },
+  "node_modules_bundle": {
+    "note": "Pre-built node_modules for @azure-devops/mcp, mcp-atlassian, @playwright/mcp. install.py extracts directly -- no npm execution needed at all.",
+    "parts": [
+      "node_modules_bundle/node_modules.tar.gz.000",
+      "node_modules_bundle/node_modules.tar.gz.001"
+    ]
   }
 }

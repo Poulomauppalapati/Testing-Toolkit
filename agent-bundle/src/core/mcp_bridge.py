@@ -5,14 +5,16 @@ MCP server lifecycle management and tool routing for the Testing Toolkit.
 Manages long-running MCP server subprocesses (Node.js), converts MCP tool
 schemas to Claude tool_use format, and routes tool calls to each server.
 
-Bundled MCP servers (installed into ~/TestingToolkitWeb/mcp_servers/ by
-install.py from the bundled npm-cache.tar.gz -- fully offline, PwC-safe):
+Bundled MCP servers (deployed by install.py from repo-committed assets,
+fully offline, PwC-safe -- no npmjs.org or nodejs.org access needed):
   - ADO        @azure-devops/mcp  v2.7.0  - Azure DevOps work items, boards, PRs
   - JIRA       mcp-atlassian      v2.1.0  - Atlassian Jira + Confluence issues
   - Playwright @playwright/mcp    v0.0.77 - Browser automation via Playwright
 
-Node.js v20.18.0 LTS is also bundled on the parts branch (win-x64 + linux-x64)
-so install.py can provision Node.js without access to nodejs.org.
+install.py extracts a pre-built node_modules tarball (16MB) and the
+Node.js v20.18.0 binary (win-x64 / linux-x64 / darwin-arm64) from split
+parts committed directly to the main branch under agent-bundle/mcp_servers/.
+No npm execution or network access is required during install.
 
 Graceful degradation: if any MCP server fails to start the bridge returns an
 empty tool list for that server and logs a warning. All other servers and the
@@ -69,14 +71,23 @@ def _mcp_servers_dir() -> Path:
 # Node.js resolution
 # ---------------------------------------------------------------------
 def _node_exe() -> Path | None:
-    """Find node: bundled mcp_servers/node.exe -> system PATH."""
-    bundled = _mcp_servers_dir() / "node.exe"
-    if bundled.exists():
-        return bundled
-    # On macOS/Linux the bundled node is named `node`, not `node.exe`
-    bundled_posix = _mcp_servers_dir() / "node"
-    if bundled_posix.exists():
-        return bundled_posix
+    """Find node executable.
+
+    Search order:
+      1. install.py-extracted bundle: mcp_servers/node/node.exe  (Windows)
+         or mcp_servers/node/bin/node  (Linux/macOS)
+      2. Legacy flat placement: mcp_servers/node.exe or mcp_servers/node
+      3. System PATH
+    """
+    base = _mcp_servers_dir()
+    for candidate in (
+        base / "node" / "node.exe",        # win extracted by install.py
+        base / "node" / "bin" / "node",    # posix extracted by install.py
+        base / "node.exe",                 # legacy flat
+        base / "node",                     # legacy flat
+    ):
+        if candidate.exists():
+            return candidate
     which = shutil.which("node")
     return Path(which) if which else None
 

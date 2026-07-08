@@ -1196,89 +1196,53 @@ def _install_playwright_optional(launch_python: str, use_pythonpath: bool) -> No
 
 
 # --------------------------------------------------------------------------
-# MCP server install (ADO, JIRA, Playwright) -- fully offline-capable
+# MCP server install (ADO, JIRA, Playwright) -- fully offline, PwC-safe
 # --------------------------------------------------------------------------
-# All three MCP server npm packages AND Node.js itself are bundled in the
-# git repository so this step works with zero internet access (PwC-safe).
+# Everything required is bundled directly in the repo under
+# agent-bundle/mcp_servers/.  Zero internet access needed.
 #
-# WHAT IS BUNDLED IN THE REPO:
-#   agent-bundle/mcp_servers/
-#     npm-cache.tar.gz     -- full npm cache for all 205 packages (30MB gzip)
-#     package.json         -- declares @azure-devops/mcp, mcp-atlassian,
-#                             @playwright/mcp with pinned versions
-#     package-lock.json    -- exact lockfile for reproducible install
-#     node-bins.json       -- Node.js v20.18.0 binary manifest (parts branch)
+# WHAT IS IN THE REPO (agent-bundle/mcp_servers/):
+#   node_modules_bundle/
+#     node_modules.tar.gz.000  }  pre-built node_modules for all 3 servers
+#     node_modules.tar.gz.001  }  (~16MB compressed, ~88MB extracted)
+#   node-bins/
+#     win-x64/      node-win-x64.zip.{000-002}        Node.js v20 win-x64
+#     linux-x64/    node-linux-x64.tar.gz.{000-004}   Node.js v20 linux-x64
+#     darwin-arm64/ node-darwin-arm64.tar.gz.{000-004} Node.js v20 darwin
+#   node-bins.json   sha256 + part file list per platform
+#   package.json     pinned versions (@azure-devops/mcp, mcp-atlassian,
+#                    @playwright/mcp) -- used only for online fallback
+#   package-lock.json -- used only for online fallback
 #
-# WHAT IS ON THE PARTS BRANCH:
-#   node-bins/win-x64/     -- Node.js win-x64 zip split into 10MB parts
-#   node-bins/linux-x64/   -- Node.js linux-x64 tar.gz split into 10MB parts
-#   node-bins.json         -- sha256 + parts list per platform
-#
-# INSTALL FLOW:
-#   1. Check PATH for node/npm  (fast path -- user already has Node.js)
-#   2. Check INSTALL_DIR/mcp_servers/node/ for previously-bundled node
-#   3. If neither: download+reassemble from parts branch, extract
-#   4. Extract the bundled npm-cache.tar.gz into a temp cache dir
-#   5. npm install --offline --cache <cache> using the bundled package.json
-#   6. Verify entry points for all three servers
+# INSTALL FLOW (in priority order):
+#   1. Reassemble + extract node_modules_bundle directly to MCP_SERVERS_DIR
+#      -- no npm, no Node.js, zero network, pure tar extraction
+#   2. If Node.js not in PATH and not previously extracted: reassemble
+#      node-bins parts from the repo and extract to MCP_SERVERS_DIR/node/
+#      -- needed only for mcp_bridge to launch server processes at runtime
+#   3. Online npm install as last resort (requires network + npm)
+#   4. Verify all three entry points and report
+# --------------------------------------------------------------------------
 
 MCP_SERVERS_DIR = INSTALL_DIR / "mcp_servers"
 _NODE_INSTALL_DIR = MCP_SERVERS_DIR / "node"
 
-# Source directory: where the bundled files live (same dir as install.py,
-# then src/mcp_servers/ for agent-bundle layout, finally MEIPASS for frozen).
+
 def _mcp_bundle_src() -> Path:
     """Locate the bundled mcp_servers/ directory that ships with the installer."""
-    # Frozen PyInstaller bundle
     mei = getattr(sys, "_MEIPASS", "")
     if mei:
         p = Path(mei) / "mcp_servers"
         if p.is_dir():
             return p
-    # Running from agent-bundle/ source tree (install.py lives here)
     here = Path(__file__).resolve().parent
     p = here / "mcp_servers"
     if p.is_dir():
         return p
-    # Fallback: next to install.py in the working dir
     p = Path.cwd() / "mcp_servers"
     if p.is_dir():
         return p
     return here / "mcp_servers"  # may not exist -- callers check
-
-
-# GitHub raw base for the parts branch node bins
-_PARTS_RAW = (
-    "https://raw.githubusercontent.com/"
-    "nrcharanvignesh/Testing-Toolkit/parts"
-)
-
-
-def _find_node() -> str | None:
-    """Find node: previously-bundled install -> system PATH."""
-    # 1. Previously extracted by this installer
-    bundled_win = _NODE_INSTALL_DIR / "node.exe"
-    if bundled_win.exists():
-        return str(bundled_win)
-    bundled_posix = _NODE_INSTALL_DIR / "bin" / "node"
-    if bundled_posix.exists():
-        return str(bundled_posix)
-    # 2. System PATH
-    return shutil.which("node")
-
-
-def _find_npm(node_exe: str) -> str | None:
-    """Find npm: co-located with node -> system PATH."""
-    node_path = Path(node_exe)
-    # npm is always next to node or in node/bin/
-    for candidate in (
-        node_path.parent / "npm",
-        node_path.parent / "npm.cmd",
-        node_path.parent / "npx",
-    ):
-        if candidate.exists():
-            return str(candidate)
-    return shutil.which("npm")
 
 
 def _platform_key() -> str:
@@ -1293,15 +1257,59 @@ def _platform_key() -> str:
     return "linux-x64"
 
 
-def _download_node_from_parts() -> bool:
-    """Download Node.js from the parts branch and extract to _NODE_INSTALL_DIR.
+def _find_node() -> str | None:
+    """Find node: previously-extracted bundled node -> system PATH."""
+    for candidate in (
+        _NODE_INSTALL_DIR / "node.exe",          # win extracted
+        _NODE_INSTALL_DIR / "bin" / "node",      # posix extracted
+    ):
+        if candidate.exists():
+            return str(candidate)
+    return shutil.which("node")
 
-    Returns True if node is now available, False on any failure.
-    Non-fatal: caller continues without Node.js if this fails.
+
+def _find_npm(node_exe: str) -> str | None:
+    """Find npm co-located with node, then system PATH."""
+    node_path = Path(node_exe)
+    for candidate in (
+        node_path.parent / "npm",
+        node_path.parent / "npm.cmd",
+    ):
+        if candidate.exists():
+            return str(candidate)
+    return shutil.which("npm")
+
+
+def _reassemble_parts(parts: list[str], src: Path, dest: Path) -> bool:
+    """Concatenate split part files from src directory into dest file.
+
+    parts: list of relative paths (e.g. 'node-bins/win-x64/node-win-x64.zip.000')
+    src:   the mcp_servers bundle directory
+    dest:  output file path
+    """
+    try:
+        with open(dest, "wb") as out:
+            for rel in parts:
+                part_file = src / rel
+                if not part_file.exists():
+                    warn(f"  Missing part: {part_file}")
+                    return False
+                with open(part_file, "rb") as pf:
+                    shutil.copyfileobj(pf, out)
+        return True
+    except Exception as exc:
+        warn(f"  Part reassembly failed: {exc}")
+        return False
+
+
+def _extract_node_from_bundle() -> bool:
+    """Reassemble and extract the bundled Node.js binary to _NODE_INSTALL_DIR.
+
+    Returns True if node is now available, False on any failure (non-fatal).
     """
     import hashlib
-    import urllib.request
     import zipfile
+    import tarfile as _tarfile
 
     src = _mcp_bundle_src()
     manifest_path = src / "node-bins.json"
@@ -1320,230 +1328,203 @@ def _download_node_from_parts() -> bool:
     plat_info = manifest.get("platforms", {}).get(plat)
     if not plat_info:
         warn(f"No Node.js binary bundled for platform '{plat}'.")
-        warn("Please install Node.js 20+ manually from https://nodejs.org")
         return False
 
-    parts = plat_info["parts"]
+    parts       = plat_info["parts"]
     archive_name = plat_info["archive_name"]
-    archive_sha256 = plat_info["sha256"]
+    expected_sha = plat_info["sha256"]
     archive_type = plat_info["archive_type"]
-    node_exe_path = plat_info["node_exe_path"]  # path inside the archive
-    version = manifest.get("node_version", "20")
+    node_exe_rel = plat_info["node_exe_path"]
+    version      = manifest.get("node_version", "20")
 
-    info(f"Downloading Node.js v{version} for {plat} ({len(parts)} parts)...")
-    progress("downloading_node", f"Downloading Node.js v{version}", 91)
+    info(f"Reassembling Node.js v{version} for {plat} ({len(parts)} parts)...")
+    progress("extracting_node", f"Extracting bundled Node.js v{version}", 91)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="tt_node_"))
     try:
-        # Download and reassemble parts
         archive_path = tmp_dir / archive_name
-        with open(archive_path, "wb") as out:
-            for i, part_path in enumerate(parts):
-                url = f"{_PARTS_RAW}/{part_path}"
-                info(f"  Part {i + 1}/{len(parts)}: {part_path}")
-                try:
-                    with urllib.request.urlopen(url, timeout=120) as resp:
-                        out.write(resp.read())
-                except Exception as exc:
-                    warn(f"  Failed to download part {part_path}: {exc}")
-                    return False
+        if not _reassemble_parts(parts, src, archive_path):
+            return False
 
         # Verify sha256
-        info("Verifying Node.js archive integrity...")
         h = hashlib.sha256()
         with open(archive_path, "rb") as f:
             for chunk in iter(lambda: f.read(65536), b""):
                 h.update(chunk)
         actual = h.hexdigest()
-        if actual != archive_sha256:
-            warn(f"Node.js archive sha256 mismatch: expected {archive_sha256}, got {actual}")
+        if actual != expected_sha:
+            warn(f"Node.js sha256 mismatch: expected {expected_sha}, got {actual}")
             return False
         ok("Node.js archive verified.")
 
         # Extract
         info(f"Extracting Node.js to {_NODE_INSTALL_DIR}...")
-        _NODE_INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+        extract_dir = tmp_dir / "extracted"
+        extract_dir.mkdir()
         if archive_type == "zip":
             with zipfile.ZipFile(archive_path) as zf:
-                zf.extractall(tmp_dir / "extracted")
-        else:  # tar.gz
-            import tarfile
-            with tarfile.open(archive_path, "r:gz") as tf:
-                tf.extractall(tmp_dir / "extracted")
+                zf.extractall(extract_dir)
+        else:
+            with _tarfile.open(archive_path, "r:gz") as tf:
+                tf.extractall(extract_dir)
 
-        # Move the extracted directory contents to _NODE_INSTALL_DIR
-        extracted_root = next((tmp_dir / "extracted").iterdir())
+        _NODE_INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+        extracted_root = next(extract_dir.iterdir())
         for item in extracted_root.iterdir():
             dest = _NODE_INSTALL_DIR / item.name
             if dest.exists():
                 shutil.rmtree(dest) if dest.is_dir() else dest.unlink()
             shutil.move(str(item), str(dest))
 
-        # Verify the node executable
-        node_exe = _NODE_INSTALL_DIR / Path(node_exe_path).relative_to(
-            Path(node_exe_path).parts[0]
-        )
-        if not node_exe.exists():
-            warn(f"Node.js exe not found at expected path: {node_exe}")
-            return False
-        if os.name != "nt":
+        # Make node executable on posix
+        node_exe = _NODE_INSTALL_DIR / Path(*Path(node_exe_rel).parts[1:])
+        if node_exe.exists() and os.name != "nt":
             node_exe.chmod(node_exe.stat().st_mode | 0o755)
-        ok(f"Node.js installed: {node_exe}")
+        if not node_exe.exists():
+            warn(f"Node.js exe not found at: {node_exe}")
+            return False
+        ok(f"Node.js ready: {node_exe}")
         return True
 
     except Exception as exc:
-        warn(f"Node.js download/extract failed (non-fatal): {exc}")
+        warn(f"Node.js extraction failed (non-fatal): {exc}")
         return False
     finally:
-        try:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        except Exception:
-            pass
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _install_mcp_servers() -> None:
-    """Install MCP server npm packages into INSTALL_DIR/mcp_servers/node_modules.
+    """Deploy bundled MCP servers into INSTALL_DIR/mcp_servers/.
 
-    Fully offline-capable:
-      - Uses the npm-cache.tar.gz bundled in the repo (extracted to a temp dir)
-        so npm install --offline works with zero internet access.
-      - Downloads Node.js from the parts branch if not found in PATH.
-    Non-fatal: agent starts without MCP tools if this step fails.
+    Primary path: extract pre-built node_modules tarball directly.
+    No npm, no network.  Node.js binary is also extracted from bundled
+    parts so mcp_bridge can launch server processes at runtime.
+    Falls back to online npm install if bundle assets are missing.
+    Non-fatal: agent starts without MCP tools if everything fails.
     """
     progress("installing_mcp", "Installing MCP servers (ADO, JIRA, Playwright)", 92)
 
-    # --- Step 1: ensure node is available ----------------------------------
-    node = _find_node()
-    if not node:
-        info("Node.js not found in PATH. Attempting to install from bundled parts...")
-        if _download_node_from_parts():
-            node = _find_node()
-        if not node:
-            warn(
-                "Node.js could not be found or installed. "
-                "MCP servers (ADO, JIRA, Playwright) will be unavailable. "
-                "Install Node.js 20+ manually and re-run the installer."
-            )
-            return
-
-    info(f"Node.js: {node}")
-
-    npm = _find_npm(node)
-    if not npm:
-        warn("npm not found alongside node. Cannot install MCP servers (non-fatal).")
-        return
-    info(f"npm: {npm}")
-
-    # --- Step 2: extract the bundled npm cache -----------------------------
     src = _mcp_bundle_src()
-    npm_cache_archive = src / "npm-cache.tar.gz"
+    if not src.exists():
+        warn(f"mcp_servers bundle directory not found at {src} (non-fatal).")
+        return
 
-    cache_tmp: Path | None = None
-    use_offline = False
-
-    if npm_cache_archive.exists():
-        info(f"Extracting bundled npm cache ({npm_cache_archive.stat().st_size // 1_048_576}MB)...")
-        try:
-            import tarfile
-            cache_tmp = Path(tempfile.mkdtemp(prefix="tt_npm_cache_"))
-            with tarfile.open(npm_cache_archive, "r:gz") as tf:
-                tf.extractall(cache_tmp)
-            # The archive contains a top-level 'cache' directory
-            extracted_cache = cache_tmp / "cache"
-            if not extracted_cache.is_dir():
-                # Try direct: the tar might have cached items at root level
-                extracted_cache = cache_tmp
-            ok(f"npm cache extracted to {extracted_cache}")
-            use_offline = True
-        except Exception as exc:
-            warn(f"Failed to extract bundled npm cache (will try online): {exc}")
-            cache_tmp = None
-    else:
-        warn(
-            "Bundled npm cache not found. "
-            "Attempting online install (may fail on restricted networks)."
-        )
-
-    # --- Step 3: npm install using bundled package.json + lockfile ---------
     try:
         MCP_SERVERS_DIR.mkdir(parents=True, exist_ok=True)
     except Exception as exc:
-        warn(f"Could not create MCP servers directory: {exc}")
+        warn(f"Could not create MCP_SERVERS_DIR: {exc}")
         return
 
-    # Copy package.json + package-lock.json from bundle src to install dir
-    # (npm ci requires package-lock.json to be present)
-    for fname in ("package.json", "package-lock.json"):
-        src_file = src / fname
-        dst_file = MCP_SERVERS_DIR / fname
-        if src_file.exists() and not dst_file.exists():
-            shutil.copy2(str(src_file), str(dst_file))
+    # -----------------------------------------------------------------------
+    # Step 1: extract pre-built node_modules from bundle (PRIMARY, no npm)
+    # -----------------------------------------------------------------------
+    nm_dir = MCP_SERVERS_DIR / "node_modules"
+    nm_installed = (
+        nm_dir.is_dir()
+        and any(True for _ in nm_dir.iterdir())  # non-empty
+    )
 
-    _sp_kwargs: dict = {}
-    if os.name == "nt":
-        _sp_kwargs = {"creationflags": CREATE_NO_WINDOW}
-
-    lockfile = MCP_SERVERS_DIR / "package-lock.json"
-    if use_offline and cache_tmp is not None and lockfile.exists():
-        cmd = [
-            npm, "ci",
-            "--prefix", str(MCP_SERVERS_DIR),
-            "--cache", str(extracted_cache),
-            "--offline",
-            "--no-audit", "--no-fund", "--loglevel=error",
-        ]
-        mode = "offline (bundled cache)"
+    if nm_installed:
+        ok("node_modules already present, skipping extraction.")
     else:
-        cmd = [
-            npm, "install",
-            "--prefix", str(MCP_SERVERS_DIR),
-            "--no-audit", "--no-fund", "--loglevel=error",
-        ]
-        mode = "online (network)"
-
-    info(f"Running npm install [{mode}]...")
-    try:
-        r = _run(cmd, capture_output=True, text=True, timeout=300, **_sp_kwargs)
-        if r.returncode == 0:
-            ok(f"MCP npm install succeeded [{mode}].")
-        else:
-            warn(f"npm install failed [{mode}] (non-fatal).")
-            trace(f"npm stderr: {r.stderr[:2000]}")
-            # If offline failed, try online as a last resort
-            if use_offline:
-                info("Retrying with online npm install as fallback...")
-                r2 = _run(
-                    [npm, "install",
-                     "--prefix", str(MCP_SERVERS_DIR),
-                     "--no-audit", "--no-fund", "--loglevel=error"],
-                    capture_output=True, text=True, timeout=300, **_sp_kwargs,
-                )
-                if r2.returncode == 0:
-                    ok("MCP npm install succeeded [online fallback].")
-                else:
-                    warn("MCP npm install also failed online. "
-                         "MCP tools will be unavailable.")
-                    trace(f"npm stderr: {r2.stderr[:1000]}")
-    except Exception as exc:
-        warn(f"npm install raised an exception (non-fatal): {exc}")
-    finally:
-        if cache_tmp:
+        bundle_info = {}
+        manifest_path = src / "node-bins.json"
+        if manifest_path.exists():
             try:
-                shutil.rmtree(cache_tmp, ignore_errors=True)
+                with open(manifest_path) as f:
+                    bundle_info = json.load(f)
             except Exception:
                 pass
 
-    # --- Step 4: verify entry points ---------------------------------------
-    _MCP_VERIFY = [
-        ("@azure-devops/mcp",  "@azure-devops", "mcp",          "dist/index.js"),
-        ("mcp-atlassian",      "mcp-atlassian",  None,           "dist/index.js"),
-        ("@playwright/mcp",    "@playwright",    "mcp",          "cli.js"),
+        nm_parts = bundle_info.get("node_modules_bundle", {}).get("parts", [])
+        if nm_parts:
+            info(f"Extracting pre-built node_modules ({len(nm_parts)} parts)...")
+            import tarfile as _tarfile
+            tmp_dir = Path(tempfile.mkdtemp(prefix="tt_nm_"))
+            try:
+                archive = tmp_dir / "node_modules.tar.gz"
+                if _reassemble_parts(nm_parts, src, archive):
+                    with _tarfile.open(archive, "r:gz") as tf:
+                        tf.extractall(MCP_SERVERS_DIR)
+                    ok("node_modules extracted from bundle.")
+                    nm_installed = nm_dir.is_dir()
+                else:
+                    warn("node_modules part reassembly failed.")
+            except Exception as exc:
+                warn(f"node_modules extraction failed: {exc}")
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+        else:
+            info("No node_modules_bundle in manifest; will use npm install.")
+
+    # -----------------------------------------------------------------------
+    # Step 2: extract bundled Node.js binary (needed at runtime by mcp_bridge)
+    # -----------------------------------------------------------------------
+    node = _find_node()
+    if node:
+        info(f"Node.js: {node}")
+    else:
+        info("Node.js not in PATH. Extracting from bundled parts...")
+        if _extract_node_from_bundle():
+            node = _find_node()
+        if not node:
+            warn(
+                "Node.js could not be found or extracted. "
+                "MCP server processes cannot be launched at runtime. "
+                "Install Node.js 20+ manually and re-run the installer."
+            )
+            # node_modules may still be usable if Step 1 succeeded
+
+    # -----------------------------------------------------------------------
+    # Step 3: online npm install -- last resort only
+    # -----------------------------------------------------------------------
+    if not nm_installed:
+        warn("Pre-built node_modules not available. Trying online npm install...")
+        if not node:
+            warn("No Node.js available for npm install. MCP tools will be unavailable.")
+        else:
+            npm = _find_npm(node)
+            if not npm:
+                warn("npm not found. MCP tools will be unavailable.")
+            else:
+                _sp_kwargs: dict = {}
+                if os.name == "nt":
+                    _sp_kwargs = {"creationflags": CREATE_NO_WINDOW}
+                for fname in ("package.json", "package-lock.json"):
+                    sf = src / fname
+                    df = MCP_SERVERS_DIR / fname
+                    if sf.exists() and not df.exists():
+                        shutil.copy2(str(sf), str(df))
+                try:
+                    r = _run(
+                        [npm, "install",
+                         "--prefix", str(MCP_SERVERS_DIR),
+                         "--no-audit", "--no-fund", "--loglevel=error"],
+                        capture_output=True, text=True, timeout=300,
+                        **_sp_kwargs,
+                    )
+                    if r.returncode == 0:
+                        ok("MCP npm install succeeded [online].")
+                    else:
+                        warn("npm install failed. MCP tools will be unavailable.")
+                        trace(f"npm stderr: {r.stderr[:2000]}")
+                except Exception as exc:
+                    warn(f"npm install raised an exception: {exc}")
+
+    # -----------------------------------------------------------------------
+    # Step 4: verify entry points
+    # -----------------------------------------------------------------------
+    _MCP_VERIFY: list[tuple[str, str, str | None, str]] = [
+        ("@azure-devops/mcp", "@azure-devops", "mcp",  "dist/index.js"),
+        ("mcp-atlassian",     "mcp-atlassian",  None,  "dist/index.js"),
+        ("@playwright/mcp",   "@playwright",    "mcp",  "cli.js"),
     ]
     for pkg, scope, name, dist in _MCP_VERIFY:
-        if name:
-            entry = MCP_SERVERS_DIR / "node_modules" / scope / name / dist
-        else:
-            entry = MCP_SERVERS_DIR / "node_modules" / scope / dist
+        entry = (
+            MCP_SERVERS_DIR / "node_modules" / scope / name / dist
+            if name else
+            MCP_SERVERS_DIR / "node_modules" / scope / dist
+        )
         if entry.exists():
             ok(f"  Verified: {pkg} -> {entry}")
         else:
