@@ -1,0 +1,33 @@
+{
+  "node_version": "20.18.0",
+  "lts": "Iron",
+  "generated": "2026-07-08",
+  "repo": "nrcharanvignesh/Testing-Toolkit",
+  "branch": "parts",
+  "platforms": {
+    "win32-x64": {
+      "archive_type": "zip",
+      "archive_name": "node-v20.18.0-win-x64.zip",
+      "node_exe_path": "node-v20.18.0-win-x64/node.exe",
+      "sha256": "f5cea43414cc33024bbe5867f208d1c9c915d6a38e92abeee07ed9e563662297",
+      "parts": [
+        "node-bins/win-x64/node-win-x64.000",
+        "node-bins/win-x64/node-win-x64.001",
+        "node-bins/win-x64/node-win-x64.002"
+      ]
+    },
+    "linux-x64": {
+      "archive_type": "tar.gz",
+      "archive_name": "node-v20.18.0-linux-x64.tar.gz",
+      "node_exe_path": "node-v20.18.0-linux-x64/bin/node",
+      "sha256": "24a5d58a1d4c2903478f4b7c3cfd2eeb5cea2cae3baee11a4dc6a1fed25fec6c",
+      "parts": [
+        "node-bins/linux-x64/node-linux-x64.000",
+        "node-bins/linux-x64/node-linux-x64.001",
+        "node-bins/linux-x64/node-linux-x64.002",
+        "node-bins/linux-x64/node-linux-x64.003",
+        "node-bins/linux-x64/node-linux-x64.004"
+      ]
+    }
+  }
+}

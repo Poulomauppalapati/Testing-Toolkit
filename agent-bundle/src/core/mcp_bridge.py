@@ -6,10 +6,13 @@ Manages long-running MCP server subprocesses (Node.js), converts MCP tool
 schemas to Claude tool_use format, and routes tool calls to each server.
 
 Bundled MCP servers (installed into ~/TestingToolkitWeb/mcp_servers/ by
-install.py during setup, falling back to globally-installed npm packages):
-  - ADO       @azure-devops/mcp       - Azure DevOps work items, boards, PRs
-  - JIRA      @atlassian/jira-mcp     - Jira issues, projects, sprints
-  - Playwright @playwright/mcp        - Browser automation via Playwright
+install.py from the bundled npm-cache.tar.gz -- fully offline, PwC-safe):
+  - ADO        @azure-devops/mcp  v2.7.0  - Azure DevOps work items, boards, PRs
+  - JIRA       mcp-atlassian      v2.1.0  - Atlassian Jira + Confluence issues
+  - Playwright @playwright/mcp    v0.0.77 - Browser automation via Playwright
+
+Node.js v20.18.0 LTS is also bundled on the parts branch (win-x64 + linux-x64)
+so install.py can provision Node.js without access to nodejs.org.
 
 Graceful degradation: if any MCP server fails to start the bridge returns an
 empty tool list for that server and logs a warning. All other servers and the
@@ -140,17 +143,35 @@ def _resolve_mcp_entry(pkg_scope: str, pkg_name: str, dist_index: str) -> Path |
 
 
 def _ado_entry() -> Path | None:
+    # @azure-devops/mcp -> node_modules/@azure-devops/mcp/dist/index.js
     return _resolve_mcp_entry("@azure-devops", "mcp", "dist/index.js")
 
 
 def _jira_entry() -> Path | None:
-    # @atlassian/jira-mcp ships its entry at dist/index.js
-    return _resolve_mcp_entry("@atlassian", "jira-mcp", "dist/index.js")
+    # mcp-atlassian (the real Atlassian-backed package, not @atlassian/jira-mcp
+    # which is 404 on npm) -> node_modules/mcp-atlassian/dist/index.js
+    # ponytail: flat-scope package; _npm_local_entry expects scope/name so we
+    # check directly here then fall back to the generic resolver.
+    base = _mcp_servers_dir() / "node_modules"
+    direct = base / "mcp-atlassian" / "dist" / "index.js"
+    if direct.exists():
+        return direct
+    # Global npm fallback
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        g = Path(appdata) / "npm" / "node_modules" / "mcp-atlassian" / "dist" / "index.js"
+        if g.exists():
+            return g
+    return None
 
 
 def _playwright_entry() -> Path | None:
-    # @playwright/mcp ships its entry at dist/index.js
-    return _resolve_mcp_entry("@playwright", "mcp", "dist/index.js")
+    # @playwright/mcp ships its main entry at cli.js (not dist/index.js)
+    base = _mcp_servers_dir() / "node_modules"
+    entry = base / "@playwright" / "mcp" / "cli.js"
+    if entry.exists():
+        return entry
+    return _resolve_mcp_entry("@playwright", "mcp", "cli.js")
 
 
 # ---------------------------------------------------------------------

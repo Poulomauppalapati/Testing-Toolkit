@@ -1,27 +1,32 @@
 # Testing Toolkit Agent — Installer Guide
 
-This folder is **self-contained**. The core Python install uses only the files
-here (`wheelhouse/`, `models/`, `src/`, `runtime/`) and never contacts the
-public internet during the Python setup step — safe for locked-down corporate
-networks.
+This folder is **fully self-contained**. The entire install — Python packages,
+MCP server npm packages, and Node.js itself — works with zero internet access.
+All required files are bundled in the git repository (`main` + `parts` branches)
+so installs succeed on PwC networks where npmjs.org and nodejs.org are blocked.
 
-Three optional features require an internet connection during setup:
-- **Playwright** (E2E browser automation) — pulled from PyPI
-- **MCP servers** (ADO, JIRA, Playwright MCP) — pulled from npm
-- These are non-fatal: the agent starts and all core routes work without them.
+## What is bundled
+
+| Resource | Location in repo | Size |
+|---|---|---|
+| Python wheels (win-x64) | `agent-bundle/wheelhouse/` | ~40MB |
+| MCP npm packages + all deps (205 pkgs) | `agent-bundle/mcp_servers/npm-cache.tar.gz` | 30MB |
+| MCP package.json + lockfile | `agent-bundle/mcp_servers/package*.json` | 88KB |
+| Node.js v20.18.0 win-x64 (split) | `parts` branch `node-bins/win-x64/` | 29MB |
+| Node.js v20.18.0 linux-x64 (split) | `parts` branch `node-bins/linux-x64/` | 45MB |
+| Node binary manifest | `agent-bundle/mcp_servers/node-bins.json` | 1KB |
 
 ## Prerequisites
 
 | Requirement | Version | Notes |
 |---|---|---|
-| Python | 3.9+ | Bundled in `runtime/` for Windows; system Python used on macOS/Linux |
-| Node.js | 18+ | Required for MCP servers (ADO, JIRA, Playwright MCP). Download from https://nodejs.org |
+| Python | 3.9+ | Bundled `runtime/` for Windows; system Python on macOS/Linux |
+| Node.js | 20 LTS | **Auto-installed from the parts branch if not found in PATH** |
+| Git access | — | Only github.com/nrcharanvignesh/Testing-Toolkit (for Node.js download) |
 
 ## Install
 
 ### Windows
-
-Double-click `install.cmd`, or run it from a terminal:
 
 ```bat
 install.cmd
@@ -29,11 +34,8 @@ install.cmd
 
 ### macOS / Linux
 
-Run `install.sh` from a terminal inside this folder:
-
 ```bash
-chmod +x install.sh
-./install.sh
+chmod +x install.sh && ./install.sh
 ```
 
 Or directly:
@@ -46,53 +48,60 @@ python install.py
 
 1. Detects platform (Windows/macOS/Linux, amd64/arm64).
 2. Creates a clean Python virtual environment under `~/TestingToolkitWeb/venv/`.
-3. Installs Python packages from `wheelhouse/` (offline on Windows x64) or
-   from PyPI on other platforms.
-4. **Installs Playwright** from PyPI and downloads the Chromium browser binary.
-   Non-fatal — skipped on `TT_OFFLINE_ONLY=1`.
-5. **Installs MCP servers** into `~/TestingToolkitWeb/mcp_servers/`:
-   - `@azure-devops/mcp` — Azure DevOps integration
-   - `@atlassian/jira-mcp` — Jira integration
-   - `@playwright/mcp` — Playwright browser automation via MCP
-   Non-fatal — skipped when Node.js/npm not found or `TT_OFFLINE_ONLY=1`.
-6. Copies agent `src/` and ONNX `models/` into `~/TestingToolkitWeb/agent/`.
+3. Installs Python packages from `wheelhouse/` (offline on Windows x64) or PyPI.
+4. Installs Playwright from PyPI and downloads Chromium. Non-fatal; skip with `TT_OFFLINE_ONLY=1`.
+5. **Installs MCP servers — fully offline:**
+   a. Checks if `node` is already in PATH.
+   b. If not found: downloads Node.js from the `parts` branch (reassembles split parts,
+      verifies sha256, extracts to `~/TestingToolkitWeb/mcp_servers/node/`).
+   c. Extracts the bundled `npm-cache.tar.gz` into a temp directory.
+   d. Runs `npm ci --offline --cache <extracted-cache>` using the bundled lockfile.
+      Falls back to online `npm install` if offline install fails for any reason.
+   e. Verifies entry points for all three MCP servers.
+6. Copies agent `src/` into `~/TestingToolkitWeb/agent/`.
 7. Registers a login auto-start entry (Task Scheduler / launchd / systemd).
-8. Starts the agent on `http://127.0.0.1:7842` and waits for it to report healthy.
+8. Starts the agent on `http://127.0.0.1:7842` and waits for healthy status.
 
 ## MCP servers
 
-The MCP (Model Context Protocol) servers give the AI chat assistant live access
-to ADO, JIRA, and a browser. They are installed automatically when Node.js is
-present. After install they live under:
+### Bundled packages
 
-```
-~/TestingToolkitWeb/mcp_servers/node_modules/
-  @azure-devops/mcp/
-  @atlassian/jira-mcp/
-  @playwright/mcp/
-```
+| Server | npm package | Version | Entry point |
+|---|---|---|---|
+| ADO | `@azure-devops/mcp` | 2.7.0 | `dist/index.js` |
+| JIRA (Atlassian) | `mcp-atlassian` | 2.1.0 | `dist/index.js` |
+| Playwright | `@playwright/mcp` | 0.0.77 | `cli.js` |
+
+Installed to: `~/TestingToolkitWeb/mcp_servers/node_modules/`
 
 ### Credentials
 
-Configure credentials in the app under **Settings**:
+Configure in the app under **Settings**:
 
 | Server | Settings fields |
 |---|---|
-| ADO MCP | Organization URL, PAT — same as the core ADO integration |
-| JIRA MCP | JIRA URL, Email, API Token — same as the core JIRA integration |
-| Playwright MCP | No credentials required; starts headless automatically |
+| ADO MCP | Organization URL + PAT (same as core ADO integration) |
+| JIRA MCP | JIRA URL + Email + API Token (same as core JIRA integration) |
+| Playwright MCP | None — starts headless automatically |
 
-### Manual install (if npm is not found during setup)
+### Manual install (if automatic install failed)
 
 ```bash
+# Extract the bundled npm cache first (preferred -- fully offline)
 cd ~/TestingToolkitWeb
-npm install --prefix mcp_servers @azure-devops/mcp @atlassian/jira-mcp @playwright/mcp
+mkdir -p mcp_servers
+tar xzf /path/to/agent-bundle/mcp_servers/npm-cache.tar.gz -C /tmp/tt-npm-cache
+npm ci --prefix mcp_servers --cache /tmp/tt-npm-cache/cache --offline
+
+# Or online install as fallback
+npm install --prefix mcp_servers \
+  @azure-devops/mcp mcp-atlassian @playwright/mcp
 ```
 
 ### Verify
 
-After install, open the app and click the **Layers (AI Stack)** icon in the
-activity bar. The MCP row shows which servers are running and healthy.
+Open the app and click the **Layers (AI Stack)** icon in the activity bar.
+The ADO, JIRA, and Playwright rows show `Connected` when the servers start.
 
 ## Installer options
 
@@ -107,29 +116,30 @@ activity bar. The MCP row shows which servers are running and healthy.
 |---|---|---|
 | `TT_INSTALL_DIR` | `~/TestingToolkitWeb` | Override install root |
 | `TT_LOG_DIR` | `$TT_INSTALL_DIR/logs` | Override log directory |
-| `TT_OFFLINE_ONLY` | unset | Set to `1` to skip all online steps (playwright, MCP) |
-| `TT_ENFORCE_DENSE` | `1` | Set to `0` to allow install without bundled ONNX models |
+| `TT_OFFLINE_ONLY` | unset | Set to `1` to skip Playwright browser download |
+| `TT_ENFORCE_DENSE` | `1` | Set to `0` to allow install without bundled models |
 | `TT_UPDATE_TOKEN` | unset | GitHub PAT for auto-update from the `parts` branch |
 
-## Platform support
+## Node.js binary distribution
 
-The bundled `wheelhouse/` currently ships **Windows x64** binary wheels.
-To add offline support for other platforms, build platform wheels with:
+Node.js win-x64 and linux-x64 binaries are stored as 10MB parts on the `parts`
+branch under `node-bins/`. The installer downloads and reassembles them only
+when `node` is absent from PATH. Checksums are in `mcp_servers/node-bins.json`.
 
-```bash
-pip download -r requirements.txt -d wheelhouse \
-  --platform <tag> \
-  --python-version 311 \
-  --only-binary=:all:
-```
+| Platform | Archive | Parts | SHA-256 |
+|---|---|---|---|
+| win-x64 | `node-v20.18.0-win-x64.zip` | 3 | `f5cea434...` |
+| linux-x64 | `node-v20.18.0-linux-x64.tar.gz` | 5 | `24a5d58a...` |
 
-And add a portable Python runtime under `runtime/<os>-<arch>/`.
-The installer auto-detects OS/arch with no further code changes needed.
+macOS users: install Node.js via `brew install node` (Homebrew is not
+blocked on PwC networks) or ask IT to install the pkg from the App Catalog.
 
 ## Troubleshoot
 
-- **Agent did not start**: check `~/TestingToolkitWeb/logs/install-last.log`
-- **MCP servers not found**: ensure Node.js 18+ is installed and reachable in
-  PATH, then re-run the installer or run the manual npm command above.
-- **E2E routes return 503**: run `playwright install chromium` inside the venv.
-- **Import error at startup**: re-run the installer to get a clean venv.
+| Symptom | Fix |
+|---|---|
+| Agent did not start | Check `~/TestingToolkitWeb/logs/install-last.log` |
+| MCP servers not found | Re-run installer; it will auto-install Node.js + npm packages |
+| Node download failed | Ensure github.com is reachable; set `TT_INSTALL_DIR` if needed |
+| E2E routes return 503 | Run `playwright install chromium` inside the venv |
+| Import error at startup | Re-run the installer to get a clean venv |
