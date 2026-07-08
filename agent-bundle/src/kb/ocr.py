@@ -1,19 +1,18 @@
 """
 kb_ocr.py
 Standardize mixed-format documents to text for indexing, with OCR for
-scanned / image-only PDFs - all local and CPU-only.
+scanned / image-only PDFs via GPT-4o vision API.
 
 Strategy (cheapest reliable path first):
   1. Extract the native text layer (kb_store.extract_text handles md/txt/
      html/docx/csv/json and digital PDFs).
   2. For PDFs, decide per the text-density heuristic whether pages are
-     image-only (a scan). If so - and a local OCR engine is available -
-     OCR those pages and append the recovered text.
+     image-only (a scan). If so, rasterize pages locally (PyMuPDF) and
+     send each page image to the GPT-4o vision API for text extraction.
 
-OCR engine: RapidOCR (ONNX Runtime) is preferred because it needs no system
-binaries (PyInstaller-friendly) and runs on CPU. It is capability-gated: if
-not installed, born-digital documents still index normally and scanned PDFs
-simply contribute whatever text layer they have (with a warning).
+All OCR processing goes through the API -- no local ONNX/RapidOCR.
+If no API key is configured, born-digital documents still index normally
+and scanned PDFs simply contribute whatever text layer they have.
 
 needs_ocr() is pure logic and fully testable without any OCR engine.
 
@@ -23,18 +22,14 @@ ASCII-only; fully type-hinted.
 from __future__ import annotations
 
 import gc
-import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Final
 
+from core.hardware import optimal_cpu_workers, system_memory_mb
 from kb.store import extract_text
 
 LogFn = Callable[[str], None]
-
-_ocr_engine: object | None = None
-# Indexing now processes files in parallel, so the lazy engine init must be
-# serialized to avoid two threads building RapidOCR at once.
-_ocr_init_lock = threading.Lock()
 
 # If a PDF page yields fewer than this many extractable characters per page
 # on average, treat it as image-only and route it to OCR.
@@ -43,9 +38,8 @@ _PDF_SUFFIXES: Final[frozenset[str]] = frozenset({".pdf"})
 
 # Page render resolution for OCR. 300 DPI recovers small UI labels (left-nav
 # step names, field captions inside screenshot-style slide pages such as
-# "Enhancement - E28.pdf") that are garbled at 150-200 DPI. RapidOCR
-# downscales internally and pages are processed one at a time, so peak memory
-# stays bounded even on a 4 GB machine.
+# "Enhancement - E28.pdf") that are garbled at 150-200 DPI. Pages are
+# processed one at a time so peak memory stays bounded even on 4 GB.
 _OCR_DPI: Final[int] = 300
 
 
@@ -58,15 +52,14 @@ def _log(on_log: LogFn | None, msg: str) -> None:
 
 
 def ocr_available() -> bool:
+    """True when the OCR API is reachable (API key configured)."""
     try:
-        __import__("rapidocr_onnxruntime")
-        return True
+        from core.app_config import LLM_API_KEY
+        from core.settings_store import load_api_key
+        key = (load_api_key() or "").strip() or LLM_API_KEY
+        return bool(key)
     except Exception:
-        try:
-            __import__("rapidocr")
-            return True
-        except Exception:
-            return False
+        return False
 
 
 def _pdf_text_stats(path: Path) -> tuple[int, int]:
@@ -103,72 +96,210 @@ def needs_ocr(path: Path | str,
 _ocr_init_failed: bool = False
 
 
+def _ocr_batch_size() -> int:
+    """Memory-aware batch size for page processing."""
+    mem = system_memory_mb()
+    if mem <= 4096:
+        return 4
+    if mem <= 8192:
+        return 8
+    return 16
+
+
+def _ocr_single_image(img_bytes: bytes, page_idx: int) -> tuple[int, str]:
+    """OCR a single rasterized page image via GPT-4o vision API.
+    Returns (page_index, extracted_text) for ordered reassembly."""
+    import base64
+
+    import httpx
+
+    try:
+        from core.app_config import LLM_API_KEY, LLM_BASE_URL
+        from core.model_router import Task, route
+        from core.settings_store import KEY_BASE_URL, get_setting, load_api_key
+
+        api_key = (load_api_key() or "").strip() or LLM_API_KEY
+        base_url = (get_setting(KEY_BASE_URL) or LLM_BASE_URL).rstrip("/")
+        model = route(Task.OCR_EXTRACT)
+
+        if not api_key:
+            return page_idx, ""
+
+        b64 = base64.b64encode(img_bytes).decode("ascii")
+        body = {
+            "model": model,
+            "max_tokens": 4096,
+            "temperature": 0.0,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text",
+                     "text": ("Extract ALL text from this document page image. "
+                              "Preserve structure (headings, lists, tables). "
+                              "Return ONLY the extracted text, no commentary.")},
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                ],
+            }],
+        }
+        headers = {
+            "x-api-key": api_key,
+            "content-type": "application/json",
+            "accept": "application/json",
+        }
+        with httpx.Client(timeout=httpx.Timeout(120.0), verify=False) as client:
+            resp = client.post(f"{base_url}/chat/completions",
+                               json=body, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            choices = data.get("choices", [])
+            if choices:
+                text = choices[0].get("message", {}).get("content", "")
+                return page_idx, text.strip()
+    except Exception:
+        pass
+    return page_idx, ""
+
+
+def _rasterize_page(pdf_path: str, page_idx: int, dpi: int) -> tuple[int, bytes]:
+    """Rasterize a single page in its own fitz.Document instance (thread-safe).
+    Each thread opens an independent file handle - no shared state.
+    Returns (page_index, png_bytes) for ordered reassembly."""
+    import fitz  # type: ignore  # PyMuPDF
+
+    doc = fitz.open(pdf_path)
+    try:
+        page = doc[page_idx]
+        pix = page.get_pixmap(dpi=dpi)
+        img_bytes: bytes = pix.tobytes("png")
+        del pix
+        return page_idx, img_bytes
+    finally:
+        doc.close()
+
+
 def _ocr_pdf(path: Path, on_log: LogFn | None) -> str:
-    """OCR every page of a PDF by rasterizing with pypdf/Pillow is not
-    reliable, so we use the OCR engine's own PDF handling when present.
-    Returns recovered text ("" if OCR unavailable or fails)."""
-    global _ocr_engine, _ocr_init_failed
+    """OCR every page of a PDF via GPT-4o vision API.
+    Rasterizes pages locally (PyMuPDF), sends each page image to the API.
+    Returns recovered text ("" if API unavailable or fails)."""
+    global _ocr_init_failed
     if _ocr_init_failed:
         return ""
-    try:
-        with _ocr_init_lock:
-            if _ocr_engine is None:
-                try:
-                    from rapidocr_onnxruntime import RapidOCR  # type: ignore
-                except Exception:
-                    from rapidocr import RapidOCR  # type: ignore
-                _ocr_engine = RapidOCR()
-        engine = _ocr_engine
-    except Exception:
+    if not ocr_available():
         _ocr_init_failed = True
-        _log(on_log, "[WARN] OCR engine unavailable; scanned PDF will index "
-                     "with its text layer only. Run 'python doctor.py' to "
-                     "install/verify the OCR engine (rapidocr-onnxruntime).")
+        _log(on_log, "[WARN] OCR API unavailable (no API key); scanned PDF "
+                     "will index with its text layer only.")
         return ""
-    # Stream pages one at a time to avoid OOM on large scanned PDFs.
+
+    raster_workers = optimal_cpu_workers()
+    # API OCR: limit concurrency to avoid rate-limiting
+    api_workers = min(4, optimal_cpu_workers())
+    batch_size = _ocr_batch_size()
     parts: list[str] = []
+
+    # --- Primary path: PyMuPDF (fitz) rasterizer ---
+    # Each thread opens its own fitz.Document - no shared state, fully parallel.
     try:
         import fitz  # type: ignore  # PyMuPDF
 
+        # Quick open to get page count then close immediately
         doc = fitz.open(str(path))
         total_pages = len(doc)
-        for i, page in enumerate(doc, start=1):
-            _log(on_log, f"[INFO]   OCR page {i}/{total_pages} ...")
-            try:
-                pix = page.get_pixmap(dpi=_OCR_DPI)
-                img_bytes = pix.tobytes("png")
-                del pix
-                result, _elapsed = engine(img_bytes)
-                del img_bytes
-                if result:
-                    parts.append("\n".join(line[1] for line in result if line))
-            except Exception:
-                continue
         doc.close()
+        del doc
+
+        _log(on_log, f"[INFO]   OCR (API) {total_pages} page(s), "
+                     f"batch={batch_size}...")
+
+        pdf_path_str: str = str(path)
+
+        # Process in batches to bound peak memory
+        results: list[tuple[int, str]] = []
+        for batch_start in range(0, total_pages, batch_size):
+            batch_end = min(batch_start + batch_size, total_pages)
+            page_indices = list(range(batch_start, batch_end))
+
+            # Parallel rasterization - each thread opens its own fitz.Document
+            batch_images: list[tuple[int, bytes]] = []
+            with ThreadPoolExecutor(max_workers=raster_workers) as pool:
+                raster_futures = {
+                    pool.submit(_rasterize_page, pdf_path_str, i, _OCR_DPI): i
+                    for i in page_indices
+                }
+                for future in as_completed(raster_futures):
+                    try:
+                        batch_images.append(future.result())
+                    except Exception:
+                        pass
+
+            # OCR batch via API (limited concurrency for rate-limiting)
+            if batch_images:
+                with ThreadPoolExecutor(max_workers=api_workers) as pool:
+                    ocr_futures = {
+                        pool.submit(_ocr_single_image, img, idx): idx
+                        for idx, img in batch_images
+                    }
+                    for future in as_completed(ocr_futures):
+                        try:
+                            results.append(future.result())
+                        except Exception:
+                            pass
+
+            _log(on_log, f"[INFO]   OCR batch {batch_start+1}-"
+                         f"{batch_end}/{total_pages} done")
+            del batch_images
+            gc.collect()
+
+        # Reassemble in page order
+        results.sort(key=lambda x: x[0])
+        parts = [text for _, text in results if text.strip()]
+        del results
         gc.collect()
-        return "\n\n".join(p for p in parts if p.strip())
+        return "\n\n".join(parts)
     except ImportError:
         pass
     except Exception:
         pass
 
-    # Fallback: pdf2image (loads all pages; less memory-efficient)
+    # --- Fallback: pdf2image (loads all pages; less memory-efficient) ---
     try:
         from pdf2image import convert_from_path  # type: ignore
 
         images = convert_from_path(str(path), dpi=_OCR_DPI)
         total_pages = len(images)
-        for i, img in enumerate(images, start=1):
-            _log(on_log, f"[INFO]   OCR page {i}/{total_pages} ...")
-            try:
-                result, _elapsed = engine(img)
-                if result:
-                    parts.append("\n".join(line[1] for line in result if line))
-            except Exception:
-                continue
+        _log(on_log, f"[INFO]   OCR (pdf2image -> API) {total_pages} page(s)...")
+
+        import io as _io
+
+        results_fb: list[tuple[int, str]] = []
+        for batch_start in range(0, total_pages, batch_size):
+            batch_end = min(batch_start + batch_size, total_pages)
+            batch_imgs = [(i, images[i]) for i in range(batch_start, batch_end)]
+
+            with ThreadPoolExecutor(max_workers=api_workers) as pool:
+                futures = {}
+                for idx, img in batch_imgs:
+                    buf = _io.BytesIO()
+                    img.save(buf, format="PNG")
+                    png_bytes = buf.getvalue()
+                    del buf
+                    futures[pool.submit(_ocr_single_image, png_bytes, idx)] = idx
+                for future in as_completed(futures):
+                    try:
+                        results_fb.append(future.result())
+                    except Exception:
+                        pass
+
+            _log(on_log, f"[INFO]   OCR batch {batch_start+1}-"
+                         f"{batch_end}/{total_pages} done")
+            gc.collect()
+
         del images
+        results_fb.sort(key=lambda x: x[0])
+        parts = [text for _, text in results_fb if text.strip()]
+        del results_fb
         gc.collect()
-        return "\n\n".join(p for p in parts if p.strip())
+        return "\n\n".join(parts)
     except Exception:
         _log(on_log, "[WARN] No PDF rasterizer (PyMuPDF/pdf2image) for "
                      "OCR; skipping image OCR.")

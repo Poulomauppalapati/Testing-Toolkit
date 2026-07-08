@@ -88,6 +88,12 @@ DEFAULT_FALLBACK_MODEL: Final[str] = "bedrock.anthropic.claude-haiku-4-5"
 DEFAULT_ANTHROPIC_BASE_URL = DEFAULT_LLM_BASE_URL
 ANTHROPIC_VERSION = LLM_API_VERSION
 
+# Env-overridable LLM endpoint + key. Primary source is settings_store
+# (per-user settings.json); these act as the fallback when settings has no
+# value. Callers use e.g. `(load_api_key() or "").strip() or LLM_API_KEY`.
+LLM_BASE_URL: Final[str] = (os.environ.get("BASE_URL") or "").strip() or DEFAULT_LLM_BASE_URL
+LLM_API_KEY:  Final[str] = (os.environ.get("API_KEY") or "").strip()
+
 # --- Model capability tiers (consumed by core.model_router) ---
 # Tiers map onto the three defaults above so behavior is unchanged unless a
 # deployment overrides them via env. LARGE=quality, MEDIUM=balanced, SMALL=cheap.
