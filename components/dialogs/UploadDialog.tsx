@@ -13,6 +13,11 @@ export function UploadDialog({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  // ADO target fields (desktop upload_dialog): blank => inherit from parent.
+  const [areaPath, setAreaPath] = useState("");
+  const [iterationPath, setIterationPath] = useState("");
+  const [tcField, setTcField] = useState("Custom.TestCategory");
+  const [inheritPaths, setInheritPaths] = useState(true);
 
   useEffect(() => {
     if (!currentProject) return;
@@ -38,7 +43,14 @@ export function UploadDialog({ onClose }: { onClose: () => void }) {
     pushLog("INFO", `Uploading reviewed test cases to ADO...`);
     try {
       const res = await agent.pushReviewedXlsx(
-        { project: currentProject, xlsx_path: selected },
+        {
+          project: currentProject,
+          xlsx_path: selected,
+          area_override: areaPath.trim(),
+          iteration_override: iterationPath.trim(),
+          inherit_paths: inheritPaths,
+          test_category_field: tcField.trim() || "Custom.TestCategory",
+        },
         { onLog: (line) => pushLog(agentLogLevel(line), line) }
       );
       setStatus(`Created ${res.n_ok} Test Case(s), ${res.n_failed} failed.`);
@@ -111,6 +123,56 @@ export function UploadDialog({ onClose }: { onClose: () => void }) {
               </label>
             ))
           )}
+        </div>
+
+        {/* ADO target fields (desktop upload_dialog): blank => inherit from
+            each parent work item. */}
+        <div className="flex flex-col gap-2">
+          <h4 className="text-xs font-bold uppercase tracking-wide text-[var(--tt-primary-soft)]">
+            ADO target fields
+          </h4>
+          <label className="flex items-center gap-2 text-sm">
+            <span className="w-32 shrink-0 text-right text-xs text-muted-foreground">
+              Area Path:
+            </span>
+            <input
+              className="tt-input flex-1"
+              value={areaPath}
+              onChange={(e) => setAreaPath(e.target.value)}
+              placeholder="Leave blank to inherit from each parent work item"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <span className="w-32 shrink-0 text-right text-xs text-muted-foreground">
+              Iteration Path:
+            </span>
+            <input
+              className="tt-input flex-1"
+              value={iterationPath}
+              onChange={(e) => setIterationPath(e.target.value)}
+              placeholder="Leave blank to inherit from each parent work item"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <span className="w-32 shrink-0 text-right text-xs text-muted-foreground">
+              Test Category field:
+            </span>
+            <input
+              className="tt-input flex-1"
+              value={tcField}
+              onChange={(e) => setTcField(e.target.value)}
+              placeholder="Custom.TestCategory"
+            />
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 pl-[136px] text-xs text-[var(--tt-text-secondary)]">
+            <input
+              type="checkbox"
+              className="tt-check"
+              checked={inheritPaths}
+              onChange={(e) => setInheritPaths(e.target.checked)}
+            />
+            Inherit Area/Iteration from parent when not overridden
+          </label>
         </div>
       </div>
     </Modal>

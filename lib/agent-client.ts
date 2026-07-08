@@ -1497,7 +1497,14 @@ export const agent = {
 
   /** Push a reviewer-edited .xlsx (on the agent host) to ADO. */
   async pushReviewedXlsx(
-    payload: { project: string; xlsx_path: string },
+    payload: {
+      project: string;
+      xlsx_path: string;
+      area_override?: string;
+      iteration_override?: string;
+      inherit_paths?: boolean;
+      test_category_field?: string;
+    },
     handlers: JobHandlers = {}
   ): Promise<CreatedResult> {
     const { job_id } = await agentFetch<{ job_id: string }>(
@@ -1507,6 +1514,11 @@ export const agent = {
         body: JSON.stringify({
           project: payload.project,
           xlsx_path: payload.xlsx_path,
+          area_override: payload.area_override ?? "",
+          iteration_override: payload.iteration_override ?? "",
+          inherit_paths: payload.inherit_paths ?? true,
+          test_category_field:
+            payload.test_category_field || "Custom.TestCategory",
         }),
       }
     );
