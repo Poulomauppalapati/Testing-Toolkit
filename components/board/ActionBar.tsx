@@ -7,9 +7,7 @@ import {
   Package,
   Upload,
   Bug,
-  SearchCode,
   Sparkles,
-  KeyRound,
   PlayCircle,
   PanelBottomOpen,
   PanelBottomClose,
@@ -49,7 +47,7 @@ export function ActionBar() {
 
   return (
     <div
-      className="flex items-center gap-0 px-3 py-1.5 shrink-0 border-b border-[var(--tt-outline-soft)]"
+      className="flex items-center gap-0 px-3 py-1.5 shrink-0 border-t border-[var(--tt-outline-soft)]"
       style={{ background: "var(--tt-surface-deepest)" }}
     >
       {/* ── GROUP 1: Generate ────────────────────────────────────── */}
@@ -120,16 +118,10 @@ export function ActionBar() {
       <div className="tt-action-sep" />
 
       {/* ── GROUP 3: Tools ───────────────────────────────────────── */}
+      {/* Nav-level utilities (Retrieval, Credentials) live in the left nav
+          bottom toolbar — desktop parity. This group keeps only the
+          board-scoped work actions. */}
       <div className="tt-action-group" aria-label="Tools">
-        <button
-          className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5 !rounded-lg"
-          disabled={!hasProject}
-          title="Preview which KB chunks the retriever would supply for a story"
-          onClick={() => openDialog("retrieval")}
-        >
-          <SearchCode className="h-3.5 w-3.5 shrink-0" />
-          <span>Retrieval</span>
-        </button>
         <button
           className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5 !rounded-lg"
           style={hasProject ? { color: "var(--tt-warn)" } : undefined}
@@ -139,15 +131,6 @@ export function ActionBar() {
         >
           <Sparkles className="h-3.5 w-3.5 shrink-0" />
           <span>Custom Generate</span>
-        </button>
-        <button
-          className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5 !rounded-lg"
-          disabled={!hasProject}
-          title="Manage encrypted test-environment credentials for E2E automation"
-          onClick={() => openDialog("credentials")}
-        >
-          <KeyRound className="h-3.5 w-3.5 shrink-0" />
-          <span>Credentials</span>
         </button>
         <button
           className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5 !rounded-lg"

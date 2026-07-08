@@ -191,12 +191,15 @@ export function AppShell() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {navVisible ? <NavPanel /> : <ActivityBar />}
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ActionBar />
           <CoverageBar />
-          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-2 py-2">
+          {/* Board grid fills the space; the action bar sits BELOW it (desktop
+              parity — main_window stacks the grid, then the action row, then
+              the log dock at the bottom). */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 py-2">
             <BoardGrid />
-            {logVisible && <LogPanel />}
           </div>
+          <ActionBar />
+          {logVisible && <LogPanel />}
         </main>
       </div>
       <StatusBar />

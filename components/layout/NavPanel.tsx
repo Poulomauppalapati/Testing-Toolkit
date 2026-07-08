@@ -5,6 +5,8 @@ import {
   HelpCircle,
   Settings,
   Brain,
+  KeyRound,
+  SearchCode,
   ChevronLeft,
   Sun,
   Moon,
@@ -210,6 +212,20 @@ export function NavPanel() {
             onClick={() => openDialog("kb")}
             icon={<Brain className="h-3.5 w-3.5" strokeWidth={2} />}
             label="KB"
+          />
+          <NavLabelBtn
+            title="Preview which KB chunks the retriever would supply for a story"
+            disabled={!currentProject}
+            onClick={() => openDialog("retrieval")}
+            icon={<SearchCode className="h-3.5 w-3.5" strokeWidth={2} />}
+            label="Retrieval"
+          />
+          <NavLabelBtn
+            title="Manage encrypted test-environment credentials for E2E automation"
+            disabled={!currentProject}
+            onClick={() => openDialog("credentials")}
+            icon={<KeyRound className="h-3.5 w-3.5" strokeWidth={2} />}
+            label="Credentials"
           />
           <NavLabelBtn
             title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
