@@ -1,6 +1,31 @@
 import { describe, it, expect } from "vitest";
 import { sortWiIds, splitWiIds, agentLogLevel } from "../agent-client";
+import type { WorkItemRow } from "../agent-client";
+import { userStoryIds } from "../board-utils";
 import { humanSize } from "../../components/ui/download-links";
+
+describe("userStoryIds (SIT/UAT auto-select parity)", () => {
+  const row = (wi_id: number | string, wi_type: string): WorkItemRow =>
+    ({ wi_id, wi_type, title: "", state: "" } as WorkItemRow);
+
+  it("returns only User Story / Story rows, sorted", () => {
+    const rows = [
+      row(3, "Bug"),
+      row(2, "User Story"),
+      row(1, "Story"),
+      row(4, "Task"),
+    ];
+    expect(userStoryIds(rows)).toEqual([1, 2]);
+  });
+  it("is case-insensitive on the type label", () => {
+    expect(userStoryIds([row(5, "user story"), row(6, "STORY")])).toEqual([
+      5, 6,
+    ]);
+  });
+  it("returns empty when the board has no stories", () => {
+    expect(userStoryIds([row(1, "Bug"), row(2, "Task")])).toEqual([]);
+  });
+});
 
 describe("sortWiIds", () => {
   it("numeric ids ascending, before string keys", () => {

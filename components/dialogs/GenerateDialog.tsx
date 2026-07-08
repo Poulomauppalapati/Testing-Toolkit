@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, FileText, Loader2, X } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { DownloadLinks } from "@/components/ui/download-links";
@@ -14,6 +14,7 @@ import {
   type TcType,
   type WiId,
 } from "@/lib/agent-client";
+import { userStoryIds } from "@/lib/board-utils";
 import { useAppState } from "@/lib/app-state";
 
 const MAX_ITERATIONS = 10;
@@ -77,7 +78,23 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
   const phase = tcType ? TC_DISPLAY_NAME[tcType] : "Test case";
   const projectLabel = currentProject ? displayName(currentProject) : "";
   const titleText = `Generate ${phase} TC - ${projectLabel}`;
-  const ids = loadedIds.length ? loadedIds : sortWiIds([...selected]);
+
+  // Desktop parity (main_window._on_generate): use ticked items when present;
+  // otherwise SIT/UAT auto-select every User Story / Story on the board so
+  // they can generate without an explicit selection. Implementation always
+  // requires an explicit selection.
+  const autoSelectedStoryIds = useMemo<WiId[]>(() => {
+    if (loadedIds.length || selected.size) return [];
+    if (tcType !== "sit" && tcType !== "uat") return [];
+    return userStoryIds(boardView?.rows ?? []);
+  }, [loadedIds.length, selected.size, tcType, boardView?.rows]);
+
+  const usedAutoSelect = autoSelectedStoryIds.length > 0;
+  const ids = loadedIds.length
+    ? loadedIds
+    : selected.size
+      ? sortWiIds([...selected])
+      : autoSelectedStoryIds;
 
   // Load the artifact payload once on open (regeneration entry point).
   useEffect(() => {
@@ -127,6 +144,12 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
 
   const run = async (isRegen: boolean) => {
     if (!currentProject) return;
+    if (!isRegen && ids.length === 0) {
+      // SIT/UAT with no selection and no User Stories on the board.
+      setStatus("No User Stories found on the current board to generate from.");
+      pushLog("WARN", "No work items to generate — select items or add User Stories.");
+      return;
+    }
     setBusy(true);
     setPushed("");
     setProgress(null);
@@ -134,6 +157,12 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
     setStatus(
       isRegen ? "Regenerating with feedback..." : "Generating test cases..."
     );
+    if (!isRegen && usedAutoSelect) {
+      pushLog(
+        "INFO",
+        `No selection — auto-selected ${ids.length} User Story item(s) for ${phase} generation.`
+      );
+    }
     pushLog(
       "INFO",
       `Generating ${phase} test cases for ${ids.length} work item(s)...`

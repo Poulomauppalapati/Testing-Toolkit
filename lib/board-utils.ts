@@ -1,4 +1,21 @@
-import type { BoardColumn, WorkItemRow } from "./agent-client";
+import type { BoardColumn, WorkItemRow, WiId } from "./agent-client";
+import { sortWiIds } from "./agent-client";
+
+/**
+ * All User Story / Story work item ids on the board, sorted.
+ * Mirrors the desktop main_window._on_generate auto-select: when SIT/UAT is
+ * triggered with no ticked items, every User Story is selected automatically.
+ */
+export function userStoryIds(rows: WorkItemRow[]): WiId[] {
+  return sortWiIds(
+    rows
+      .filter((r) => {
+        const t = (r.wi_type || "").toLowerCase();
+        return t === "user story" || t === "story";
+      })
+      .map((r) => r.wi_id)
+  );
+}
 
 export const NO_COLUMN = "(no board column)";
 export const UNASSIGNED = "(unassigned)";

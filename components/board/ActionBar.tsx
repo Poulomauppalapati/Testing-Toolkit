@@ -53,27 +53,35 @@ export function ActionBar() {
       style={{ background: "var(--tt-surface-deepest)" }}
     >
       {/* ── GROUP 1: Generate ────────────────────────────────────── */}
+      {/* Desktop parity (main_window._set_gen_enabled): Implementation needs
+          an explicit selection; SIT/UAT stay enabled whenever a project is
+          loaded and auto-select all User Stories when nothing is ticked. */}
       <div className="tt-action-group" aria-label="Generate test cases">
-        {TC_TYPES.map((t) => (
-          <button
-            key={t}
-            className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5 !rounded-lg"
-            style={
-              hasSelection
-                ? { color: TC_COLOR[t] }
-                : undefined
-            }
-            disabled={!hasSelection}
-            title={`Generate ${TC_BUTTON_LABEL[t]} test cases for selected work items`}
-            onClick={() => {
-              setGenerateCtx({ tcType: t });
-              openDialog("generate");
-            }}
-          >
-            {TC_ICON[t]}
-            <span>{TC_BUTTON_LABEL[t]}</span>
-          </button>
-        ))}
+        {TC_TYPES.map((t) => {
+          const requiresSelection = t === "implementation";
+          const enabled = requiresSelection
+            ? hasSelection
+            : hasProject;
+          const title = requiresSelection
+            ? `Generate ${TC_BUTTON_LABEL[t]} test cases for the ticked work items`
+            : `Generate ${TC_BUTTON_LABEL[t]} test cases for ticked items, or all User Stories if none are selected`;
+          return (
+            <button
+              key={t}
+              className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5 !rounded-lg"
+              style={enabled ? { color: TC_COLOR[t] } : undefined}
+              disabled={!enabled}
+              title={title}
+              onClick={() => {
+                setGenerateCtx({ tcType: t });
+                openDialog("generate");
+              }}
+            >
+              {TC_ICON[t]}
+              <span>{TC_BUTTON_LABEL[t]}</span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="tt-action-sep" />
