@@ -88,6 +88,23 @@ DEFAULT_FALLBACK_MODEL: Final[str] = "bedrock.anthropic.claude-haiku-4-5"
 DEFAULT_ANTHROPIC_BASE_URL = DEFAULT_LLM_BASE_URL
 ANTHROPIC_VERSION = LLM_API_VERSION
 
+# --- Model capability tiers (consumed by core.model_router) ---
+# Tiers map onto the three defaults above so behavior is unchanged unless a
+# deployment overrides them via env. LARGE=quality, MEDIUM=balanced, SMALL=cheap.
+MODEL_LARGE:  Final[str] = (os.environ.get("MODEL_LARGE") or "").strip() or DEFAULT_MODEL
+MODEL_MEDIUM: Final[str] = (os.environ.get("MODEL_MEDIUM") or "").strip() or DEFAULT_FAST_MODEL
+MODEL_SMALL:  Final[str] = (os.environ.get("MODEL_SMALL") or "").strip() or DEFAULT_FALLBACK_MODEL
+
+# Optional per-task overrides. Empty by default -> model_router falls back to
+# the tier model. Set these in env to pin a specific task to a specific model
+# (e.g. a cheaper non-Anthropic model for reranking/contextualization).
+MODEL_RERANK:       Final[str] = (os.environ.get("MODEL_RERANK") or "").strip()
+MODEL_CONTEXTUALIZE: Final[str] = (os.environ.get("MODEL_CONTEXTUALIZE") or "").strip()
+MODEL_EXTRACT:      Final[str] = (os.environ.get("MODEL_EXTRACT") or "").strip()
+MODEL_GENERATE:     Final[str] = (os.environ.get("MODEL_GENERATE") or "").strip()
+MODEL_CHAT:         Final[str] = (os.environ.get("MODEL_CHAT") or "").strip()
+MODEL_OCR:          Final[str] = (os.environ.get("MODEL_OCR") or "").strip()
+
 # Token budgets for the Recursive Language Model (approximate; we count
 # characters at ~4 chars/token). If the whole project KB fits under
 # RLM_DIRECT_CONTEXT_TOKENS it is passed in one shot; otherwise the

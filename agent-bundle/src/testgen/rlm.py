@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Final
 
 from core.anthropic_client import AnthropicClient, AnthropicError
+from core.model_router import Task, route
 from ado.testcase_creator import normalize_payload, validate_payload
 from core.app_config import (
     RLM_DECOMPOSE_MAX_TOKENS,
@@ -121,9 +122,11 @@ _DECOMPOSE_SYSTEM: Final[str] = (
     "You decompose work items into atomic testable requirements. For each "
     "work item, list every discrete testable behavior: individual acceptance "
     "criteria, field validation rules with boundaries, state transitions, "
-    "error conditions, platform constraints, and UI elements. Format as a "
-    "numbered list. Be exhaustive but do not invent requirements not stated "
-    "in the inputs. Output plain text only."
+    "error conditions, platform constraints, and UI elements. For each "
+    "requirement, note the screen/page/dialog where the behavior occurs "
+    "(e.g. 'On the Create Assessment Page: title field accepts max 100 "
+    "characters'). Format as a numbered list. Be exhaustive but do not "
+    "invent requirements not stated in the inputs. Output plain text only."
 )
 
 _VERIFY_SYSTEM: Final[str] = (
@@ -132,10 +135,15 @@ _VERIFY_SYSTEM: Final[str] = (
     "generated for them. Your job is to identify GAPS: acceptance criteria, "
     "field validations, error behaviors, or boundary conditions that are NOT "
     "adequately covered by any existing test case. For each gap, generate "
-    "the missing test case(s) following the exact same JSON schema. Output "
-    "ONLY the additional test cases as a JSON object in the same schema "
-    "(schema_version 1, stories array). If coverage is complete, output "
-    "exactly: {\"schema_version\": 1, \"stories\": []}"
+    "the missing test case(s) following the exact same JSON schema. "
+    "CRITICAL: Every test step action MUST begin with the screen/page "
+    "context where the action takes place - format: 'On [Screen/Page "
+    "Name], [action]' or 'Navigate to [Screen/Page Name]' for navigation "
+    "steps. Never write a step without indicating which screen, page, or "
+    "dialog the user is currently on. "
+    "Output ONLY the additional test cases as a JSON object in the same "
+    "schema (schema_version 1, stories array). If coverage is complete, "
+    "output exactly: {\"schema_version\": 1, \"stories\": []}"
 )
 
 
@@ -259,8 +267,14 @@ def _assemble_excerpts(excerpts: list[tuple[KbChunk, str]]) -> str:
     return "\n\n".join(parts).strip()
 
 
-def _build_generation_user(work_item_dump: str, kb_context: str) -> str:
+def _build_generation_user(
+    work_item_dump: str, kb_context: str,
+    project_context: str = "",
+) -> str:
     sections: list[str] = []
+    # Inject project context summary (domain understanding) first
+    if project_context.strip():
+        sections.append(project_context.strip())
     if kb_context.strip():
         sections.append(
             "REQUIREMENTS CONTEXT (extracted from the project knowledge "
@@ -413,6 +427,7 @@ async def _generate_one(
     label: str = "",
     cache: GenCache | None = None,
     decomposed_reqs: str = "",
+    project_context: str = "",
 ) -> RlmResult:
     """Generate the payload for one dump, then self-correct: if parsing or
     schema validation fails, the validator's errors are sent back to the
@@ -438,7 +453,7 @@ async def _generate_one(
             _log(on_log, f"[INFO] {tag}reusing cached result (no API call).")
             return RlmResult(ok=True, payload=cached, raw_text="",
                              parse_error="", trace=trace)
-    user = _build_generation_user(work_item_dump, kb_context)
+    user = _build_generation_user(work_item_dump, kb_context, project_context)
     if decomposed_reqs:
         user = (
             user + "\n\nDECOMPOSED REQUIREMENTS (each must be covered by "
@@ -622,8 +637,10 @@ async def _resolve_kb_context(
              "[WARN] Navigator selected no chunks; generating from work "
              "items only.")
         return ""
+    # Map uses medium tier (more complex extraction than navigate)
+    map_model = route(Task.MAP_EXTRACT)
     excerpts = await _map_extract(
-        client, fast_model, kb_index, selected, work_item_dump,
+        client, map_model, kb_index, selected, work_item_dump,
         on_log, trace, stop_event,
     )
     _log(on_log,
@@ -849,6 +866,7 @@ async def generate_test_cases_rlm_async(
     retriever: Any | None = None,
     enable_decompose: bool = True,
     enable_verify: bool = True,
+    project_full: str = "",
 ) -> RlmResult:
     """Run navigate -> map -> decompose -> generate -> verify.
 
@@ -858,6 +876,8 @@ async def generate_test_cases_rlm_async(
     Each item's output is validated and, if invalid, automatically sent back
     to the model to fix (bounded by max_repair). Returns the merged payload."""
     fast_model = (fast_model or "").strip() or primary_model
+    # Navigate model from router (medium tier - quality gatekeeper)
+    nav_model = route(Task.NAVIGATE_CHUNKS)
     trace = RlmTrace(
         kb_docs=kb_index.n_docs,
         kb_chunks=len(kb_index.chunks),
@@ -869,7 +889,7 @@ async def generate_test_cases_rlm_async(
     _t0 = time.perf_counter()
     _log(on_log, "[INFO] Retrieving relevant KB context...")
     kb_context = await _build_kb_context(
-        client, fast_model, kb_index, work_item_dump, on_log, trace,
+        client, nav_model, kb_index, work_item_dump, on_log, trace,
         stop_event, cache=cache, retriever=retriever,
     )
     _log(on_log, f"[INFO] KB context resolved ({time.perf_counter() - _t0:.1f}s, "
@@ -879,16 +899,30 @@ async def generate_test_cases_rlm_async(
 
     # Requirement decomposition: enumerate atomic testable requirements.
     decomposed = ""
+    decompose_model = route(Task.DECOMPOSE_REQUIREMENTS)
     if enable_decompose:
         _t1 = time.perf_counter()
         _log(on_log, "[INFO] Decomposing requirements into atomic checklist...")
         decomposed = await _decompose_requirements(
-            client, fast_model, work_item_dump, kb_context, on_log, trace,
+            client, decompose_model, work_item_dump, kb_context, on_log, trace,
             stop_event,
         )
         n_reqs = decomposed.count("\n") + 1 if decomposed.strip() else 0
         _log(on_log, f"[INFO] Decomposition complete ({n_reqs} requirements, "
                      f"{time.perf_counter() - _t1:.1f}s).")
+
+    # Load project context summary (deep domain understanding)
+    _proj_ctx = ""
+    if project_full:
+        try:
+            from core.project_store import read_context_summary
+            ctx_obj = read_context_summary(project_full)
+            if ctx_obj is not None:
+                _proj_ctx = ctx_obj.to_prompt_section()
+                if _proj_ctx:
+                    _log(on_log, "[INFO] Project context summary injected into prompt")
+        except Exception:
+            pass  # graceful: context summary is optional
 
     dumps = [d for d in (per_item_dumps or []) if d and d.strip()]
     if not dumps:
@@ -902,7 +936,7 @@ async def generate_test_cases_rlm_async(
         res = await _generate_one(
             client, primary_model, system_prompt, dumps[0], kb_context,
             on_log, stop_event, trace, max_repair, cache=cache,
-            decomposed_reqs=decomposed,
+            decomposed_reqs=decomposed, project_context=_proj_ctx,
         )
         if on_progress is not None:
             on_progress(1, 1)
@@ -922,7 +956,7 @@ async def generate_test_cases_rlm_async(
                     client, primary_model, system_prompt, dump, kb_context,
                     on_log, stop_event, trace, max_repair,
                     label=f"item {i + 1}/{len(dumps)}", cache=cache,
-                    decomposed_reqs=decomposed,
+                    decomposed_reqs=decomposed, project_context=_proj_ctx,
                 )
                 _completed_count += 1
                 if on_progress is not None:
@@ -969,7 +1003,7 @@ async def generate_test_cases_rlm_async(
             vr = validate_payload(delta)
             if not vr.ok:
                 _log(on_log, f"[WARN] Verify delta failed validation: "
-                     f"{vr.error}; skipping gap-fill merge.")
+                     f"{vr.errors}; skipping gap-fill merge.")
                 delta = None
         if delta is not None:
             for story in (delta.get("stories") or []):
@@ -1020,10 +1054,12 @@ def generate_test_cases_rlm(
     retriever: Any | None = None,
     enable_decompose: bool = True,
     enable_verify: bool = True,
+    project_full: str = "",
 ) -> RlmResult:
     """Sync wrapper (the UI runs this on a worker thread)."""
+    import gc
     try:
-        return asyncio.run(generate_test_cases_rlm_async(
+        result = asyncio.run(generate_test_cases_rlm_async(
             client=client, primary_model=primary_model,
             fast_model=fast_model, system_prompt=system_prompt,
             kb_index=kb_index, work_item_dump=work_item_dump,
@@ -1032,6 +1068,10 @@ def generate_test_cases_rlm(
             stop_event=stop_event, max_repair=max_repair, cache=cache,
             retriever=retriever,
             enable_decompose=enable_decompose, enable_verify=enable_verify,
+            project_full=project_full,
         ))
+        gc.collect()
+        return result
     except AnthropicError:
+        gc.collect()
         raise

@@ -920,8 +920,38 @@ GENERATION RULES (TEST CASE QUALITY)
 9. NEVER duplicate logical coverage across categories. Each TC must
    verify a behavior no other TC in the same story verifies.
 10. Steps:
-    - Minimum 2 steps per TC, maximum 12 steps.
-    - First step typically navigates/sets up the precondition state.
+    - TARGET 8-15 steps per TC. Minimum 5 steps, maximum 20 steps.
+      Each user interaction (click, fill, select, navigate) is its
+      OWN step. A test case with fewer than 5 steps is TOO HIGH-LEVEL
+      and must be expanded with granular field-by-field interactions.
+      Multi-screen flows MUST have one step per screen transition plus
+      one step per field/control interaction on each screen.
+    - CRITICAL: Every test step MUST begin with the screen/page
+      context where the action takes place. Format: "On [Screen/Page
+      Name], [action]" or "Navigate to [Screen/Page Name]" for
+      navigation steps. Examples:
+        * "Navigate to the Home Page"
+        * "On the Home Page, click 'Activities' in the navigation menu"
+        * "On the Activities Page, click 'Create Needs Assessment' button"
+        * "On the Create Needs Assessment form, enter 'Test Assessment' in the Title field"
+        * "On the Confirmation dialog, click 'Submit' button"
+      Never write a step without indicating which screen, page, or
+      dialog the user is currently on.
+    - COMPLETE SCREEN COVERAGE: If a workflow passes through screens
+      A -> B -> C, you MUST include explicit steps on EACH screen.
+      Do NOT skip intermediate screens or combine multiple screens
+      into one step. Each screen transition gets its own step.
+    - FIELD-LEVEL SPECIFICITY: Never write generic actions like "fill
+      in the form" or "enter the details". Instead, write one step per
+      field interaction: "On the Registration Form, enter
+      'jane.doe@company.com' in the Email field", "On the Registration
+      Form, select 'Australia' from the Country dropdown".
+    - EXPECTED STATE AFTER EACH ACTION: Every step's expected result
+      must describe the observable UI change - what appears, what
+      becomes enabled/disabled, what message is shown, or what screen
+      loads next. Never leave an expected result vague like "action is
+      successful".
+    - First step navigates to the starting screen/page for the test.
     - Final step's "expected" must match the success criterion of
       the TC's category.
     - Use stable element references from the requirements doc when
@@ -982,50 +1012,65 @@ EDGE CASES
 - If multiple stories share the same parent_work_item_id (should
   not happen), merge their test_cases into one stories[] entry.
 
-EXAMPLES (calibration - match this quality level)
-==================================================
-Example 1 - Positive TC with proper step granularity:
+EXAMPLES (calibration - match this DETAILED quality level)
+===========================================================
+Example 1 - Positive TC demonstrating REQUIRED step granularity (10 steps):
 {
-  "title": "Closeout task created successfully with valid data",
+  "title": "New needs assessment created with all required fields",
   "category": "Positive",
   "priority": "High",
-  "preconditions": "User is logged in as Requestor; project has at least one active task in 'In Progress' state.",
-  "tags": ["closeout", "task-creation"],
+  "preconditions": "User is logged in as Case Manager; at least one client exists in the system with status 'Active'.",
+  "tags": ["needs-assessment", "create", "happy-path"],
   "steps": [
-    {"action": "Navigate to the Tasks section of the active project.", "expected": "Task list loads showing all tasks for the project."},
-    {"action": "Click 'Create Closeout Task' for the task in 'In Progress' state.", "expected": "Closeout task creation form opens with Task Name pre-populated from the parent task."},
-    {"action": "Set Close Date to today's date and select Reason 'Completed'.", "expected": "Both fields accept the values without validation errors."},
-    {"action": "Click 'Submit'.", "expected": "Success message 'Closeout task created' is displayed; task status changes to 'Pending Closeout'."}
+    {"action": "Navigate to the Home Page.", "expected": "Home Page loads showing the main navigation menu and dashboard tiles."},
+    {"action": "On the Home Page, click 'Assessments' in the top navigation bar.", "expected": "Assessments Landing Page loads showing the list of recent assessments and a 'Create New' button."},
+    {"action": "On the Assessments Landing Page, click 'Create New Assessment' button.", "expected": "Assessment Type Selection dialog appears with options: 'Needs Assessment', 'Risk Assessment', 'Progress Review'."},
+    {"action": "On the Assessment Type Selection dialog, select 'Needs Assessment' and click 'Continue'.", "expected": "Create Needs Assessment form opens with Section 1 (Client Details) visible. Client Name field is empty and marked required."},
+    {"action": "On the Create Needs Assessment form (Section 1), click the Client Name search field and type 'Smith'.", "expected": "Auto-complete dropdown appears showing matching clients (e.g., 'John Smith - ID 12345', 'Jane Smith - ID 12346')."},
+    {"action": "On the Create Needs Assessment form (Section 1), select 'John Smith - ID 12345' from the dropdown.", "expected": "Client Name field is populated with 'John Smith'. Date of Birth, Contact Number, and Address fields auto-fill from the client record."},
+    {"action": "On the Create Needs Assessment form (Section 1), select Assessment Date as today's date from the date picker.", "expected": "Assessment Date field shows today's date. The 'Next' button becomes enabled."},
+    {"action": "On the Create Needs Assessment form (Section 1), click 'Next' to proceed to Section 2.", "expected": "Section 2 (Identified Needs) loads. A table with columns 'Need Category', 'Priority', 'Description' is displayed with one empty row."},
+    {"action": "On the Create Needs Assessment form (Section 2), select 'Housing' from the Need Category dropdown, set Priority to 'High', and enter 'Client requires supported accommodation' in Description.", "expected": "Row is populated. 'Add Another Need' button appears below the table."},
+    {"action": "On the Create Needs Assessment form (Section 2), click 'Submit Assessment'.", "expected": "Success banner displays: 'Needs Assessment NA-2026-0042 created successfully'. Page redirects to the Assessment Detail view showing all entered data in read-only mode."}
   ],
   "custom_fields": {"QA GenAI Automated": "None", "QA GenAI Tool": "None"}
 }
 
-Example 2 - Data Validation TC with concrete boundary values:
+Example 2 - Data Validation TC with field-level detail (8 steps):
 {
-  "title": "Close Date rejects values earlier than Task Start Date",
+  "title": "Assessment Date rejects future dates beyond 7 days",
   "category": "Data Validation",
   "priority": "Medium",
-  "preconditions": "User is logged in as Requestor; a task exists with Start Date of 2026-01-15.",
-  "tags": ["closeout", "date-validation", "boundary"],
+  "preconditions": "User is logged in as Case Manager; on the Create Needs Assessment form Section 1 with a client selected.",
+  "tags": ["needs-assessment", "date-validation", "boundary"],
   "steps": [
-    {"action": "Open the Closeout Task creation form for the task with Start Date 2026-01-15.", "expected": "Form opens with Close Date field empty."},
-    {"action": "Enter Close Date as 2026-01-14 (one day before Start Date).", "expected": "Validation error displayed: 'Close Date cannot be before Task Start Date'."},
-    {"action": "Change Close Date to 2026-01-15 (equal to Start Date).", "expected": "No validation error; the equal date is accepted as valid."}
+    {"action": "On the Create Needs Assessment form (Section 1), click the Assessment Date field to open the date picker.", "expected": "Date picker calendar opens showing the current month. Dates more than 7 days in the future are greyed out."},
+    {"action": "On the date picker, attempt to click a date 8 days from today.", "expected": "The date is not selectable (greyed out). No value is entered in the field."},
+    {"action": "On the Create Needs Assessment form (Section 1), manually type a date 8 days from today (format DD/MM/YYYY) in the Assessment Date field.", "expected": "Red validation error appears below the field: 'Assessment Date cannot be more than 7 days in the future'."},
+    {"action": "On the Create Needs Assessment form (Section 1), clear the Assessment Date field.", "expected": "Validation error disappears. Field shows placeholder text 'DD/MM/YYYY'."},
+    {"action": "On the Create Needs Assessment form (Section 1), enter a date exactly 7 days from today.", "expected": "Date is accepted. No validation error. Field shows the entered date with a green checkmark."},
+    {"action": "On the Create Needs Assessment form (Section 1), clear the field and enter today's date.", "expected": "Date is accepted. No validation error. 'Next' button remains enabled."},
+    {"action": "On the Create Needs Assessment form (Section 1), clear the field and enter yesterday's date.", "expected": "Date is accepted. Past dates within reason are valid for backdating assessments."},
+    {"action": "On the Create Needs Assessment form (Section 1), clear the field and leave it empty, then click 'Next'.", "expected": "Red validation error appears: 'Assessment Date is required'. Form does not advance to Section 2."}
   ],
   "custom_fields": {"QA GenAI Automated": "None", "QA GenAI Tool": "None"}
 }
 
-Example 3 - Negative / Error Handling TC:
+Example 3 - Error Handling TC with recovery flow (7 steps):
 {
-  "title": "Closeout submission fails gracefully on network timeout",
+  "title": "Assessment submission recovers gracefully after session timeout",
   "category": "Error Handling",
-  "priority": "Low",
-  "preconditions": "User is on the Closeout form with valid data entered; network is simulated to timeout after 30s.",
-  "tags": ["closeout", "error", "timeout"],
+  "priority": "Medium",
+  "preconditions": "User is on Section 2 of Create Needs Assessment with all fields filled. Session is configured to timeout after 30 minutes of inactivity.",
+  "tags": ["needs-assessment", "error", "session-timeout", "recovery"],
   "steps": [
-    {"action": "Fill all required fields with valid values and click 'Submit'.", "expected": "Loading spinner appears indicating submission in progress."},
-    {"action": "Wait for the 30-second network timeout to elapse.", "expected": "Error message displayed: 'Request timed out. Please check your connection and try again.' Form data is preserved."},
-    {"action": "Restore network connectivity and click 'Submit' again.", "expected": "Closeout task is created successfully; no duplicate task is produced."}
+    {"action": "On the Create Needs Assessment form (Section 2), wait for the 30-minute session timeout to elapse without any interaction.", "expected": "Session Timeout Warning dialog appears: 'Your session is about to expire. Click Continue to stay logged in.'"},
+    {"action": "On the Session Timeout Warning dialog, do NOT click any button and wait an additional 60 seconds.", "expected": "Dialog closes. Login Page loads indicating the session has expired."},
+    {"action": "On the Login Page, enter valid credentials and click 'Sign In'.", "expected": "Home Page loads after successful authentication."},
+    {"action": "On the Home Page, check for a 'Resume Draft' notification or banner.", "expected": "A notification appears: 'You have 1 unsaved draft assessment. Click to resume.' (Draft auto-save feature)."},
+    {"action": "On the Home Page, click the 'Resume Draft' notification link.", "expected": "Create Needs Assessment form reloads at Section 2 with all previously entered data intact (client details from Section 1 and needs data from Section 2)."},
+    {"action": "On the Create Needs Assessment form (Section 2), verify all previously entered data is present, then click 'Submit Assessment'.", "expected": "Success banner displays: 'Needs Assessment created successfully'. No data was lost from the timeout recovery."},
+    {"action": "Navigate to the Assessments Landing Page and locate the newly created assessment.", "expected": "The assessment appears in the list with correct client name, date, and status 'Completed'. Created timestamp matches the submission time (not the original session start)."}
   ],
   "custom_fields": {"QA GenAI Automated": "None", "QA GenAI Tool": "None"}
 }

@@ -66,6 +66,12 @@ class ProjectPaths:
             hybrid_dir=root / "hybrid_index",
         )
 
+    @property
+    def context_summary_path(self) -> Path:
+        """Cached deep-project-understanding summary extracted from the KB
+        (see kb.context_summary). Lives under the KB dir alongside the index."""
+        return self.kb_dir / "context_summary.json"
+
     def prompt_path(self, tc_type: str | None) -> Path:
         """Per-phase prompt file when tc_type is given, else the legacy
         generic prompt file."""
@@ -459,3 +465,30 @@ def get_template(
 def has_template(full_name: str, tc_type: str) -> bool:
     p = ProjectPaths.for_name(full_name)
     return _is_valid_tc_type(tc_type) and p.find_template(tc_type) is not None
+
+
+# -----------------------------------------------------------------
+# Context summary (deep project understanding from KB)
+# -----------------------------------------------------------------
+
+def read_context_summary(full_name: str) -> "Any | None":
+    """Load the project's context summary if it exists."""
+    from kb.context_summary import load_context_summary
+    p = ProjectPaths.for_name(full_name)
+    return load_context_summary(p.context_summary_path)
+
+
+def write_context_summary(full_name: str, ctx: "Any") -> bool:
+    """Persist a ProjectContext to disk."""
+    from kb.context_summary import save_context_summary
+    p = ensure_project(full_name)
+    return save_context_summary(p.context_summary_path, ctx)
+
+
+def context_summary_fingerprint(full_name: str) -> str:
+    """Return the KB fingerprint stored in the context summary, or empty
+    string if no summary exists. Used to check staleness."""
+    ctx = read_context_summary(full_name)
+    if ctx is None:
+        return ""
+    return getattr(ctx, "kb_fingerprint", "")
