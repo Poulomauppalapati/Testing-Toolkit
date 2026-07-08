@@ -65,6 +65,7 @@ export type DialogId =
   | "e2e"
   | "about"
   | "viewlog"
+  | "aistack"
   | null;
 
 export interface LogLine {

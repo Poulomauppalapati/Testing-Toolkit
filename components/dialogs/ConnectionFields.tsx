@@ -8,12 +8,33 @@ import {
   type SaveSettingsPayload,
 } from "@/lib/agent-client";
 
-// Default model suggestions seeded into the model comboboxes.
+// Default model suggestions — real model IDs from the GenAI LiteLLM proxy
+// (GenAI Documentation v1.0.0, OAS 3.0). Override via Settings > Fetch models
+// once the API key and base URL are configured.
 const SEED_MODELS = [
-  "bedrock.anthropic.claude-opus-4-6",
-  "bedrock.anthropic.claude-sonnet-4-6",
-  "bedrock.anthropic.claude-haiku-4-5",
+  "azure.gpt-4o",
+  "azure.gpt-4-turbo",
+  "azure.gpt-4",
 ];
+
+// Embedding models from the GenAI proxy doc.
+const SEED_EMBED_MODELS = [
+  "azure.text-embedding-3-small",
+  "azure.text-embedding-3-large",
+  "azure.text-embedding-ada-002",
+];
+
+function seedGroups(): ModelGroup[] {
+  return [
+    {
+      provider: "Azure OpenAI (GenAI Proxy)",
+      items: [
+        ...SEED_MODELS.map((id) => ({ id, provider: "Azure OpenAI (GenAI Proxy)", label: id })),
+        ...SEED_EMBED_MODELS.map((id) => ({ id, provider: "Azure OpenAI (GenAI Proxy)", label: id })),
+      ],
+    },
+  ];
+}
 
 interface ModelGroup {
   provider: string;
@@ -35,14 +56,7 @@ function groupModels(list: ModelInfo[]): ModelGroup[] {
   return order.map((provider) => ({ provider, items: map.get(provider)! }));
 }
 
-function seedGroups(): ModelGroup[] {
-  return [
-    {
-      provider: "Anthropic",
-      items: SEED_MODELS.map((id) => ({ id, provider: "Anthropic", label: id })),
-    },
-  ];
-}
+
 
 export interface ConnectionValues {
   api_key: string;

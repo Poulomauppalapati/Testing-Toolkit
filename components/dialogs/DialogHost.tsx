@@ -13,6 +13,7 @@ import { CredentialsDialog } from "./CredentialsDialog";
 import { E2EDialog } from "./E2EDialog";
 import { AboutDialog } from "./AboutDialog";
 import { ViewLogDialog } from "./ViewLogDialog";
+import { AiStackDialog } from "./AiStackDialog";
 
 export function DialogHost() {
   const { dialog, closeDialog } = useAppState();
@@ -42,6 +43,8 @@ export function DialogHost() {
       return <AboutDialog onClose={closeDialog} />;
     case "viewlog":
       return <ViewLogDialog onClose={closeDialog} />;
+    case "aistack":
+      return <AiStackDialog onClose={closeDialog} />;
     default:
       return null;
   }

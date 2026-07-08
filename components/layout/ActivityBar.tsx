@@ -8,6 +8,7 @@ import {
   Brain,
   ChevronRight,
   RefreshCw,
+  Layers,
   type LucideIcon,
 } from "lucide-react";
 import { useAppState, type KbState } from "@/lib/app-state";
@@ -124,6 +125,7 @@ export function ActivityBar() {
           </button>
         )}
       />
+      <RailButton icon={Layers} label="AI Stack" onClick={() => openDialog("aistack")} />
       <RailButton icon={Settings} label="Settings" onClick={() => openDialog("settings")} />
       <RailButton
         icon={Brain}
