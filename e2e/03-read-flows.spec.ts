@@ -1,16 +1,16 @@
 import { test, expect } from "@playwright/test";
-import { guardAdoWrites, agentConfigured, enterApp, selectFirstProject } from "./helpers";
+import { guardAdoWrites, enterApp, selectFirstProject, mockAgent } from "./helpers";
 
 /**
  * READ-ONLY ADO flows: list projects, list boards, load work items, open a work
- * item's detail. These require a configured agent (real PAT). They auto-skip if
- * the agent is not configured. No ADO writes occur and the route guard blocks
- * any write attempt regardless.
+ * item's detail. Driven against a mocked agent so they run deterministically in
+ * a sandbox (no real PAT needed). No ADO writes occur and the route guard
+ * blocks any write attempt regardless.
  */
 test.describe("ADO read flows (no writes)", () => {
   test.beforeEach(async ({ page }) => {
+    await mockAgent(page, { configured: true });
     guardAdoWrites(page);
-    test.skip(!(await agentConfigured(page)), "agent not configured (no PAT) — skipping live reads");
     await enterApp(page);
   });
 

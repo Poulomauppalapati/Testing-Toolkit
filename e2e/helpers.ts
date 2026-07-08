@@ -34,7 +34,9 @@ export function guardAdoWrites(page: Page): { blocked: () => string[] } {
       console.warn(`[e2e] BLOCKED ADO-write attempt: ${method} ${url}`);
       return route.abort("blockedbyclient");
     }
-    return route.continue();
+    // fallback() (not continue()) so a layered mock handler still gets a chance;
+    // with no other handler this continues to the network as before.
+    return route.fallback();
   });
   return { blocked: () => blocked };
 }
@@ -58,13 +60,15 @@ export async function agentConfigured(page: Page): Promise<boolean> {
  */
 export async function enterApp(page: Page): Promise<void> {
   await page.goto("/");
-  await page.waitForLoadState("networkidle");
+  // NOTE: never wait for "networkidle" here -- the app polls the agent health
+  // endpoint on an interval, so the network is never idle. Wait for concrete
+  // UI instead. The shell renders under the wizard, so the Projects rail is
+  // visible even before we dismiss the wizard.
+  await expect(page.getByText("Projects", { exact: true })).toBeVisible();
   const skip = page.getByRole("button", { name: "Skip (manual mode)" });
   if (await skip.isVisible().catch(() => false)) {
     await skip.click();
   }
-  // The Projects rail is the canonical "we are inside the app" marker.
-  await expect(page.getByText("Projects", { exact: true })).toBeVisible();
 }
 
 // ---------------------------------------------------------------------------
@@ -81,10 +85,10 @@ export interface MockAgentOptions {
   projects?: string[];
 }
 
-const AGENT_ORIGIN = (process.env.AGENT_URL ?? "http://127.0.0.1:7842").replace(
-  /\/$/,
-  ""
-);
+// The web app hardcodes this origin (lib/agent-client.ts AGENT_URL); the mock
+// MUST match it exactly or health calls miss the interceptor and the app hangs
+// on "Connecting to agent...".
+const AGENT_ORIGIN = "http://127.0.0.1:7842";
 
 /**
  * Fulfill the local-agent HTTP contract at the network layer so the entire web
@@ -102,7 +106,9 @@ export async function mockAgent(
 ): Promise<void> {
   const configured = opts.configured ?? true;
   const tourCompleted = opts.tourCompleted ?? true;
-  const projects = opts.projects ?? ["Demo Project"];
+  // Unconfigured agents have no source connection, so they list no projects
+  // (keeps the manual-mode "empty board" state truthful).
+  const projects = opts.projects ?? (configured ? ["Demo Project"] : []);
 
   const json = (route: Route, body: unknown, status = 200) =>
     route.fulfill({
@@ -171,6 +177,45 @@ export async function mockAgent(
       });
     if (path.startsWith("/sources/workitem/"))
       return json(route, workItems[0]);
+
+    // --- Generation flow (local, safe; never touches ADO) ---
+    if (path === "/generate/start")
+      return json(route, { job_id: "job-1" });
+    if (path.startsWith("/jobs/"))
+      return json(route, {
+        id: "job-1",
+        kind: "generate",
+        state: "done",
+        logs: ["[INFO] generating", "[SUCCESS] done"],
+        log_count: 2,
+        progress: { stage: "done", current: 1, total: 1 },
+        error: "",
+        result: {
+          payload: {
+            stories: [
+              {
+                parent_work_item_id: 101,
+                title: "As a user I can sign in",
+                test_cases: [
+                  { action: "Open login", expected: "Login page shown" },
+                ],
+              },
+            ],
+          },
+          n_test_cases: 1,
+          n_stories: 1,
+          xlsx_path: "/tmp/out/TC-101.xlsx",
+          xlsx_name: "TC-101.xlsx",
+          quality: { avg_score: 82, below_threshold: 0 },
+          coverage: {
+            total_work_items: 1,
+            covered: 1,
+            uncovered: 0,
+            coverage_pct: 100,
+          },
+        },
+      });
+
     if (path === "/metrics") return json(route, { cpu_percent: 5 });
     if (path === "/doctor") return json(route, { status: "pass", checks: [] });
     if (path.startsWith("/update/"))

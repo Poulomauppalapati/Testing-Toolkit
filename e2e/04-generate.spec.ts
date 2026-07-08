@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { guardAdoWrites, agentConfigured, enterApp, selectFirstProject } from "./helpers";
+import { guardAdoWrites, enterApp, selectFirstProject, mockAgent } from "./helpers";
 
 /**
  * GENERATE flow WITHOUT pushing to ADO.
@@ -11,8 +11,8 @@ import { guardAdoWrites, agentConfigured, enterApp, selectFirstProject } from ".
  */
 test.describe("Generate test cases (no ADO push)", () => {
   test("opens generate dialog, runs AI Generate, and never pushes to ADO", async ({ page }) => {
+    await mockAgent(page, { configured: true });
     const guard = guardAdoWrites(page);
-    test.skip(!(await agentConfigured(page)), "agent not configured (no PAT/LLM) — skipping generate");
     await enterApp(page);
 
     const haveProject = await selectFirstProject(page);

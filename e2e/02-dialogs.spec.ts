@@ -1,8 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { guardAdoWrites, enterApp } from "./helpers";
+import { guardAdoWrites, enterApp, mockAgent } from "./helpers";
 
 test.describe("Shell dialogs", () => {
   test.beforeEach(async ({ page }) => {
+    // Configured agent -> straight into the shell (no wizard/tour).
+    await mockAgent(page, { configured: true });
     guardAdoWrites(page);
     await enterApp(page);
   });
