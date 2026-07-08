@@ -7,10 +7,12 @@ import { DownloadLinks } from "@/components/ui/download-links";
 import {
   agent,
   agentLogLevel,
+  sortWiIds,
   TC_DISPLAY_NAME,
   type GenerationResult,
   type JobProgress,
   type TcType,
+  type WiId,
 } from "@/lib/agent-client";
 import { useAppState } from "@/lib/app-state";
 
@@ -66,7 +68,7 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
   // When opened from "Load and Regenerate with feedback", the dialog loads an
   // existing artifact's payload up front and recovers its work item ids so the
   // regeneration can re-fetch detail (the board selection may be empty).
-  const [loadedIds, setLoadedIds] = useState<number[]>([]);
+  const [loadedIds, setLoadedIds] = useState<WiId[]>([]);
   const [loadingArtifact, setLoadingArtifact] = useState(
     !!generateCtx.loadArtifactPath
   );
@@ -75,9 +77,7 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
   const phase = tcType ? TC_DISPLAY_NAME[tcType] : "Test case";
   const projectLabel = currentProject ? displayName(currentProject) : "";
   const titleText = `Generate ${phase} TC - ${projectLabel}`;
-  const ids = loadedIds.length
-    ? loadedIds
-    : [...selected].sort((a, b) => a - b);
+  const ids = loadedIds.length ? loadedIds : sortWiIds([...selected]);
 
   // Load the artifact payload once on open (regeneration entry point).
   useEffect(() => {
@@ -92,7 +92,9 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
       .then((res) => {
         if (cancelled) return;
         setResult(res);
-        setLoadedIds(res.wi_ids ?? []);
+        // ADO ids and JIRA keys are recovered separately; merge both so the
+        // regeneration re-fetches detail from whichever source this came from.
+        setLoadedIds([...(res.wi_ids ?? []), ...(res.wi_keys ?? [])]);
         setStatus(
           `Loaded ${res.n_test_cases} test case(s) from ${res.xlsx_name}. ` +
             "Add feedback below and Regenerate."
@@ -689,7 +691,7 @@ function ManualMode({
   pushLog,
 }: {
   project: string;
-  ids: number[];
+  ids: WiId[];
   tcType: TcType | "";
   manualJson: string;
   setManualJson: (v: string) => void;

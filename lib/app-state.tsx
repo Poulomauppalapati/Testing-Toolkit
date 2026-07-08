@@ -24,6 +24,7 @@ import {
   type Board,
   type BoardView,
   type SettingsResponse,
+  type WiId,
 } from "./agent-client";
 import {
   getPreferences,
@@ -107,9 +108,9 @@ interface AppStateValue {
   boardLoading: boolean;
 
   // selection
-  selected: Set<number>;
-  setSelected: (s: Set<number>) => void;
-  toggleSelected: (id: number, on: boolean) => void;
+  selected: Set<WiId>;
+  setSelected: (s: Set<WiId>) => void;
+  toggleSelected: (id: WiId, on: boolean) => void;
 
   // log panel
   log: LogLine[];
@@ -184,7 +185,7 @@ export function AppStateProvider({
   const [boardView, setBoardView] = useState<BoardView | null>(null);
   const [boardLoading, setBoardLoading] = useState(false);
 
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<WiId>>(new Set());
 
   const [log, setLog] = useState<LogLine[]>([]);
   // Visibility defaults come from saved preferences (first launch hides all).
@@ -613,7 +614,7 @@ export function AppStateProvider({
     }
   }, [projects, currentProject, selectProject]);
 
-  const toggleSelected = useCallback((id: number, on: boolean) => {
+  const toggleSelected = useCallback((id: WiId, on: boolean) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (on) next.add(id);

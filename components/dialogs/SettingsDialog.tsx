@@ -23,6 +23,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     project_prefix: settings?.project_prefix ?? "",
     api_key: settings?.has_api_key ? "************" : "",
     pat: settings?.has_pat ? "************" : "",
+    jira_url: settings?.jira_url ?? "",
+    jira_user: settings?.jira_user ?? "",
+    jira_pat: settings?.has_jira_pat ? "************" : "",
+    jira_project_prefix: settings?.jira_project_prefix ?? "",
   });
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);

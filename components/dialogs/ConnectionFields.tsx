@@ -53,6 +53,11 @@ export interface ConnectionValues {
   pat: string;
   organization: string;
   project_prefix: string;
+  // -- JIRA source (optional second work-item source) --
+  jira_url: string;
+  jira_user: string;
+  jira_pat: string;
+  jira_project_prefix: string;
 }
 
 const MASK = "************";
@@ -67,6 +72,10 @@ export function useConnectionFields(initial?: Partial<ConnectionValues>) {
     pat: initial?.pat ?? "",
     organization: initial?.organization ?? "",
     project_prefix: initial?.project_prefix ?? "",
+    jira_url: initial?.jira_url ?? "",
+    jira_user: initial?.jira_user ?? "",
+    jira_pat: initial?.jira_pat ?? "",
+    jira_project_prefix: initial?.jira_project_prefix ?? "",
   });
   return { values, setValues };
 }
@@ -84,6 +93,11 @@ export function toPayload(v: ConnectionValues): SaveSettingsPayload {
   if (v.base_url && v.base_url !== MASK) p.base_url = v.base_url;
   if (v.api_key && v.api_key !== MASK) p.api_key = v.api_key;
   if (v.pat && v.pat !== MASK) p.pat = v.pat;
+  // JIRA: URL/user/prefix are plain values; the token is masked like a secret.
+  p.jira_url = v.jira_url;
+  p.jira_user = v.jira_user;
+  p.jira_project_prefix = v.jira_project_prefix;
+  if (v.jira_pat && v.jira_pat !== MASK) p.jira_pat = v.jira_pat;
   return p;
 }
 
@@ -462,6 +476,51 @@ export function ConnectionFields({
         Project names are shown with this prefix stripped, e.g.
         InteractionsHub_Abbott → Abbott.
       </p>
+
+      {!readOnlyModels && (
+        <>
+          <SectionHeader>JIRA (optional)</SectionHeader>
+          <Field label="Base URL">
+            <input
+              type="text"
+              className="tt-input"
+              placeholder="https://jira.your-company.com"
+              value={values.jira_url}
+              onChange={(e) => set("jira_url", e.target.value)}
+            />
+          </Field>
+          <Field label="Username / Email">
+            <input
+              type="text"
+              className="tt-input"
+              placeholder="you@company.com"
+              value={values.jira_user}
+              onChange={(e) => set("jira_user", e.target.value)}
+            />
+          </Field>
+          <Field label="API Token / PAT">
+            <MaskedField
+              value={values.jira_pat}
+              placeholder="JIRA API token or PAT"
+              onChange={(v) => set("jira_pat", v)}
+            />
+          </Field>
+          <Field label="Strip project prefix">
+            <input
+              type="text"
+              className="tt-input"
+              placeholder="(optional)"
+              value={values.jira_project_prefix}
+              onChange={(e) => set("jira_project_prefix", e.target.value)}
+            />
+          </Field>
+          <p className="pl-[152px] text-xs text-muted-foreground">
+            Connect a JIRA Server/Data Center instance to browse boards and
+            generate test cases from JIRA issues alongside Azure DevOps. Leave
+            blank to use Azure DevOps only.
+          </p>
+        </>
+      )}
     </div>
   );
 }

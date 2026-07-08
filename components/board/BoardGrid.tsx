@@ -5,7 +5,7 @@ import { RefreshCw, PanelRightOpen, PanelRightClose } from "lucide-react";
 import { useAppState } from "@/lib/app-state";
 import { usePreferences, getPreferences, setSizePref } from "@/lib/preferences";
 import { ResizeHandle } from "@/components/ui/resizer";
-import type { WorkItemRow } from "@/lib/agent-client";
+import type { WorkItemRow, WiId } from "@/lib/agent-client";
 import {
   ALL,
   COLOR_MUTED,
@@ -36,7 +36,7 @@ export function BoardGrid() {
   const detailVisible = prefs.panels.detail;
 
   // Clicking a work item activates it and auto-opens the detail panel.
-  const activateRow = (id: number) => {
+  const activateRow = (id: WiId) => {
     setActiveWiId(id);
     setPanel("detail", true);
   };
@@ -54,7 +54,7 @@ export function BoardGrid() {
     () => getPreferences().sizes.detailWidth
   );
 
-  const [activeWiId, setActiveWiId] = useState<number | null>(null);
+  const [activeWiId, setActiveWiId] = useState<WiId | null>(null);
   const [search, setSearch] = useState("");
   const [fType, setFType] = useState(ALL);
   const [fAssignee, setFAssignee] = useState(ALL);
@@ -306,11 +306,11 @@ function LaneGroup({
   laneRows: WorkItemRow[];
   allChecked: boolean;
   someChecked: boolean;
-  selected: Set<number>;
-  activeWiId: number | null;
+  selected: Set<WiId>;
+  activeWiId: WiId | null;
   onToggleLane: (on: boolean) => void;
-  onToggleRow: (id: number, on: boolean) => void;
-  onActivate: (id: number) => void;
+  onToggleRow: (id: WiId, on: boolean) => void;
+  onActivate: (id: WiId) => void;
 }) {
   return (
     <>

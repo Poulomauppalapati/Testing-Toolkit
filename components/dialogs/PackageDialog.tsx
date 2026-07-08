@@ -7,12 +7,20 @@ import {
   humanSize,
   type DownloadItem,
 } from "@/components/ui/download-links";
-import { agent, agentLogLevel, type JobProgress } from "@/lib/agent-client";
+import {
+  agent,
+  agentLogLevel,
+  sortWiIds,
+  type JobProgress,
+} from "@/lib/agent-client";
 import { useAppState } from "@/lib/app-state";
 
 export function PackageDialog({ onClose }: { onClose: () => void }) {
   const { selected, currentProject, displayName, pushLog } = useAppState();
-  const selectedIds = [...selected].sort((a, b) => a - b);
+  // PDF packaging is ADO-only; keep numeric ADO ids and drop any JIRA keys.
+  const selectedIds = sortWiIds([...selected]).filter(
+    (id): id is number => typeof id === "number"
+  );
   const [manualIds, setManualIds] = useState("");
   const [paperSize, setPaperSize] = useState<"A4" | "Letter">("A4");
   const [busy, setBusy] = useState(false);

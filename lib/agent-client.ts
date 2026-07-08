@@ -178,6 +178,43 @@ export interface SaveSettingsPayload {
  */
 export type WiId = string | number;
 
+/**
+ * Split a mixed selection of work-item identifiers into numeric ADO ids and
+ * string JIRA keys. Numeric-looking strings (e.g. "123") are treated as ADO
+ * ids so a pure-ADO project still works if the grid stored ids as strings.
+ */
+/**
+ * Sort a mixed list of work-item ids. Numeric ids sort ascending and come
+ * first; string JIRA keys sort lexicographically after them. Returns a new
+ * array (does not mutate the input).
+ */
+export function sortWiIds(items: WiId[]): WiId[] {
+  return [...items].sort((a, b) => {
+    const an = typeof a === "number";
+    const bn = typeof b === "number";
+    if (an && bn) return (a as number) - (b as number);
+    if (an) return -1;
+    if (bn) return 1;
+    return String(a).localeCompare(String(b));
+  });
+}
+
+export function splitWiIds(items: WiId[]): { ids: number[]; keys: string[] } {
+  const ids: number[] = [];
+  const keys: string[] = [];
+  for (const it of items) {
+    if (typeof it === "number") {
+      ids.push(it);
+    } else {
+      const s = it.trim();
+      if (!s) continue;
+      if (/^\d+$/.test(s)) ids.push(Number(s));
+      else keys.push(s);
+    }
+  }
+  return { ids, keys };
+}
+
 // ---------------------------------------------------------------------------
 // ADO board model (ado/boards.py)
 // ---------------------------------------------------------------------------
@@ -1073,7 +1110,7 @@ export const agent = {
   async generate(
     payload: {
       project: string;
-      wi_ids: number[];
+      wi_ids: WiId[];
       tc_type: TcType | "";
       board?: string;
       manual_payload?: Record<string, unknown> | null;
@@ -1084,11 +1121,13 @@ export const agent = {
     },
     handlers: JobHandlers = {}
   ): Promise<GenerationResult> {
+    const { ids, keys } = splitWiIds(payload.wi_ids);
     const { job_id } = await agentFetch<{ job_id: string }>("/generate/start", {
       method: "POST",
       body: JSON.stringify({
         project: payload.project,
-        wi_ids: payload.wi_ids,
+        wi_ids: ids,
+        wi_keys: keys,
         tc_type: payload.tc_type,
         board: payload.board ?? "",
         manual_payload: payload.manual_payload ?? null,
@@ -1211,15 +1250,21 @@ export const agent = {
     return snap.result as unknown as E2ERunResult;
   },
 
-  /** Build the manual-mode work-item dump + system prompt. */
+  /** Build the manual-mode work-item dump + system prompt (ADO or JIRA). */
   async buildDump(
     project: string,
-    wiIds: number[],
+    wiIds: WiId[],
     tcType: TcType | ""
   ): Promise<{ dump: string; system_prompt: string; n_items: number }> {
+    const { ids, keys } = splitWiIds(wiIds);
     return agentFetch("/generate/dump", {
       method: "POST",
-      body: JSON.stringify({ project, wi_ids: wiIds, tc_type: tcType }),
+      body: JSON.stringify({
+        project,
+        wi_ids: ids,
+        wi_keys: keys,
+        tc_type: tcType,
+      }),
     });
   },
 
@@ -1279,12 +1324,12 @@ export const agent = {
   /**
    * Load an existing reviewer .xlsx artifact back into a payload so it can be
    * regenerated with feedback ("Load and Regenerate with feedback"). The
-   * returned wi_ids are recovered from the artifact so the regeneration can
-   * re-fetch work item detail.
+   * returned wi_ids (ADO) and wi_keys (JIRA) are recovered from the artifact
+   * so the regeneration can re-fetch work item detail from the right source.
    */
   async loadArtifact(
     xlsxPath: string
-  ): Promise<GenerationResult & { wi_ids: number[] }> {
+  ): Promise<GenerationResult & { wi_ids: number[]; wi_keys: string[] }> {
     return agentFetch("/generate/load-xlsx", {
       method: "POST",
       body: JSON.stringify({ xlsx_path: xlsxPath }),
@@ -1356,18 +1401,21 @@ export const agent = {
 
   // -- Tools: PDF packaging (async job) --
   async packagePdfs(
-    payload: { project: string; wi_ids: number[]; paper_size?: string },
+    payload: { project: string; wi_ids: WiId[]; paper_size?: string },
     handlers: JobHandlers = {}
   ): Promise<{
     output_dir: string;
     n_package_ok: number;
     n_extract_ok: number;
   }> {
+    // PDF packaging pulls ADO work-item attachments, so only numeric ADO ids
+    // are sent; JIRA keys in the selection are ignored here.
+    const { ids } = splitWiIds(payload.wi_ids);
     const { job_id } = await agentFetch<{ job_id: string }>("/tools/package", {
       method: "POST",
       body: JSON.stringify({
         project: payload.project,
-        wi_ids: payload.wi_ids,
+        wi_ids: ids,
         paper_size: payload.paper_size ?? "A4",
       }),
     });

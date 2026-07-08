@@ -17,12 +17,13 @@ import {
   type WorkItemDetail,
   type ArtifactFile,
   type Attachment,
+  type WiId,
 } from "@/lib/agent-client";
 import { useAppState } from "@/lib/app-state";
 import { COLOR_MUTED } from "@/lib/board-utils";
 
 interface DetailPaneProps {
-  activeWiId: number | null;
+  activeWiId: WiId | null;
 }
 
 export function DetailPane({ activeWiId }: DetailPaneProps) {
@@ -55,8 +56,22 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
     };
   }, [activeWiId, currentProject, pushLog]);
 
-  const openInAdo = () => {
-    if (!detail || !settings?.organization) return;
+  // Open the work item in its source system: a JIRA issue (string key) opens
+  // the JIRA browse URL; an ADO work item (numeric id) opens the ADO editor.
+  const openInSource = () => {
+    if (!detail) return;
+    const isJiraKey = typeof detail.wi_id === "string";
+    if (isJiraKey) {
+      const base = (settings?.jira_url ?? "").replace(/\/+$/, "");
+      if (!base) return;
+      window.open(
+        `${base}/browse/${encodeURIComponent(String(detail.wi_id))}`,
+        "_blank",
+        "noopener"
+      );
+      return;
+    }
+    if (!settings?.organization) return;
     const url = `https://dev.azure.com/${encodeURIComponent(
       settings.organization
     )}/_workitems/edit/${detail.wi_id}`;
@@ -90,9 +105,9 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
         <button
           className="tt-btn-ghost !px-3 !py-1 text-xs"
           disabled={!detail}
-          onClick={openInAdo}
+          onClick={openInSource}
         >
-          Open in ADO
+          {detail && typeof detail.wi_id === "string" ? "Open in JIRA" : "Open in ADO"}
         </button>
       </div>
 
