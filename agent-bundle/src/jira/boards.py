@@ -1,0 +1,291 @@
+"""
+jira/boards.py
+JIRA Agile boards, sprints, and issue fetching.
+Uses /rest/agile/1.0/board and /rest/api/2/search (JQL).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+import httpx
+
+from core.http_retry import request_with_retry, ssl_exception_types
+from core.runtime_config import RuntimeConfig
+from jira.api import build_auth_header
+
+
+# ------------------------------------------------------------------
+# Data classes
+# ------------------------------------------------------------------
+@dataclass(slots=True)
+class JiraBoard:
+    id: int
+    name: str
+    board_type: str  # "scrum" or "kanban"
+    project_key: str
+
+
+@dataclass(slots=True)
+class JiraIssue:
+    key: str          # e.g. "PROJ-123"
+    issue_id: int
+    summary: str
+    issue_type: str   # "Story", "Bug", "Task", etc.
+    status: str
+    assignee: str
+    priority: str
+    sprint: str
+    labels: list[str] = field(default_factory=list)
+
+
+# ------------------------------------------------------------------
+# Internal helpers
+# ------------------------------------------------------------------
+def _client(url: str, user: str, pat: str, cfg: RuntimeConfig) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        headers=build_auth_header(user, pat),
+        timeout=httpx.Timeout(cfg.http_timeout_sec),
+        verify=cfg.build_ssl(),
+        base_url=url.rstrip("/"),
+    )
+
+
+def _jql_escape(value: str) -> str:
+    """Escape a value for embedding in a JQL string literal.
+
+    JQL string literals are single-quoted; internal single quotes,
+    backslashes, and reserved chars are escaped with a backslash.
+    """
+    # Backslash must be escaped first to avoid double-escaping.
+    s = value.replace("\\", "\\\\")
+    s = s.replace("'", "\\'")
+    s = s.replace('"', '\\"')
+    return s
+
+
+def _parse_issue(raw: dict[str, Any]) -> JiraIssue:
+    """Parse a JIRA issue JSON object into a JiraIssue dataclass."""
+    fields = raw.get("fields") or {}
+    assignee_obj = fields.get("assignee") or {}
+    assignee_name = (
+        assignee_obj.get("displayName", "")
+        if isinstance(assignee_obj, dict) else str(assignee_obj)
+    )
+    priority_obj = fields.get("priority") or {}
+    priority_name = (
+        priority_obj.get("name", "")
+        if isinstance(priority_obj, dict) else str(priority_obj)
+    )
+    # Sprint: try the sprint field (customfield varies); fallback to empty
+    sprint_name = ""
+    sprint_field = fields.get("sprint")
+    if isinstance(sprint_field, dict):
+        sprint_name = sprint_field.get("name", "")
+    labels = fields.get("labels") or []
+    issue_type_obj = fields.get("issuetype") or {}
+    status_obj = fields.get("status") or {}
+    return JiraIssue(
+        key=str(raw.get("key", "")),
+        issue_id=int(raw.get("id", 0) or 0),
+        summary=str(fields.get("summary", "")).strip(),
+        issue_type=(
+            issue_type_obj.get("name", "")
+            if isinstance(issue_type_obj, dict) else str(issue_type_obj)
+        ),
+        status=(
+            status_obj.get("name", "")
+            if isinstance(status_obj, dict) else str(status_obj)
+        ),
+        assignee=assignee_name,
+        priority=priority_name,
+        sprint=sprint_name,
+        labels=list(labels),
+    )
+
+
+# ------------------------------------------------------------------
+# Public API
+# ------------------------------------------------------------------
+async def list_boards(
+    url: str, user: str, pat: str, project_key: str, cfg: RuntimeConfig,
+) -> list[JiraBoard]:
+    """GET /rest/agile/1.0/board?projectKeyOrId=<key>
+
+    Paginates through all boards for the given project.
+    """
+    boards: list[JiraBoard] = []
+    start_at = 0
+    max_results = 50
+    try:
+        async with _client(url, user, pat, cfg) as client:
+            while True:
+                endpoint = (
+                    f"/rest/agile/1.0/board"
+                    f"?projectKeyOrId={_jql_escape(project_key)}"
+                    f"&startAt={start_at}&maxResults={max_results}"
+                )
+                r = await request_with_retry(client, "GET", endpoint)
+                if r.status_code != 200:
+                    break
+                data: dict[str, Any] = r.json()
+                for b in data.get("values", []) or []:
+                    loc = b.get("location") or {}
+                    boards.append(JiraBoard(
+                        id=int(b.get("id", 0) or 0),
+                        name=str(b.get("name", "")).strip(),
+                        board_type=str(b.get("type", "")).lower(),
+                        project_key=str(
+                            loc.get("projectKey", project_key)
+                        ).strip(),
+                    ))
+                # Pagination check
+                is_last = data.get("isLast", True)
+                if is_last:
+                    break
+                start_at += max_results
+    except Exception:
+        # Best-effort; return whatever was collected
+        pass
+    return boards
+
+
+async def list_sprints(
+    url: str, user: str, pat: str, board_id: int, cfg: RuntimeConfig,
+) -> list[dict[str, Any]]:
+    """GET /rest/agile/1.0/board/{boardId}/sprint
+
+    Returns raw sprint dicts: {id, name, state, startDate, endDate, ...}
+    """
+    sprints: list[dict[str, Any]] = []
+    start_at = 0
+    max_results = 50
+    try:
+        async with _client(url, user, pat, cfg) as client:
+            while True:
+                endpoint = (
+                    f"/rest/agile/1.0/board/{board_id}/sprint"
+                    f"?startAt={start_at}&maxResults={max_results}"
+                )
+                r = await request_with_retry(client, "GET", endpoint)
+                if r.status_code != 200:
+                    break
+                data: dict[str, Any] = r.json()
+                for s in data.get("values", []) or []:
+                    sprints.append({
+                        "id": int(s.get("id", 0) or 0),
+                        "name": str(s.get("name", "")).strip(),
+                        "state": str(s.get("state", "")).lower(),
+                        "startDate": s.get("startDate", ""),
+                        "endDate": s.get("endDate", ""),
+                        "goal": str(s.get("goal", "") or ""),
+                    })
+                is_last = data.get("isLast", True)
+                if is_last:
+                    break
+                start_at += max_results
+    except Exception:
+        pass
+    return sprints
+
+
+async def search_issues(
+    url: str,
+    user: str,
+    pat: str,
+    jql: str,
+    cfg: RuntimeConfig,
+    max_results: int = 200,
+    on_batch: Callable[[list[JiraIssue]], None] | None = None,
+) -> list[JiraIssue]:
+    """POST /rest/api/2/search with JQL. Paginated via startAt.
+
+    Fetches up to max_results issues total. Emits batches via on_batch
+    as each page arrives for progressive UI rendering.
+    """
+    issues: list[JiraIssue] = []
+    start_at = 0
+    page_size = min(max_results, 100)
+    fields_requested = [
+        "summary", "issuetype", "status", "assignee",
+        "priority", "labels", "sprint",
+    ]
+    try:
+        async with _client(url, user, pat, cfg) as client:
+            while start_at < max_results:
+                body = {
+                    "jql": jql,
+                    "startAt": start_at,
+                    "maxResults": min(page_size, max_results - start_at),
+                    "fields": fields_requested,
+                }
+                r = await request_with_retry(
+                    client, "POST", "/rest/api/2/search",
+                    json=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                if r.status_code != 200:
+                    break
+                data: dict[str, Any] = r.json()
+                raw_issues = data.get("issues", []) or []
+                if not raw_issues:
+                    break
+                batch: list[JiraIssue] = [
+                    _parse_issue(ri) for ri in raw_issues
+                ]
+                issues.extend(batch)
+                if on_batch and batch:
+                    on_batch(batch)
+                total = int(data.get("total", 0) or 0)
+                start_at += len(raw_issues)
+                if start_at >= total:
+                    break
+    except Exception:
+        pass
+    return issues
+
+
+async def get_issue_detail(
+    url: str, user: str, pat: str, issue_key: str, cfg: RuntimeConfig,
+) -> dict[str, Any]:
+    """GET /rest/api/2/issue/{key}?expand=renderedFields,names
+
+    Returns the full issue JSON dict. Returns empty dict on failure.
+    """
+    endpoint = (
+        f"/rest/api/2/issue/{_jql_escape(issue_key)}"
+        f"?expand=renderedFields,names"
+    )
+    try:
+        async with _client(url, user, pat, cfg) as client:
+            r = await request_with_retry(client, "GET", endpoint)
+            if r.status_code == 200:
+                return r.json()
+    except Exception:
+        pass
+    return {}
+
+
+async def tag_issue(
+    url: str, user: str, pat: str, issue_key: str, label: str,
+    cfg: RuntimeConfig,
+) -> bool:
+    """PUT /rest/api/2/issue/{key} to add a label. Returns True on success."""
+    endpoint = f"/rest/api/2/issue/{_jql_escape(issue_key)}"
+    body = {
+        "update": {
+            "labels": [{"add": label}],
+        },
+    }
+    try:
+        async with _client(url, user, pat, cfg) as client:
+            r = await request_with_retry(
+                client, "PUT", endpoint,
+                json=body,
+                headers={"Content-Type": "application/json"},
+            )
+            # JIRA returns 204 No Content on successful update
+            return r.status_code in (200, 204)
+    except Exception:
+        return False

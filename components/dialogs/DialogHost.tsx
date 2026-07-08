@@ -10,6 +10,7 @@ import { DefectDialog } from "./DefectDialog";
 import { RetrievalDialog } from "./RetrievalDialog";
 import { ChatDialog } from "./ChatDialog";
 import { CredentialsDialog } from "./CredentialsDialog";
+import { E2EDialog } from "./E2EDialog";
 import { AboutDialog } from "./AboutDialog";
 import { ViewLogDialog } from "./ViewLogDialog";
 
@@ -35,6 +36,8 @@ export function DialogHost() {
       return <ChatDialog onClose={closeDialog} />;
     case "credentials":
       return <CredentialsDialog onClose={closeDialog} />;
+    case "e2e":
+      return <E2EDialog onClose={closeDialog} />;
     case "about":
       return <AboutDialog onClose={closeDialog} />;
     case "viewlog":

@@ -253,6 +253,11 @@ KEY_PREFIX:     Final[str] = "project_prefix"
 KEY_TLS_MODE:   Final[str] = "tls_mode"
 KEY_TOUR_DONE:  Final[str] = "tour_completed"
 
+# --- JIRA source (non-secret parts; the JIRA PAT lives in the keyring) ---
+KEY_JIRA_URL:    Final[str] = "jira_url"
+KEY_JIRA_USER:   Final[str] = "jira_user"
+KEY_JIRA_PREFIX: Final[str] = "jira_project_prefix"
+
 _DEFAULTS: Final[dict[str, str]] = {
     KEY_BASE_URL:   DEFAULT_ANTHROPIC_BASE_URL,
     KEY_MODEL:          DEFAULT_MODEL,
@@ -261,6 +266,9 @@ _DEFAULTS: Final[dict[str, str]] = {
     KEY_ORG:        "",
     KEY_PREFIX:     DEFAULT_PROJECT_PREFIX,
     KEY_TLS_MODE:   "system",
+    KEY_JIRA_URL:    "",
+    KEY_JIRA_USER:   "",
+    KEY_JIRA_PREFIX: "",
 }
 
 
@@ -346,6 +354,58 @@ def load_pat_value() -> str:
 
 def save_pat_value(pat: str) -> bool:
     return save_pat(pat)
+
+
+# ---------------------------------------------------------------------
+# JIRA PAT secure storage (keyring -> encrypted file fallback), kept
+# separate from the ADO PAT so both sources can be configured at once.
+# ---------------------------------------------------------------------
+_JIRA_SERVICE: Final[str] = "testing_toolkit_jira"
+_JIRA_USERNAME: Final[str] = "default"
+_JIRA_FALLBACK_PATH: Final[Path] = Path.home() / ".testing_toolkit_jira_pat"
+
+
+def load_jira_pat() -> str:
+    """Return the stored JIRA PAT, or an empty string."""
+    val = _keyring_get(_JIRA_SERVICE, _JIRA_USERNAME)
+    if val:
+        return val.strip()
+    return (_file_get(_JIRA_FALLBACK_PATH) or "").strip()
+
+
+def save_jira_pat(pat: str) -> bool:
+    """Persist the JIRA PAT. Returns True if any backend took it."""
+    if not pat or not pat.strip():
+        return False
+    pat = pat.strip()
+    if _keyring_set(_JIRA_SERVICE, _JIRA_USERNAME, pat):
+        return True
+    return _file_set(_JIRA_FALLBACK_PATH, pat)
+
+
+def clear_jira_pat() -> bool:
+    a = _keyring_delete(_JIRA_SERVICE, _JIRA_USERNAME)
+    b = _file_delete(_JIRA_FALLBACK_PATH)
+    return a or b
+
+
+def is_jira_configured() -> bool:
+    """True when a JIRA URL, username, and PAT are all present."""
+    return bool(
+        get_setting(KEY_JIRA_URL).strip()
+        and get_setting(KEY_JIRA_USER).strip()
+        and load_jira_pat()
+    )
+
+
+def build_jira_runtime_config() -> "RuntimeConfig":
+    """RuntimeConfig carrying the JIRA PAT + TLS mode. The JIRA URL/user are
+    passed to the jira.* functions explicitly, not via RuntimeConfig."""
+    from core.runtime_config import RuntimeConfig
+    cfg = RuntimeConfig.from_env_defaults()
+    cfg.pat = load_jira_pat()
+    cfg.tls_mode = get_setting(KEY_TLS_MODE) or "system"
+    return cfg
 
 
 def build_runtime_config() -> "RuntimeConfig":

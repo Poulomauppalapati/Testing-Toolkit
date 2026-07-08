@@ -81,6 +81,14 @@ export function ActionBar() {
       >
         Credentials
       </button>
+      <button
+        className="tt-btn-ghost !px-4 !py-1.5 text-sm"
+        disabled={!currentProject}
+        title="Run generated test cases in a real browser with Playwright and capture screenshots"
+        onClick={() => openDialog("e2e")}
+      >
+        Run E2E
+      </button>
 
       <div className="flex-1" />
 

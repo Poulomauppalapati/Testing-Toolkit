@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import {
   Play,
   Square,
@@ -25,10 +25,10 @@ import { useAppState } from "@/lib/app-state";
 
 type RowStatus = "pending" | "running" | "pass" | "fail" | "skip" | "error";
 
-const STATUS_ICON: Record<RowStatus, JSX.Element> = {
+const STATUS_ICON: Record<RowStatus, ReactElement> = {
   pending: <MinusCircle className="h-4 w-4 text-[var(--tt-text-muted)]" />,
   running: (
-    <Loader2 className="h-4 w-4 animate-spin text-[var(--tt-warning)]" />
+    <Loader2 className="h-4 w-4 animate-spin text-[var(--tt-warn)]" />
   ),
   pass: <CheckCircle2 className="h-4 w-4 text-[var(--tt-success)]" />,
   fail: <XCircle className="h-4 w-4 text-[var(--tt-danger)]" />,
