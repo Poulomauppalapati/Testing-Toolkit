@@ -247,33 +247,9 @@ export function NavPanel() {
 }
 
 // ---------------------------------------------------------------------------
-// Small reusable icon button for the bottom toolbar
+// Small reusable labeled icon button for the bottom toolbar
 // ---------------------------------------------------------------------------
 import React from "react";
-
-const NavIconBtn = React.forwardRef<
-  HTMLButtonElement,
-  {
-    title: string;
-    onClick: () => void;
-    icon: React.ReactNode;
-    disabled?: boolean;
-    "aria-label"?: string;
-  }
->(function NavIconBtn({ title, onClick, icon, disabled, ...rest }, ref) {
-  return (
-    <button
-      ref={ref}
-      title={title}
-      aria-label={rest["aria-label"] ?? title}
-      disabled={disabled}
-      className="tt-btn-ghost h-8 w-8 !p-0 disabled:opacity-40"
-      onClick={onClick}
-    >
-      {icon}
-    </button>
-  );
-});
 
 /** Labeled icon button for the bottom toolbar — icon + short text label. */
 const NavLabelBtn = React.forwardRef<

@@ -377,7 +377,7 @@ function LaneGroup({
           <tr
             key={r.wi_id}
             onClick={() => onActivate(r.wi_id)}
-            className={`cursor-pointer border-b border-[var(--tt-outline-soft)] transition-colors ${
+            className={`cursor-pointer border-b border-[var(--tt-outline-soft)] border-l-[3px] transition-colors ${typeBorderClass} ${
               isActive ? "tt-row-selected" : "hover:bg-[var(--tt-surface-container)]"
             }`}
           >
@@ -389,11 +389,9 @@ function LaneGroup({
                 onChange={(e) => onToggleRow(r.wi_id, e.target.checked)}
               />
             </td>
-            {/* ID with type left-border accent */}
+            {/* ID cell — no redundant left-border (now on <tr>) */}
             <td className="px-2 py-1.5">
-              <span
-                className={`border-l-2 pl-1.5 font-mono text-xs font-bold text-[var(--tt-primary)] ${typeBorderClass}`}
-              >
+              <span className="font-mono text-xs font-bold text-[var(--tt-primary)]">
                 {r.wi_id}
               </span>
             </td>

@@ -286,6 +286,25 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
       footer={footer}
     >
       <div className="flex flex-col gap-4">
+        {/* ── Progress bar — shown at TOP during an active run ──────── */}
+        {running && (
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center justify-between text-xs text-[var(--tt-text-muted)]">
+              <span className="flex items-center gap-1.5">
+                <Loader2 className="h-3 w-3 animate-spin text-[var(--tt-primary)]" />
+                Running {progress?.current ?? 0} / {progress?.total ?? (selected.size > 0 ? selected.size : testCases.length)}
+              </span>
+              <span className="tabular-nums">{progressPct != null ? `${progressPct}%` : "—"}</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--tt-outline)]">
+              <div
+                className="h-full rounded-full bg-[var(--tt-primary)] transition-[width] duration-300 ease-out"
+                style={{ width: `${progressPct ?? 0}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Last-run summary bar */}
         {lastRun && (
           <div className="flex items-center gap-2 rounded-lg border border-[var(--tt-outline)] bg-[var(--tt-surface-base)] px-3 py-2">
