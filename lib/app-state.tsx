@@ -57,6 +57,11 @@ export type DialogId =
   | "kb"
   | "upload"
   | "package"
+  | "defect"
+  | "retrieval"
+  | "chat"
+  | "credentials"
+  | "e2e"
   | "about"
   | "viewlog"
   | null;

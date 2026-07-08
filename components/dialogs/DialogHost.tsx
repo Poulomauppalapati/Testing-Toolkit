@@ -6,6 +6,8 @@ import { GenerateDialog } from "./GenerateDialog";
 import { ProjectKbDialog } from "./ProjectKbDialog";
 import { UploadDialog } from "./UploadDialog";
 import { PackageDialog } from "./PackageDialog";
+import { DefectDialog } from "./DefectDialog";
+import { RetrievalDialog } from "./RetrievalDialog";
 import { AboutDialog } from "./AboutDialog";
 import { ViewLogDialog } from "./ViewLogDialog";
 
@@ -23,6 +25,10 @@ export function DialogHost() {
       return <UploadDialog onClose={closeDialog} />;
     case "package":
       return <PackageDialog onClose={closeDialog} />;
+    case "defect":
+      return <DefectDialog onClose={closeDialog} />;
+    case "retrieval":
+      return <RetrievalDialog onClose={closeDialog} />;
     case "about":
       return <AboutDialog onClose={closeDialog} />;
     case "viewlog":

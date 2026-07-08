@@ -56,6 +56,7 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
   const [testCategory, setTestCategory] = useState("");
   const [inherit, setInherit] = useState(true);
   const [fastModel, setFastModel] = useState(false);
+  const [testData, setTestData] = useState(true);
 
   // Files attached to a regeneration. Their extracted text is folded into the
   // feedback prompt at regen time (see run()). Persisted at dialog scope so it
@@ -155,6 +156,7 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
           regen_feedback: isRegen ? regenFeedback : "",
           base_payload: isRegen ? result?.payload ?? null : null,
           fast_model: fastModel,
+          test_data: testData,
         },
         handlers
       );
@@ -281,6 +283,19 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
             />
             Fast model
           </label>
+          <label
+            className="flex items-center gap-1.5 px-1 text-xs text-[var(--tt-text-secondary)]"
+            title="Append pattern-based positive/negative test data to data-entry steps"
+          >
+            <input
+              type="checkbox"
+              className="tt-check"
+              checked={testData}
+              onChange={(e) => setTestData(e.target.checked)}
+              disabled={busy}
+            />
+            Test data
+          </label>
           <button
             className="tt-btn-ghost"
             onClick={storeExcel}
@@ -395,6 +410,50 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
               },
             ]}
           />
+        )}
+
+        {/* Quality + coverage summary (fresh runs only). */}
+        {result && (result.quality || result.coverage) && (
+          <div className="flex flex-wrap gap-2 text-xs">
+            {result.quality && (
+              <span
+                className="rounded-md border px-2.5 py-1"
+                style={{
+                  borderColor:
+                    result.quality.avg_score >= 60
+                      ? "var(--tt-success)"
+                      : "var(--tt-warn)",
+                  color:
+                    result.quality.avg_score >= 60
+                      ? "var(--tt-success-hover)"
+                      : "var(--tt-warn)",
+                }}
+              >
+                Quality {Math.round(result.quality.avg_score)}/100
+                {result.quality.below_threshold > 0 &&
+                  ` · ${result.quality.below_threshold} below threshold`}
+              </span>
+            )}
+            {result.coverage && (
+              <span
+                className="rounded-md border px-2.5 py-1"
+                style={{
+                  borderColor:
+                    result.coverage.uncovered === 0
+                      ? "var(--tt-success)"
+                      : "var(--tt-warn)",
+                  color:
+                    result.coverage.uncovered === 0
+                      ? "var(--tt-success-hover)"
+                      : "var(--tt-warn)",
+                }}
+              >
+                Coverage {result.coverage.covered}/
+                {result.coverage.total_work_items} (
+                {Math.round(result.coverage.coverage_pct)}%)
+              </span>
+            )}
+          </div>
         )}
 
         {mode === "manual" ? (

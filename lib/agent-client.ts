@@ -266,6 +266,15 @@ export interface GenerationResult {
   n_stories: number;
   xlsx_path: string;
   xlsx_name: string;
+  /** Rule-based quality summary (desktop parity). Present on fresh runs. */
+  quality?: { avg_score: number; below_threshold: number };
+  /** Requirements traceability coverage summary. Present on fresh runs. */
+  coverage?: {
+    total_work_items: number;
+    covered: number;
+    uncovered: number;
+    coverage_pct: number;
+  };
 }
 
 export interface ParsedDefect {
@@ -531,7 +540,7 @@ export const agent = {
   },
 
   /** Persist guided-tour completion server-side (survives a localStorage wipe).
-   * Older agents without this route 404 — callers should ignore that. */
+   * Older agents without this route 404 ��� callers should ignore that. */
   async setTourCompleted(completed: boolean): Promise<void> {
     await agentFetch("/settings/tour", {
       method: "POST",
@@ -872,6 +881,7 @@ export const agent = {
       regen_feedback?: string;
       base_payload?: Record<string, unknown> | null;
       fast_model?: boolean;
+      test_data?: boolean;
     },
     handlers: JobHandlers = {}
   ): Promise<GenerationResult> {
@@ -886,6 +896,7 @@ export const agent = {
         regen_feedback: payload.regen_feedback ?? "",
         base_payload: payload.base_payload ?? null,
         fast_model: payload.fast_model ?? false,
+        test_data: payload.test_data ?? true,
       }),
     });
     const snap = await pollJob(job_id, handlers);

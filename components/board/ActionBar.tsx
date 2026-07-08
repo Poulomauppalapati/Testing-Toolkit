@@ -49,6 +49,22 @@ export function ActionBar() {
       >
         Upload to ADO
       </button>
+      <button
+        className="tt-btn-primary !px-4 !py-1.5 text-sm"
+        disabled={!currentProject}
+        title="Parse defect documents and create Bug work items in ADO"
+        onClick={() => openDialog("defect")}
+      >
+        Defect Upload
+      </button>
+      <button
+        className="tt-btn-ghost !px-4 !py-1.5 text-sm"
+        disabled={!currentProject}
+        title="Preview which KB chunks the retriever would supply for a story (no API call)"
+        onClick={() => openDialog("retrieval")}
+      >
+        Retrieval Preview
+      </button>
 
       <div className="flex-1" />
 

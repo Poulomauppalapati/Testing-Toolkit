@@ -15,6 +15,7 @@ Long runs report progress + live logs via the shared JobManager.
 from __future__ import annotations
 
 import asyncio
+import json as _json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -188,6 +189,10 @@ class StartRequest(BaseModel):
     regen_feedback: str = ""
     base_payload: dict[str, Any] | None = None
     fast_model: bool = False
+    # Post-processing (desktop parity): pattern-based test-data suggestions
+    # appended to data-entry steps. Quality scoring + traceability coverage
+    # are always logged and written to the JSON sidecar.
+    test_data: bool = True
 
 
 def _board_token(board: str) -> str:
@@ -210,12 +215,15 @@ async def _run_generate(job: Job, req: StartRequest) -> None:
     from ado.testcase_creator import normalize_payload, validate_payload
     from core.settings_store import build_llm_client, model_pair
     from testgen.gen_cache import GenCache
+    from testgen.quality_scorer import score_payload
     from testgen.rlm import (
         StopRequested,
         build_work_item_dump,
         generate_test_cases_rlm_async,
     )
+    from testgen.test_data import enrich_payload
     from testgen.testcase_excel import payload_to_xlsx
+    from testgen.traceability import build_traceability
 
     try:
         paths = ps.ProjectPaths.for_name(req.project)
@@ -305,6 +313,67 @@ async def _run_generate(job: Job, req: StartRequest) -> None:
                 )
             payload = result.payload
 
+        # -- Post-processing (desktop parity) --------------------------------
+        # 1) Test-data suggestions: enrich_payload reads a flat payload["steps"]
+        #    list, but our payload is nested stories[].test_cases[].steps, so
+        #    apply it per test case.
+        if req.test_data:
+            n_enriched = 0
+            for story in payload.get("stories") or []:
+                for tc in story.get("test_cases") or []:
+                    enrich_payload(tc)
+                    if any("test_data" in s for s in tc.get("steps") or []):
+                        n_enriched += 1
+            if n_enriched:
+                job.log(
+                    f"[INFO] Test data suggestions added to {n_enriched} "
+                    "test case(s)."
+                )
+
+        # 2) Quality score summary (flatten test cases for the scorer).
+        flat_tcs = [
+            tc
+            for story in (payload.get("stories") or [])
+            for tc in (story.get("test_cases") or [])
+        ]
+        quality = score_payload({"test_cases": flat_tcs})
+        job.log(
+            f"[INFO] Quality: avg score {quality.avg_score:.0f}/100, "
+            f"{quality.below_threshold} TC(s) below threshold."
+        )
+        for tc, qs in zip(flat_tcs, quality.scores):
+            if qs.overall < 60:
+                job.log(
+                    f"[WARN] Low quality: \"{tc.get('title', 'Untitled')}\" "
+                    f"(score {qs.overall})."
+                )
+
+        # 3) Traceability coverage. build_traceability keys off work_item_id;
+        #    our stories carry parent_work_item_id, so expose both.
+        trace_payload = {
+            "stories": [
+                {
+                    "work_item_id": s.get("work_item_id")
+                    or s.get("parent_work_item_id", ""),
+                    "title": s.get("title", ""),
+                    "test_cases": s.get("test_cases") or [],
+                }
+                for s in (payload.get("stories") or [])
+            ]
+        }
+        matrix = build_traceability(trace_payload)
+        summ = matrix.summary
+        job.log(
+            f"[INFO] Coverage: {summ['covered']}/{summ['total_work_items']} "
+            f"work item(s) covered ({summ['coverage_pct']:.0f}%)."
+        )
+        for item in matrix.items:
+            if item.coverage_status == "uncovered":
+                job.log(
+                    f"[WARN] Uncovered: WI-{item.work_item_id} "
+                    f"\"{item.work_item_title}\"."
+                )
+
         # Write the reviewer Excel into the project's generated/ folder.
         # Name: review_<phase>_<board>_<YYYYMMDD_HHMMSS>.xlsx  (board optional)
         # so the web Outputs tab can show "Board Name - timestamp" and offer
@@ -321,6 +390,50 @@ async def _run_generate(job: Job, req: StartRequest) -> None:
         xlsx_path = paths.generated_dir / fname
         await asyncio.to_thread(payload_to_xlsx, payload, xlsx_path)
 
+        # JSON sidecar next to the xlsx: flat test cases (for the E2E runner)
+        # plus traceability + quality summaries. Best-effort; never fatal.
+        try:
+            flat_for_sidecar = [
+                {
+                    "id": str(
+                        story.get("work_item_id")
+                        or story.get("parent_work_item_id", "")
+                    ),
+                    "title": tc.get("title", "Untitled"),
+                    "steps": tc.get("steps", []),
+                    "category": tc.get("category", ""),
+                    "priority": tc.get("priority", ""),
+                }
+                for story in (payload.get("stories") or [])
+                for tc in (story.get("test_cases") or [])
+            ]
+            sidecar = {
+                "test_cases": flat_for_sidecar,
+                "traceability": {
+                    "summary": matrix.summary,
+                    "items": [
+                        {
+                            "work_item_id": it.work_item_id,
+                            "title": it.work_item_title,
+                            "test_case_ids": it.test_case_ids,
+                            "status": it.coverage_status,
+                        }
+                        for it in matrix.items
+                    ],
+                },
+                "quality": {
+                    "avg_score": quality.avg_score,
+                    "below_threshold": quality.below_threshold,
+                },
+            }
+            await asyncio.to_thread(
+                xlsx_path.with_suffix(".json").write_text,
+                _json.dumps(sidecar, indent=2),
+                "utf-8",
+            )
+        except Exception as e:  # noqa: BLE001
+            job.log(f"[WARN] Could not write JSON sidecar: {e}")
+
         n_tcs = sum(
             len(s.get("test_cases") or [])
             for s in (payload.get("stories") or [])
@@ -331,6 +444,11 @@ async def _run_generate(job: Job, req: StartRequest) -> None:
             "n_stories": len(payload.get("stories") or []),
             "xlsx_path": str(xlsx_path),
             "xlsx_name": xlsx_path.name,
+            "quality": {
+                "avg_score": quality.avg_score,
+                "below_threshold": quality.below_threshold,
+            },
+            "coverage": matrix.summary,
         })
         job.log(f"[SUCCESS] Ready for review: {n_tcs} test case(s).")
     except StopRequested:
