@@ -818,6 +818,22 @@ export const agent = {
     };
   },
 
+  // Add a tag to a work item (ADO only; JIRA labeling is not wired). Returns
+  // the normalized tag on success; throws for JIRA projects or on failure.
+  async tagWorkItem(
+    project: string,
+    wiId: WiId,
+    tag: string
+  ): Promise<{ ok: boolean; wi_id: WiId; tag: string }> {
+    return agentFetch<{ ok: boolean; wi_id: WiId; tag: string }>(
+      "/sources/tag",
+      {
+        method: "POST",
+        body: JSON.stringify({ project, wi_id: String(wiId), tag }),
+      }
+    );
+  },
+
   // -- KB --
   async kbStatus(project: string): Promise<KbStatus> {
     return agentFetch<KbStatus>(`/kb/status/${encodeURIComponent(project)}`);

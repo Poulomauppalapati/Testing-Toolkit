@@ -8,10 +8,12 @@ web frontend.
 
 from __future__ import annotations
 
+import asyncio
+import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -148,6 +150,98 @@ async def list_work_items(req: WorkItemsRequest) -> dict[str, Any]:
     }
 
 
+def _serialize_row(r) -> dict[str, Any]:
+    return {
+        "wi_id": r.wi_id,
+        "title": r.title,
+        "wi_type": r.wi_type,
+        "state": r.state,
+        "board_column": r.board_column,
+        "board_lane": r.board_lane,
+        "assigned_to": r.assigned_to,
+        "tags": list(r.tags),
+        "iteration_path": r.iteration_path,
+        "iteration_leaf": r.iteration_leaf,
+        "area_path": r.area_path,
+    }
+
+
+@router.post("/workitems/stream")
+async def list_work_items_stream(req: WorkItemsRequest) -> StreamingResponse:
+    """Progressive board load over SSE. Emits `columns` first (skeleton), then
+    incremental `batch` events as rows arrive, then a final `done` event. The
+    frontend can render lanes immediately and fill them as data streams in;
+    falls back cleanly to POST /workitems for older clients."""
+    from ado.boards import Board, load_board_view_streaming
+
+    cfg, org = _cfg_or_400(req.project)
+    board = Board(
+        id=req.board_id,
+        name=req.board_name,
+        team_id=req.team_id,
+        team_name=req.team_name,
+    )
+
+    # Bridge the producer's synchronous on_batch callback (called from within
+    # the running loop) to the SSE consumer via an unbounded queue. A sentinel
+    # (None) signals completion or error.
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def _on_batch(rows: list, sofar: int, total: int) -> None:
+        # sofar == -1 signals "columns ready, rows incoming" (no rows yet). The
+        # authoritative column list only exists on the returned view, so we emit
+        # a lightweight `start` cue here and send columns in the `done` event.
+        if sofar == -1:
+            queue.put_nowait({"type": "start"})
+            return
+        queue.put_nowait(
+            {
+                "type": "batch",
+                "items": [_serialize_row(r) for r in rows],
+                "sofar": sofar,
+                "total": total,
+            }
+        )
+
+    async def _produce() -> None:
+        try:
+            view = await load_board_view_streaming(
+                org, req.project, board, cfg, on_batch=_on_batch
+            )
+            queue.put_nowait(
+                {
+                    "type": "done",
+                    "columns": [c.name for c in view.columns],
+                    "total": len(view.rows),
+                }
+            )
+        except Exception as e:  # noqa: BLE001
+            queue.put_nowait({"type": "error", "message": str(e)})
+        finally:
+            queue.put_nowait(None)
+
+    async def _gen():
+        task = asyncio.create_task(_produce())
+        try:
+            while True:
+                evt = await queue.get()
+                if evt is None:
+                    break
+                yield f"data: {json.dumps(evt)}\n\n"
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/workitem/{project}/{wi_id}")
 async def work_item_detail(project: str, wi_id: int) -> dict[str, Any]:
     """Fetch full detail for a single work item."""
@@ -189,6 +283,34 @@ async def work_item_detail(project: str, wi_id: int) -> dict[str, Any]:
             {"name": name, "wi_id": rid, "url": url} for name, rid, url in d.related
         ],
     }
+
+
+class TagRequest(BaseModel):
+    project: str
+    wi_id: int
+    tag: str
+
+
+@router.post("/tag")
+async def tag_work_item_route(req: TagRequest) -> dict[str, Any]:
+    """Add a tag to an ADO work item (idempotent, case-insensitive dedupe)."""
+    from ado.boards import tag_work_item
+
+    tag = (req.tag or "").strip()
+    if not tag:
+        raise HTTPException(400, "tag must not be empty")
+
+    cfg, org = _cfg_or_400(req.project)
+    try:
+        ok = await tag_work_item(
+            org, req.project, req.wi_id, tag, cfg.pat,
+            ssl_ctx=cfg.build_ssl(),
+        )
+    except Exception as e:
+        raise HTTPException(502, str(e))
+    if not ok:
+        raise HTTPException(502, f"Failed to tag work item {req.wi_id}")
+    return {"ok": True, "wi_id": req.wi_id, "tag": tag}
 
 
 @router.get("/blob")

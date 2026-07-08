@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import ssl as _ssl
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from typing import Any, Callable, Final
 
@@ -499,6 +500,291 @@ class AnthropicClient:
 
     def verify(self, model: str) -> tuple[bool, str]:
         return asyncio.run(self.verify_async(model))
+
+    def stream_message(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        system: str = "",
+        max_tokens: int = 8192,
+        temperature: float = 0.7,
+    ) -> Generator[str, None, None]:
+        """Synchronous streaming completion. Yields text delta strings as
+        they arrive from the SSE stream. Blocks the calling thread until
+        the stream is exhausted or an error occurs.
+
+        messages: list of {role, content} dicts (content may be a string
+        or a list of content blocks for multi-modal input).
+        """
+        if not self.api_key.strip():
+            raise AnthropicAuthError(
+                "No LLM API key configured. Open Settings to add one."
+            )
+
+        # --- Input pre-filter (layer 1 guardrail) ---
+        # Check the last user message; if obviously off-topic, refuse
+        # without spending tokens on an API call.
+        if messages:
+            last_msg = messages[-1]
+            if last_msg.get("role") == "user":
+                last_content = last_msg.get("content", "")
+                if isinstance(last_content, list):
+                    text_parts = [
+                        b.get("text", "")
+                        for b in last_content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    ]
+                    last_text = " ".join(text_parts)
+                else:
+                    last_text = str(last_content)
+                try:
+                    from core.guardrails import check_input_guardrail
+                    refusal = check_input_guardrail(last_text)
+                except Exception:
+                    refusal = None
+                if refusal is not None:
+                    yield refusal
+                    return
+
+        body: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": float(temperature),
+            "messages": messages,
+            "stream": True,
+        }
+        if system.strip():
+            body["system"] = system + _GUARDRAIL_SUFFIX
+        else:
+            body["system"] = _GUARDRAIL_SUFFIX.lstrip()
+
+        headers = self._headers()
+        headers["accept"] = "text/event-stream"
+
+        with httpx.Client(
+            headers=headers,
+            verify=self.ssl_verify,
+            timeout=httpx.Timeout(self.timeout_sec, read=300.0),
+        ) as client:
+            try:
+                stream_ctx = client.stream("POST", self._url(), json=body)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                self._report_nw_failure()
+                raise AnthropicConnectionError(
+                    f"Cannot reach {self._url()}: {e!r}"
+                ) from e
+            except (_ssl.SSLError, _ssl.SSLCertVerificationError) as e:
+                self._report_nw_failure()
+                raise AnthropicConnectionError(
+                    f"TLS error: {e!r}. Try Rebuild TLS in Settings."
+                ) from e
+            with stream_ctx as resp:
+                if resp.status_code in (401, 403):
+                    resp.read()
+                    self._report_nw_failure()
+                    raise AnthropicAuthError(
+                        f"HTTP {resp.status_code}: API key rejected."
+                    )
+                if resp.status_code != 200:
+                    resp.read()
+                    self._report_nw_failure()
+                    detail = ""
+                    try:
+                        data = resp.json()
+                        detail = (
+                            data.get("error", {}).get("message", "")
+                            or resp.text[:400]
+                        )
+                    except Exception:
+                        detail = resp.text[:400]
+                    raise AnthropicAPIError(
+                        f"HTTP {resp.status_code}: {detail}"
+                    )
+
+                self._report_nw_success()
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        payload = line[6:]
+                        if payload.strip() == "[DONE]":
+                            break
+                        try:
+                            event = json.loads(payload)
+                        except Exception:
+                            continue
+                        etype = event.get("type", "")
+                        if etype == "content_block_delta":
+                            delta = event.get("delta", {})
+                            if delta.get("type") == "text_delta":
+                                text = delta.get("text", "")
+                                if text:
+                                    yield text
+                        elif etype == "message_stop":
+                            break
+                        elif etype == "error":
+                            err_msg = (
+                                event.get("error", {}).get("message", "")
+                                or "Stream error"
+                            )
+                            raise AnthropicAPIError(
+                                f"Stream error: {err_msg}"
+                            )
+
+    def stream_message_with_tools(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        system: str = "",
+        tools: list[dict[str, Any]] | None = None,
+        max_tokens: int = 8192,
+        temperature: float = 0.7,
+        on_text_delta: Callable[[str], None] | None = None,
+    ) -> "StreamResult":
+        """Synchronous streaming completion with tool_use support.
+
+        Returns a StreamResult containing content blocks (text and/or
+        tool_use). The caller implements the agentic loop:
+          1. Call this method.
+          2. If result has tool_use blocks, execute them, build
+             tool_result messages, append to messages, call again.
+          3. Repeat until result has no tool_use blocks (text-only).
+
+        If on_text_delta is provided, it is called with each text chunk
+        as it arrives (for live UI streaming).
+        """
+        if not self.api_key.strip():
+            raise AnthropicAuthError(
+                "No LLM API key configured. Open Settings to add one."
+            )
+
+        body: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": float(temperature),
+            "messages": messages,
+            "stream": True,
+        }
+        if system.strip():
+            body["system"] = system + _GUARDRAIL_SUFFIX
+        else:
+            body["system"] = _GUARDRAIL_SUFFIX.lstrip()
+        if tools:
+            body["tools"] = tools
+
+        headers = self._headers()
+        headers["accept"] = "text/event-stream"
+
+        content_blocks: list[dict[str, Any]] = []
+        current_block: dict[str, Any] | None = None
+        text_accum = ""
+        tool_input_json = ""
+        stop_reason = ""
+
+        with httpx.Client(
+            headers=headers,
+            verify=self.ssl_verify,
+            timeout=httpx.Timeout(self.timeout_sec, read=300.0),
+        ) as client:
+            with client.stream("POST", self._url(), json=body) as resp:
+                if resp.status_code in (401, 403):
+                    resp.read()
+                    self._report_nw_failure()
+                    raise AnthropicAuthError(
+                        f"HTTP {resp.status_code}: API key rejected."
+                    )
+                if resp.status_code != 200:
+                    resp.read()
+                    self._report_nw_failure()
+                    detail = ""
+                    try:
+                        data = resp.json()
+                        detail = (
+                            data.get("error", {}).get("message", "")
+                            or resp.text[:400]
+                        )
+                    except Exception:
+                        detail = resp.text[:400]
+                    raise AnthropicAPIError(
+                        f"HTTP {resp.status_code}: {detail}"
+                    )
+
+                self._report_nw_success()
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload.strip() == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(payload)
+                    except Exception:
+                        continue
+                    etype = event.get("type", "")
+
+                    if etype == "content_block_start":
+                        cb = event.get("content_block", {})
+                        cb_type = cb.get("type", "")
+                        if cb_type == "text":
+                            current_block = {"type": "text", "text": ""}
+                            text_accum = ""
+                        elif cb_type == "tool_use":
+                            current_block = {
+                                "type": "tool_use",
+                                "id": cb.get("id", ""),
+                                "name": cb.get("name", ""),
+                                "input": {},
+                            }
+                            tool_input_json = ""
+
+                    elif etype == "content_block_delta":
+                        delta = event.get("delta", {})
+                        dtype = delta.get("type", "")
+                        if dtype == "text_delta" and current_block:
+                            chunk = delta.get("text", "")
+                            text_accum += chunk
+                            if on_text_delta and chunk:
+                                on_text_delta(chunk)
+                        elif dtype == "input_json_delta" and current_block:
+                            tool_input_json += delta.get(
+                                "partial_json", ""
+                            )
+
+                    elif etype == "content_block_stop":
+                        if current_block:
+                            if current_block["type"] == "text":
+                                current_block["text"] = text_accum
+                            elif current_block["type"] == "tool_use":
+                                try:
+                                    current_block["input"] = json.loads(
+                                        tool_input_json
+                                    ) if tool_input_json else {}
+                                except json.JSONDecodeError:
+                                    current_block["input"] = {}
+                            content_blocks.append(current_block)
+                            current_block = None
+
+                    elif etype == "message_delta":
+                        delta = event.get("delta", {})
+                        stop_reason = delta.get("stop_reason", stop_reason)
+
+                    elif etype == "message_stop":
+                        break
+                    elif etype == "error":
+                        err_msg = (
+                            event.get("error", {}).get("message", "")
+                            or "Stream error"
+                        )
+                        raise AnthropicAPIError(
+                            f"Stream error: {err_msg}"
+                        )
+
+        return StreamResult(
+            content=content_blocks,
+            stop_reason=stop_reason,
+        )
 
     async def stream_message_with_tools_async(
         self,

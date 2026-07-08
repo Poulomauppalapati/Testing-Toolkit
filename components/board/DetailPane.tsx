@@ -31,6 +31,8 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
   const [mode, setMode] = useState<"detail" | "outputs">("detail");
   const [detail, setDetail] = useState<WorkItemDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [tagDraft, setTagDraft] = useState("");
+  const [tagging, setTagging] = useState(false);
 
   useEffect(() => {
     if (activeWiId == null || !currentProject) {
@@ -78,6 +80,34 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
     window.open(url, "_blank", "noopener");
   };
 
+  // Tagging is ADO-only (numeric work-item id). JIRA issues use string keys and
+  // are not taggable through this facade.
+  const canTag = detail != null && typeof detail.wi_id === "number";
+
+  const addTag = async () => {
+    const tag = tagDraft.trim();
+    if (!detail || !currentProject || !tag || tagging) return;
+    setTagging(true);
+    try {
+      await agent.tagWorkItem(currentProject, detail.wi_id, tag);
+      // Optimistic, case-insensitive local update so the UI reflects the add
+      // without a full refetch.
+      setDetail((prev) => {
+        if (!prev) return prev;
+        const exists = (prev.tags ?? []).some(
+          (t) => t.toLowerCase() === tag.toLowerCase()
+        );
+        return exists ? prev : { ...prev, tags: [...(prev.tags ?? []), tag] };
+      });
+      setTagDraft("");
+      pushLog("SUCCESS", `Tagged #${detail.wi_id} with "${tag}"`);
+    } catch (e) {
+      pushLog("ERROR", `Tag failed: ${(e as Error).message}`);
+    } finally {
+      setTagging(false);
+    }
+  };
+
   // Tabs: selected tab is gray/inset (not bright blue).
   const tabStyle = (active: boolean): React.CSSProperties =>
     active
@@ -117,6 +147,11 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
             loading={loading}
             detail={detail}
             hasItem={activeWiId != null}
+            canTag={canTag}
+            tagDraft={tagDraft}
+            setTagDraft={setTagDraft}
+            tagging={tagging}
+            addTag={addTag}
           />
         ) : (
           <OutputsContent
@@ -140,10 +175,20 @@ function DetailContent({
   loading,
   detail,
   hasItem,
+  canTag,
+  tagDraft,
+  setTagDraft,
+  tagging,
+  addTag,
 }: {
   loading: boolean;
   detail: WorkItemDetail | null;
   hasItem: boolean;
+  canTag: boolean;
+  tagDraft: string;
+  setTagDraft: (v: string) => void;
+  tagging: boolean;
+  addTag: () => void;
 }) {
   if (!hasItem)
     return (
@@ -189,6 +234,37 @@ function DetailContent({
           <span>
             Tags: {detail.tags && detail.tags.length ? detail.tags.join(", ") : "—"}
           </span>
+          {canTag && (
+            <div className="mt-1 flex items-center gap-1.5">
+              <input
+                type="text"
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    !e.nativeEvent.isComposing &&
+                    e.keyCode !== 229
+                  ) {
+                    e.preventDefault();
+                    void addTag();
+                  }
+                }}
+                placeholder="Add a tag…"
+                aria-label="Add a tag to this work item"
+                disabled={tagging}
+                className="w-36 rounded-md border border-[var(--tt-outline)] bg-[var(--tt-surface-high)] px-2 py-0.5 text-xs text-[var(--tt-text-primary)] outline-none focus:border-[var(--tt-primary)]"
+              />
+              <button
+                type="button"
+                onClick={() => void addTag()}
+                disabled={tagging || !tagDraft.trim()}
+                className="tt-btn rounded-md border border-[var(--tt-outline)] px-2 py-0.5 text-xs disabled:opacity-50"
+              >
+                {tagging ? "Adding…" : "Add tag"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

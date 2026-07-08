@@ -194,3 +194,27 @@ async def work_item_detail(project: str, wi_id: str) -> dict[str, Any]:
     except ValueError:
         raise HTTPException(400, f"Invalid ADO work item id: {wi_id}")
     return await _ado_detail(bare, wid_int)
+
+
+class TagRequest(BaseModel):
+    project: str
+    wi_id: str
+    tag: str
+
+
+@router.post("/tag")
+async def tag_work_item(req: TagRequest) -> dict[str, Any]:
+    """Tag a work item. ADO-only (JIRA labeling not wired). JIRA projects
+    return 400 so the UI can hide the action for that source."""
+    bare, _ = strip_source_suffix(req.project)
+    if _source_of(req.project) is SourceType.JIRA:
+        raise HTTPException(400, "Tagging is only supported for ADO work items")
+    from agent.routes.ado import TagRequest as AReq, tag_work_item_route
+
+    try:
+        wid_int = int(req.wi_id)
+    except ValueError:
+        raise HTTPException(400, f"Invalid ADO work item id: {req.wi_id}")
+    return await tag_work_item_route(
+        AReq(project=bare, wi_id=wid_int, tag=req.tag)
+    )
