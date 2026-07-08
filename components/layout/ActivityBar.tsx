@@ -10,21 +10,31 @@ import {
   RefreshCw,
   type LucideIcon,
 } from "lucide-react";
-import { useAppState } from "@/lib/app-state";
+import { useAppState, type KbState } from "@/lib/app-state";
 import { Dropdown } from "@/components/ui/dropdown";
 import { agent } from "@/lib/agent-client";
 import { useAppUpdate } from "@/lib/use-app-update";
+
+const KB_BADGE: Record<KbState, string | undefined> = {
+  none: "var(--tt-danger)",
+  indexing: "var(--tt-warn)",
+  ready: "var(--tt-success)",
+  error: "var(--tt-danger)",
+};
 
 function RailButton({
   icon: Icon,
   label,
   onClick,
   disabled,
+  badge,
 }: {
   icon: LucideIcon;
   label: string;
   onClick?: () => void;
   disabled?: boolean;
+  /** Optional badge color for the indicator dot. */
+  badge?: string;
 }) {
   return (
     <button
@@ -32,9 +42,16 @@ function RailButton({
       title={label}
       aria-label={label}
       disabled={disabled}
-      className="tt-btn-ghost h-8 w-8 shrink-0 !rounded-lg !border-transparent !p-0 disabled:opacity-40"
+      className="group relative h-8 w-8 shrink-0 rounded-lg border border-transparent p-0 text-[var(--tt-text-muted)] transition-all duration-150 hover:border-[var(--tt-primary)] hover:bg-[var(--tt-surface-container)] hover:text-[var(--tt-text-primary)] hover:shadow-[0_0_0_2px_rgba(91,168,255,0.18)] disabled:pointer-events-none disabled:opacity-40 flex items-center justify-center"
     >
       <Icon className="h-[18px] w-[18px]" strokeWidth={2} />
+      {badge && (
+        <span
+          className="absolute right-1 top-1 h-2 w-2 rounded-full border border-[var(--tt-surface-deepest)]"
+          style={{ background: badge }}
+          aria-hidden
+        />
+      )}
     </button>
   );
 }
@@ -46,6 +63,7 @@ export function ActivityBar() {
     currentProject,
     pushLog,
     setLogVisible,
+    kbState,
   } = useAppState();
 
   const { apply: applyUpdate, busy: updateBusy } = useAppUpdate(pushLog);
@@ -70,10 +88,10 @@ export function ActivityBar() {
       {/* Update app — topmost, refresh logo only */}
       <button
         onClick={onUpdateClick}
-        title="Update app"
-        aria-label="Update app"
+        title="Check for updates"
+        aria-label="Check for updates"
         disabled={updateBusy}
-        className="tt-btn-ghost h-8 w-8 shrink-0 !rounded-lg !border-transparent !p-0 disabled:opacity-40"
+        className="group relative h-8 w-8 shrink-0 rounded-lg border border-transparent p-0 text-[var(--tt-text-muted)] transition-all duration-150 hover:border-[var(--tt-primary)] hover:bg-[var(--tt-surface-container)] hover:text-[var(--tt-text-primary)] hover:shadow-[0_0_0_2px_rgba(91,168,255,0.18)] disabled:pointer-events-none disabled:opacity-40 flex items-center justify-center"
       >
         <RefreshCw
           className={`h-[18px] w-[18px] ${updateBusy ? "animate-spin" : ""}`}
@@ -112,6 +130,7 @@ export function ActivityBar() {
         label="Project KB"
         onClick={() => openDialog("kb")}
         disabled={!currentProject}
+        badge={currentProject ? KB_BADGE[kbState] : undefined}
       />
       <RailButton
         icon={ChevronRight}

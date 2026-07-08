@@ -286,11 +286,30 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
       footer={footer}
     >
       <div className="flex flex-col gap-4">
+        {/* Last-run summary bar */}
         {lastRun && (
-          <p className="text-xs text-[var(--tt-text-muted)]">
-            Last run: {lastRun.passed} passed, {lastRun.failed} failed,{" "}
-            {lastRun.skipped} skipped
-          </p>
+          <div className="flex items-center gap-2 rounded-lg border border-[var(--tt-outline)] bg-[var(--tt-surface-base)] px-3 py-2">
+            <span className="text-xs font-semibold text-[var(--tt-text-muted)]">Last run:</span>
+            <span className="tt-badge tt-badge-success">
+              <CheckCircle2 className="h-3 w-3" />
+              {lastRun.passed} passed
+            </span>
+            {lastRun.failed > 0 && (
+              <span className="tt-badge tt-badge-danger">
+                <XCircle className="h-3 w-3" />
+                {lastRun.failed} failed
+              </span>
+            )}
+            {lastRun.skipped > 0 && (
+              <span className="tt-badge tt-badge-neutral">
+                <MinusCircle className="h-3 w-3" />
+                {lastRun.skipped} skipped
+              </span>
+            )}
+            <span className="ml-auto text-[10px] text-[var(--tt-text-faint)]">
+              {new Date(lastRun.finished_at * 1000).toLocaleString()}
+            </span>
+          </div>
         )}
 
         {error && (
@@ -362,6 +381,19 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
                 <ul className="divide-y divide-[var(--tt-outline)]">
                   {testCases.map((tc) => {
                     const st = rowStatus[String(tc.index)] || "pending";
+                    // Look up last-run result for this TC by title
+                    const lastTc = lastRun?.results.find(
+                      (r) => r.tc_title === tc.title
+                    );
+                    const lastStatus = lastTc?.status;
+                    const lastBadgeClass =
+                      lastStatus === "pass"
+                        ? "tt-badge-success"
+                        : lastStatus === "fail" || lastStatus === "error"
+                          ? "tt-badge-danger"
+                          : lastStatus === "skip"
+                            ? "tt-badge-neutral"
+                            : null;
                     return (
                       <li key={tc.index}>
                         <label className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-[var(--tt-surface-high)]">
@@ -380,8 +412,13 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
                             )}
                             {tc.title}
                           </span>
+                          {lastBadgeClass && (
+                            <span className={`tt-badge ${lastBadgeClass} shrink-0`}>
+                              {lastStatus}
+                            </span>
+                          )}
                           <span className="shrink-0 text-xs text-[var(--tt-text-muted)]">
-                            {tc.step_count} step{tc.step_count === 1 ? "" : "s"}
+                            {tc.step_count}s
                           </span>
                         </label>
                       </li>
@@ -407,17 +444,36 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
                 />
               </div>
             )}
-            <div className="max-h-72 flex-1 overflow-auto bg-[var(--tt-surface-base)] p-3 font-mono text-xs leading-relaxed text-[var(--tt-text-secondary)]">
+            <div className="max-h-72 flex-1 overflow-auto bg-[var(--tt-surface-deepest)] font-mono text-xs leading-relaxed">
               {logs.length === 0 ? (
-                <p className="text-[var(--tt-text-muted)]">
+                <p className="px-3 py-3 text-[var(--tt-text-muted)]">
                   Run output will appear here.
                 </p>
               ) : (
-                logs.map((line, i) => (
-                  <div key={i} className="whitespace-pre-wrap">
-                    {line}
-                  </div>
-                ))
+                logs.map((line, i) => {
+                  const lvl = agentLogLevel(line);
+                  const color =
+                    lvl === "ERROR"
+                      ? "var(--tt-danger)"
+                      : lvl === "WARN"
+                        ? "var(--tt-warn)"
+                        : lvl === "SUCCESS"
+                          ? "var(--tt-success)"
+                          : "var(--tt-text-secondary)";
+                  return (
+                    <div
+                      key={i}
+                      className="whitespace-pre-wrap border-l-2 px-3 py-0.5"
+                      style={{
+                        color,
+                        borderLeftColor:
+                          lvl !== "INFO" ? color : "transparent",
+                      }}
+                    >
+                      {line}
+                    </div>
+                  );
+                })
               )}
               <div ref={logEndRef} />
             </div>

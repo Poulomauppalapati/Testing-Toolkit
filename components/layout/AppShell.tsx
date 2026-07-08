@@ -21,6 +21,7 @@ import { StatusBar } from "./StatusBar";
 import { BoardGrid } from "@/components/board/BoardGrid";
 import { ActionBar } from "@/components/board/ActionBar";
 import { LogPanel } from "@/components/board/LogPanel";
+import { CoverageBar } from "@/components/dashboard/CoverageBar";
 import { DialogHost } from "@/components/dialogs/DialogHost";
 
 export function AppShell() {
@@ -188,10 +189,13 @@ export function AppShell() {
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {navVisible ? <NavPanel /> : <ActivityBar />}
-        <main className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-2 py-2">
-          <BoardGrid />
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ActionBar />
-          {logVisible && <LogPanel />}
+          <CoverageBar />
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-2 py-2">
+            <BoardGrid />
+            {logVisible && <LogPanel />}
+          </div>
         </main>
       </div>
       <StatusBar />

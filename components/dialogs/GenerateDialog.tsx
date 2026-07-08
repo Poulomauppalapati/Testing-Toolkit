@@ -385,12 +385,22 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
 
         {/* Progress */}
         <div className="rounded-lg border border-[var(--tt-outline)] bg-[var(--tt-surface-base)] p-3">
-          <div className="mb-1.5 text-xs text-[var(--tt-text-secondary)]">
-            {busy
-              ? progress?.stage || `Fetching ${ids.length} work item(s)...`
-              : result
-                ? "Done."
-                : "Idle."}
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-xs text-[var(--tt-text-secondary)]">
+              {busy ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="tt-animate-pulse-dot inline-block h-2 w-2 rounded-full bg-[var(--tt-warn)]" aria-hidden />
+                  {progress?.stage || `Fetching ${ids.length} work item(s)...`}
+                </span>
+              ) : result ? (
+                <span className="text-[var(--tt-success)]">Done.</span>
+              ) : "Idle — click AI Generate to start."}
+            </span>
+            {result && (
+              <span className="tt-badge tt-badge-info tt-animate-badge-pop">
+                {result.n_test_cases} TC generated
+              </span>
+            )}
           </div>
           <div className="tt-progress">
             <div
@@ -398,6 +408,11 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
               style={{ width: `${progressPct ?? (busy ? 8 : 0)}%` }}
             />
           </div>
+          {progressPct != null && (
+            <div className="mt-1 text-right text-[10px] tabular-nums text-[var(--tt-text-muted)]">
+              {progressPct}%
+            </div>
+          )}
         </div>
 
         {/* Inline download link for the generated reviewer workbook. */}
@@ -416,45 +431,26 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
 
         {/* Quality + coverage summary (fresh runs only). */}
         {result && (result.quality || result.coverage) && (
-          <div className="flex flex-wrap gap-2 text-xs">
-            {result.quality && (
-              <span
-                className="rounded-md border px-2.5 py-1"
-                style={{
-                  borderColor:
-                    result.quality.avg_score >= 60
-                      ? "var(--tt-success)"
-                      : "var(--tt-warn)",
-                  color:
-                    result.quality.avg_score >= 60
-                      ? "var(--tt-success-hover)"
-                      : "var(--tt-warn)",
-                }}
-              >
-                Quality {Math.round(result.quality.avg_score)}/100
-                {result.quality.below_threshold > 0 &&
-                  ` · ${result.quality.below_threshold} below threshold`}
-              </span>
-            )}
-            {result.coverage && (
-              <span
-                className="rounded-md border px-2.5 py-1"
-                style={{
-                  borderColor:
-                    result.coverage.uncovered === 0
-                      ? "var(--tt-success)"
-                      : "var(--tt-warn)",
-                  color:
-                    result.coverage.uncovered === 0
-                      ? "var(--tt-success-hover)"
-                      : "var(--tt-warn)",
-                }}
-              >
-                Coverage {result.coverage.covered}/
-                {result.coverage.total_work_items} (
-                {Math.round(result.coverage.coverage_pct)}%)
-              </span>
-            )}
+          <div className="flex flex-wrap items-center gap-2">
+            {result.quality && (() => {
+              const ok = result.quality.avg_score >= 60;
+              return (
+                <span className={`tt-badge ${ok ? "tt-badge-success" : "tt-badge-warn"} !text-xs !px-3 !py-1`}>
+                  Quality {Math.round(result.quality.avg_score)}/100
+                  {result.quality.below_threshold > 0 &&
+                    ` · ${result.quality.below_threshold} below threshold`}
+                </span>
+              );
+            })()}
+            {result.coverage && (() => {
+              const ok = result.coverage.uncovered === 0;
+              return (
+                <span className={`tt-badge ${ok ? "tt-badge-success" : "tt-badge-warn"} !text-xs !px-3 !py-1`}>
+                  Coverage {result.coverage.covered}/{result.coverage.total_work_items}{" "}
+                  ({Math.round(result.coverage.coverage_pct)}%)
+                </span>
+              );
+            })()}
           </div>
         )}
 
@@ -472,17 +468,40 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
         ) : (
           <>
             {/* Generation log pane */}
-            <div className="min-h-40 max-h-72 overflow-auto rounded-lg border border-[var(--tt-outline)] bg-[var(--tt-surface-deepest)] p-3 font-mono text-xs leading-relaxed">
+            <div className="min-h-40 max-h-72 overflow-auto rounded-lg border border-[var(--tt-outline)] bg-[var(--tt-surface-deepest)] font-mono text-xs leading-relaxed">
               {runLog.length === 0 ? (
-                <p className="text-[var(--tt-text-faint)]">
+                <p className="px-3 py-3 text-[var(--tt-text-faint)]">
                   Generation log will appear here.
                 </p>
               ) : (
-                runLog.map((l, i) => (
-                  <div key={i} className="whitespace-pre-wrap text-[var(--tt-text-secondary)]">
-                    {l}
-                  </div>
-                ))
+                runLog.map((l, i) => {
+                  const lvl = agentLogLevel(l);
+                  const color =
+                    lvl === "ERROR"
+                      ? "var(--tt-danger)"
+                      : lvl === "WARN"
+                        ? "var(--tt-warn)"
+                        : lvl === "SUCCESS"
+                          ? "var(--tt-success)"
+                          : "var(--tt-text-secondary)";
+                  const border =
+                    lvl === "ERROR"
+                      ? "var(--tt-danger)"
+                      : lvl === "WARN"
+                        ? "var(--tt-warn)"
+                        : lvl === "SUCCESS"
+                          ? "var(--tt-success)"
+                          : "transparent";
+                  return (
+                    <div
+                      key={i}
+                      className="whitespace-pre-wrap border-l-2 px-3 py-0.5"
+                      style={{ color, borderLeftColor: border }}
+                    >
+                      {l}
+                    </div>
+                  );
+                })
               )}
             </div>
 

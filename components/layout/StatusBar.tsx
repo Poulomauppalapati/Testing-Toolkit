@@ -37,7 +37,7 @@ function Dot({ color, pulse }: { color: string; pulse?: boolean }) {
   );
 }
 
-/** Right-side status chip: colored dot + label. */
+/** Right-side status chip: colored pill background + dot + label. */
 function Chip({
   label,
   ok,
@@ -51,14 +51,34 @@ function Chip({
   warn?: boolean;
   pulse?: boolean;
   title?: string;
-  /** Explicit dot color; takes precedence over the ok/warn mapping. */
   color?: string;
 }) {
-  const color = colorOverride ?? (ok ? "var(--tt-success)" : warn ? "var(--tt-warn)" : "var(--tt-text-faint)");
+  const color =
+    colorOverride ??
+    (ok ? "var(--tt-success)" : warn ? "var(--tt-warn)" : "var(--tt-text-faint)");
+  // Derive a translucent background from the dot color
+  const bg = ok
+    ? "rgba(26,171,92,0.12)"
+    : warn
+      ? "rgba(245,158,11,0.12)"
+      : colorOverride === "var(--tt-success)"
+        ? "rgba(26,171,92,0.12)"
+        : colorOverride === "var(--tt-warn)"
+          ? "rgba(245,158,11,0.12)"
+          : colorOverride === "var(--tt-danger)"
+            ? "rgba(229,62,62,0.12)"
+            : "rgba(138,143,153,0.10)";
   return (
-    <span className="flex items-center gap-1.5" title={title}>
-      <Dot color={color} pulse={pulse} />
-      {label}
+    <span
+      className="flex items-center gap-1.5 rounded-md px-2 py-0.5"
+      style={{ background: bg, color }}
+      title={title}
+    >
+      <span
+        className={`tt-chip-dot${pulse ? " tt-animate-pulse-dot" : ""}`}
+        style={{ background: color }}
+      />
+      <span className="font-medium">{label}</span>
     </span>
   );
 }

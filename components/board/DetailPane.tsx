@@ -8,6 +8,13 @@ import {
   ExternalLink,
   ImageIcon,
   Link as LinkIcon,
+  Tag,
+  User,
+  Folder,
+  GitBranch,
+  Layers,
+  Cpu,
+  ExternalLink as OpenIcon,
 } from "lucide-react";
 import {
   agent,
@@ -116,16 +123,16 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
 
   return (
     <div className="tt-card flex h-full flex-col gap-2 p-2.5">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1">
         <button
-          className="rounded-md border px-3 py-1 text-xs font-medium"
+          className="rounded-md border px-3 py-1 text-xs font-semibold transition-colors"
           style={tabStyle(mode === "detail")}
           onClick={() => setMode("detail")}
         >
           Detail
         </button>
         <button
-          className="rounded-md border px-3 py-1 text-xs font-medium"
+          className="rounded-md border px-3 py-1 text-xs font-semibold transition-colors"
           style={tabStyle(mode === "outputs")}
           onClick={() => setMode("outputs")}
         >
@@ -133,11 +140,13 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
         </button>
         <div className="flex-1" />
         <button
-          className="tt-btn-ghost !px-3 !py-1 text-xs"
+          className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5"
           disabled={!detail}
           onClick={openInSource}
+          title={detail && typeof detail.wi_id === "string" ? "Open in JIRA" : "Open in ADO"}
         >
-          {detail && typeof detail.wi_id === "string" ? "Open in JIRA" : "Open in ADO"}
+          <OpenIcon className="h-3 w-3" />
+          {detail && typeof detail.wi_id === "string" ? "JIRA" : "ADO"}
         </button>
       </div>
 
@@ -213,62 +222,93 @@ function DetailContent({
       </p>
     );
 
-  // Metadata line: "User Story · State: Backlog · Column: ... · Assigned: ..."
-  const metaParts: string[] = [];
-  if (detail.wi_type) metaParts.push(detail.wi_type);
-  if (detail.state) metaParts.push(`State: ${detail.state}`);
-  if (detail.board_column) metaParts.push(`Column: ${detail.board_column}`);
-  if (detail.assigned_to) metaParts.push(`Assigned: ${detail.assigned_to}`);
+  // Derive type badge class for the header
+  const typeBadgeClass = wiTypeBadgeClassDetail(detail.wi_type);
 
   return (
     <div className="flex flex-col gap-3 text-sm">
-      {/* Title line: "var(--tt-accent-border)3 · E30" */}
-      <div className="flex flex-col gap-1.5">
-        <h3 className="text-[15px] font-bold text-[var(--tt-text-primary)]">
-          <span className="text-[var(--tt-primary)]">#{detail.wi_id}</span>
-          {detail.title ? ` · ${detail.title}` : ""}
+      {/* Title */}
+      <div className="flex flex-col gap-1">
+        <h3 className="text-base font-bold leading-snug text-[var(--tt-text-primary)] text-pretty">
+          <span className="font-mono text-sm text-[var(--tt-primary)]">#{detail.wi_id}</span>
+          {detail.title ? ` ${detail.title}` : ""}
         </h3>
-        {/* Metadata line */}
-        <div className="text-xs text-[var(--tt-text-secondary)]">{metaParts.join("  ·  ")}</div>
-        {/* Area / Iteration / Tags */}
-        <div className="flex flex-col gap-0.5 text-xs text-[var(--tt-text-muted)]">
-          <span>Area: {pathTail(detail.area_path) || "—"}</span>
-          <span>Iteration: {pathTail(detail.iteration_path) || "—"}</span>
-          <span>
-            Tags: {detail.tags && detail.tags.length ? detail.tags.join(", ") : "—"}
-          </span>
-          {canTag && (
-            <div className="mt-1 flex items-center gap-1.5">
-              <input
-                type="text"
-                value={tagDraft}
-                onChange={(e) => setTagDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.nativeEvent.isComposing &&
-                    e.keyCode !== 229
-                  ) {
-                    e.preventDefault();
-                    void addTag();
-                  }
-                }}
-                placeholder="Add a tag…"
-                aria-label="Add a tag to this work item"
-                disabled={tagging}
-                className="w-36 rounded-md border border-[var(--tt-outline)] bg-[var(--tt-surface-high)] px-2 py-0.5 text-xs text-[var(--tt-text-primary)] outline-none focus:border-[var(--tt-primary)]"
-              />
-              <button
-                type="button"
-                onClick={() => void addTag()}
-                disabled={tagging || !tagDraft.trim()}
-                className="tt-btn rounded-md border border-[var(--tt-outline)] px-2 py-0.5 text-xs disabled:opacity-50"
-              >
-                {tagging ? "Adding…" : "Add tag"}
-              </button>
-            </div>
+        {/* Type + State badges inline */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {detail.wi_type && (
+            <span className={`tt-badge ${typeBadgeClass}`}>{detail.wi_type}</span>
+          )}
+          {detail.state && (
+            <span className={`tt-badge ${wiStateBadgeClassDetail(detail.state)}`}>
+              {detail.state}
+            </span>
+          )}
+          {detail.board_column && (
+            <span className="tt-badge tt-badge-neutral">{detail.board_column}</span>
           )}
         </div>
+      </div>
+
+      {/* Property grid */}
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-[8px] border border-[var(--tt-outline-soft)] bg-[var(--tt-surface-container)] px-3 py-2 text-xs">
+        <PropRow icon={<User className="h-3 w-3" />} label="Assigned" value={detail.assigned_to || "—"} />
+        <PropRow icon={<Folder className="h-3 w-3" />} label="Area" value={pathTail(detail.area_path) || "—"} />
+        <PropRow icon={<GitBranch className="h-3 w-3" />} label="Iteration" value={pathTail(detail.iteration_path) || "—"} />
+        <PropRow icon={<Cpu className="h-3 w-3" />} label="Column" value={detail.board_column || "—"} />
+      </div>
+
+      {/* Tags row */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="flex items-center gap-1 text-xs text-[var(--tt-text-muted)]">
+          <Tag className="h-3 w-3" /> Tags:
+        </span>
+        {detail.tags && detail.tags.length > 0 ? (
+          detail.tags.map((tag) => (
+            <span
+              key={tag}
+              className="tt-badge"
+              style={{
+                background: "rgba(91,168,255,0.10)",
+                color: "var(--tt-primary)",
+              }}
+            >
+              {tag}
+            </span>
+          ))
+        ) : (
+          <span className="text-xs text-[var(--tt-text-faint)]">None</span>
+        )}
+        {canTag && (
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={tagDraft}
+              onChange={(e) => setTagDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (
+                  e.key === "Enter" &&
+                  !e.nativeEvent.isComposing &&
+                  e.keyCode !== 229
+                ) {
+                  e.preventDefault();
+                  void addTag();
+                }
+              }}
+              placeholder="Add tag…"
+              aria-label="Add a tag to this work item"
+              disabled={tagging}
+              className="w-24 rounded-md border border-[var(--tt-outline)] bg-[var(--tt-surface-high)] px-2 py-0.5 text-xs text-[var(--tt-text-primary)] outline-none focus:border-[var(--tt-primary)]"
+            />
+            <button
+              type="button"
+              onClick={() => void addTag()}
+              disabled={tagging || !tagDraft.trim()}
+              className="tt-btn !px-2 !py-0.5 !text-[10px] disabled:opacity-50"
+            >
+              {tagging ? "Adding…" : "Add"}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="border-t border-[var(--tt-outline)]" />
@@ -293,7 +333,8 @@ function DetailContent({
             >
               <div className="flex items-center gap-2">
                 <span
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--tt-outline)] text-[10px] font-bold text-[var(--tt-text-secondary)]"
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                  style={{ background: `hsl(${nameHue(who)} 55% 40%)` }}
                   aria-hidden="true"
                 >
                   {initials(who)}
@@ -351,6 +392,56 @@ function DetailContent({
         </div>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Badge helpers for DetailPane (mirrors BoardGrid helpers)
+// ---------------------------------------------------------------------------
+function wiTypeBadgeClassDetail(t: string): string {
+  const k = (t || "").toLowerCase();
+  if (k.includes("story") || k.includes("user story")) return "tt-badge-story";
+  if (k.includes("bug") || k.includes("issue")) return "tt-badge-bug";
+  if (k.includes("task")) return "tt-badge-task";
+  if (k.includes("epic")) return "tt-badge-epic";
+  if (k.includes("feature")) return "tt-badge-feature";
+  return "tt-badge-neutral";
+}
+
+function wiStateBadgeClassDetail(s: string): string {
+  const k = (s || "").toLowerCase();
+  if (k === "active" || k === "in progress" || k === "in review") return "tt-badge-success";
+  if (k === "resolved" || k === "done" || k === "closed") return "tt-badge-info";
+  if (k === "new" || k === "proposed" || k === "to do") return "tt-badge-warn";
+  if (k === "removed") return "tt-badge-danger";
+  return "tt-badge-neutral";
+}
+
+function nameHue(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) & 0xffff;
+  return h % 360;
+}
+
+function PropRow({
+  icon,
+  label,
+  value,
+}: {
+  icon: import("react").ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <>
+      <dt className="flex items-center gap-1 font-medium text-[var(--tt-text-muted)]">
+        {icon}
+        {label}
+      </dt>
+      <dd className="truncate text-[var(--tt-text-primary)]" title={value}>
+        {value}
+      </dd>
+    </>
   );
 }
 

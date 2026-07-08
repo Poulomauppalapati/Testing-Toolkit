@@ -1,13 +1,30 @@
 "use client";
 
 import { useState } from "react";
-import { HelpCircle, Settings, Brain, ChevronLeft, Sun, Moon } from "lucide-react";
+import {
+  HelpCircle,
+  Settings,
+  Brain,
+  ChevronLeft,
+  Sun,
+  Moon,
+  RefreshCw,
+  LayoutDashboard,
+  KanbanSquare,
+} from "lucide-react";
 import { useAppState } from "@/lib/app-state";
 import { useTheme } from "@/lib/theme";
 import { Dropdown } from "@/components/ui/dropdown";
 import { agent } from "@/lib/agent-client";
 import { getPreferences, setSizePref } from "@/lib/preferences";
 import { ResizeHandle } from "@/components/ui/resizer";
+
+/** Generate a deterministic hue 0-359 from a project name string. */
+function nameHue(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) & 0xffff;
+  return h % 360;
+}
 
 export function NavPanel() {
   const {
@@ -27,8 +44,6 @@ export function NavPanel() {
   } = useAppState();
 
   const { theme, toggleTheme } = useTheme();
-
-  // Free-hand width — initialised once from saved prefs, persisted on commit.
   const [width, setWidth] = useState(() => getPreferences().sizes.navWidth);
 
   async function openLogFolder() {
@@ -44,77 +59,112 @@ export function NavPanel() {
   return (
     <>
       <div
-        className="tt-rail flex shrink-0 flex-col gap-2 p-2"
+        className="tt-rail flex shrink-0 flex-col gap-3 p-2"
         style={{ width }}
       >
-        {/* Projects */}
-        <div className="flex items-center justify-between px-1">
-          <span className="text-sm font-semibold text-[var(--tt-text-secondary)]">Projects</span>
-          <button
-            className="tt-btn-ghost !px-2 !py-1 text-xs"
-            onClick={reloadProjects}
-          >
-            Refresh
-          </button>
-        </div>
-        <div className="tt-input min-h-0 flex-1 overflow-auto !p-1">
-          {projects.length === 0 ? (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              No projects. Configure ADO in Settings, then Refresh.
-            </p>
-          ) : (
-            projects.map((full) => (
-              <div
-                key={full}
-                role="button"
-                tabIndex={0}
-                data-selected={full === currentProject}
-                onClick={() => selectProject(full)}
-                onKeyDown={(e) => e.key === "Enter" && selectProject(full)}
-                className="tt-list-item truncate text-sm"
-                title={full}
-              >
-                {displayName(full)}
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Boards */}
-        <div className="flex items-center justify-between px-1">
-          <span className="text-sm font-semibold text-[var(--tt-text-secondary)]">Boards</span>
-          <button
-            className="tt-btn-ghost !px-2 !py-1 text-xs"
-            onClick={() => reloadBoards()}
-          >
-            Refresh
-          </button>
-        </div>
-        <div className="tt-input min-h-0 flex-1 overflow-auto !p-1">
-          {boards.length === 0 ? (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              {currentProject ? "No boards found." : "Select a project."}
-            </p>
-          ) : (
-            boards.map((b) => (
-              <div
-                key={b.id || b.label}
-                role="button"
-                tabIndex={0}
-                data-selected={b.label === currentBoard?.label}
-                onClick={() => selectBoard(b)}
-                onKeyDown={(e) => e.key === "Enter" && selectBoard(b)}
-                className="tt-list-item truncate text-sm"
-                title={b.label}
-              >
-                {b.team_name}
-              </div>
-            ))
-          )}
+        {/* ── Projects ───────────────────────────────────────────── */}
+        <div>
+          <div className="flex items-center justify-between px-1 pb-1.5">
+            <span className="tt-section-header">Projects</span>
+            <button
+              className="tt-btn-ghost !px-1.5 !py-0.5 !text-[10px] !gap-1"
+              onClick={reloadProjects}
+              title="Refresh project list"
+            >
+              <RefreshCw className="h-2.5 w-2.5" />
+              Refresh
+            </button>
+          </div>
+          <div className="min-h-[60px] overflow-auto rounded-[8px] border border-[var(--tt-outline-soft)] bg-[var(--tt-surface-base)] p-1">
+            {projects.length === 0 ? (
+              <p className="px-2 py-2 text-xs text-muted-foreground">
+                No projects. Configure ADO in Settings.
+              </p>
+            ) : (
+              projects.map((full) => {
+                const name = displayName(full);
+                const hue = nameHue(name);
+                const isSelected = full === currentProject;
+                return (
+                  <div
+                    key={full}
+                    role="button"
+                    tabIndex={0}
+                    data-selected={isSelected}
+                    onClick={() => selectProject(full)}
+                    onKeyDown={(e) => e.key === "Enter" && selectProject(full)}
+                    className="tt-list-item flex items-center gap-2 text-sm"
+                    title={full}
+                  >
+                    {/* Project avatar chip */}
+                    <span
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-bold text-white"
+                      style={{ background: `hsl(${hue} 65% 42%)` }}
+                      aria-hidden
+                    >
+                      {name.charAt(0).toUpperCase()}
+                    </span>
+                    <span className="truncate">{name}</span>
+                    {isSelected && (
+                      <LayoutDashboard className="ml-auto h-3 w-3 shrink-0 opacity-60" />
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
 
-        {/* Bottom buttons */}
-        <div className="flex items-center gap-1">
+        {/* ── Boards ─────────────────────────────────────────────── */}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex items-center justify-between px-1 pb-1.5">
+            <span className="tt-section-header">Boards</span>
+            <button
+              className="tt-btn-ghost !px-1.5 !py-0.5 !text-[10px] !gap-1"
+              onClick={() => reloadBoards()}
+              title="Refresh board list"
+            >
+              <RefreshCw className="h-2.5 w-2.5" />
+              Refresh
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto rounded-[8px] border border-[var(--tt-outline-soft)] bg-[var(--tt-surface-base)] p-1">
+            {boards.length === 0 ? (
+              <p className="px-2 py-2 text-xs text-muted-foreground">
+                {currentProject ? "No boards found." : "Select a project first."}
+              </p>
+            ) : (
+              boards.map((b) => {
+                const isSelected = b.label === currentBoard?.label;
+                return (
+                  <div
+                    key={b.id || b.label}
+                    role="button"
+                    tabIndex={0}
+                    data-selected={isSelected}
+                    onClick={() => selectBoard(b)}
+                    onKeyDown={(e) => e.key === "Enter" && selectBoard(b)}
+                    className="tt-list-item flex items-center gap-2 text-sm"
+                    title={b.label}
+                  >
+                    <KanbanSquare
+                      className="h-3.5 w-3.5 shrink-0"
+                      style={{
+                        color: isSelected
+                          ? "white"
+                          : "var(--tt-text-muted)",
+                      }}
+                    />
+                    <span className="truncate">{b.team_name}</span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* ── Bottom toolbar ─────────────────────────────────────── */}
+        <div className="flex items-center gap-0.5 border-t border-[var(--tt-outline-soft)] pt-2">
           <Dropdown
             align="left"
             direction="up"
@@ -124,52 +174,42 @@ export function NavPanel() {
               { label: "About", separatorBefore: true, onClick: () => openDialog("about") },
             ]}
             trigger={({ toggle, ref }) => (
-              <button
+              <NavIconBtn
                 ref={ref}
                 onClick={toggle}
-                title="Help"
-                className="tt-btn-ghost h-8 w-8 !p-0"
-              >
-                <HelpCircle className="h-[18px] w-[18px]" strokeWidth={2} />
-              </button>
+                title="Help & About"
+                icon={<HelpCircle className="h-4 w-4" strokeWidth={2} />}
+              />
             )}
           />
-          <button
+          <NavIconBtn
             title="Settings"
-            className="tt-btn-ghost h-8 w-8 !p-0"
             onClick={() => openDialog("settings")}
-          >
-            <Settings className="h-[18px] w-[18px]" strokeWidth={2} />
-          </button>
-          <button
-            title="Project KB"
-            className="tt-btn-ghost h-8 w-8 !p-0 disabled:opacity-40"
+            icon={<Settings className="h-4 w-4" strokeWidth={2} />}
+          />
+          <NavIconBtn
+            title="Project Knowledge Base"
             disabled={!currentProject}
             onClick={() => openDialog("kb")}
-          >
-            <Brain className="h-[18px] w-[18px]" strokeWidth={2} />
-          </button>
-          <button
+            icon={<Brain className="h-4 w-4" strokeWidth={2} />}
+          />
+          <NavIconBtn
             title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            aria-label={
-              theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
-            }
-            className="tt-btn-ghost h-8 w-8 !p-0"
+            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
             onClick={toggleTheme}
-          >
-            {theme === "dark" ? (
-              <Sun className="h-[18px] w-[18px]" strokeWidth={2} />
-            ) : (
-              <Moon className="h-[18px] w-[18px]" strokeWidth={2} />
-            )}
-          </button>
-          <button
-            title="Hide navigator"
-            className="tt-btn-ghost h-8 w-8 !p-0"
+            icon={
+              theme === "dark" ? (
+                <Sun className="h-4 w-4" strokeWidth={2} />
+              ) : (
+                <Moon className="h-4 w-4" strokeWidth={2} />
+              )
+            }
+          />
+          <NavIconBtn
+            title="Collapse navigator"
             onClick={() => setNavVisible(false)}
-          >
-            <ChevronLeft className="h-[18px] w-[18px]" strokeWidth={2} />
-          </button>
+            icon={<ChevronLeft className="h-4 w-4" strokeWidth={2} />}
+          />
         </div>
       </div>
 
@@ -185,3 +225,32 @@ export function NavPanel() {
     </>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Small reusable icon button for the bottom toolbar
+// ---------------------------------------------------------------------------
+import React from "react";
+
+const NavIconBtn = React.forwardRef<
+  HTMLButtonElement,
+  {
+    title: string;
+    onClick: () => void;
+    icon: React.ReactNode;
+    disabled?: boolean;
+    "aria-label"?: string;
+  }
+>(function NavIconBtn({ title, onClick, icon, disabled, ...rest }, ref) {
+  return (
+    <button
+      ref={ref}
+      title={title}
+      aria-label={rest["aria-label"] ?? title}
+      disabled={disabled}
+      className="tt-btn-ghost h-8 w-8 !p-0 disabled:opacity-40"
+      onClick={onClick}
+    >
+      {icon}
+    </button>
+  );
+});

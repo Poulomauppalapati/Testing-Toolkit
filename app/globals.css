@@ -126,6 +126,34 @@
   --tt-help-header: #7abaff;
   --tt-help-body: #b8d4f0;
 
+  /* Work-item type accent colors */
+  --tt-type-story:   #5ba8ff;
+  --tt-type-bug:     #e53e3e;
+  --tt-type-task:    #f59e0b;
+  --tt-type-epic:    #a855f7;
+  --tt-type-feature: #22c55e;
+  --tt-type-issue:   #e53e3e;
+  --tt-type-default: #8a8f99;
+
+  /* Type soft backgrounds (for badges) */
+  --tt-type-story-bg:   rgba(91,168,255,0.12);
+  --tt-type-bug-bg:     rgba(229,62,62,0.12);
+  --tt-type-task-bg:    rgba(245,158,11,0.12);
+  --tt-type-epic-bg:    rgba(168,85,247,0.12);
+  --tt-type-feature-bg: rgba(34,197,94,0.12);
+
+  /* Elevation shadows */
+  --tt-shadow-sm: 0 1px 3px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.2);
+  --tt-shadow-md: 0 4px 12px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.25);
+  --tt-shadow-lg: 0 8px 28px rgba(0,0,0,0.55), 0 4px 8px rgba(0,0,0,0.3);
+
+  /* State badge colors */
+  --tt-state-active: #1aab5c;
+  --tt-state-resolved: #5ba8ff;
+  --tt-state-closed: #8a8f99;
+  --tt-state-new: #f59e0b;
+  --tt-state-removed: #e53e3e;
+
   /* shadcn tokens mapped onto the palette */
   --background: var(--tt-surface-deepest);
   --foreground: var(--tt-text-primary);
@@ -208,6 +236,31 @@
   --tt-help-border: #bcd6f7;
   --tt-help-header: #1a5fb4;
   --tt-help-body: #33507a;
+
+  /* Work-item type accent colors (light) */
+  --tt-type-story:   #0071e3;
+  --tt-type-bug:     #d92d2d;
+  --tt-type-task:    #b7791f;
+  --tt-type-epic:    #7c3aed;
+  --tt-type-feature: #12924e;
+  --tt-type-issue:   #d92d2d;
+  --tt-type-default: #656b78;
+
+  --tt-type-story-bg:   rgba(0,113,227,0.08);
+  --tt-type-bug-bg:     rgba(217,45,45,0.08);
+  --tt-type-task-bg:    rgba(183,121,31,0.08);
+  --tt-type-epic-bg:    rgba(124,58,237,0.08);
+  --tt-type-feature-bg: rgba(18,146,78,0.08);
+
+  --tt-shadow-sm: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.05);
+  --tt-shadow-md: 0 4px 12px rgba(0,0,0,0.1), 0 2px 4px rgba(0,0,0,0.06);
+  --tt-shadow-lg: 0 8px 28px rgba(0,0,0,0.14), 0 4px 8px rgba(0,0,0,0.08);
+
+  --tt-state-active: #12924e;
+  --tt-state-resolved: #0071e3;
+  --tt-state-closed: #656b78;
+  --tt-state-new: #b7791f;
+  --tt-state-removed: #d92d2d;
 
   /* shadcn tokens */
   --background: var(--tt-surface-deepest);
@@ -686,6 +739,136 @@
     height: 2px;
     background: #fff;
   }
+
+  /* ---- Work-item type left-border indicator classes ---- */
+  .tt-wi-type-story   { border-left-color: var(--tt-type-story)   !important; }
+  .tt-wi-type-bug     { border-left-color: var(--tt-type-bug)     !important; }
+  .tt-wi-type-task    { border-left-color: var(--tt-type-task)    !important; }
+  .tt-wi-type-epic    { border-left-color: var(--tt-type-epic)    !important; }
+  .tt-wi-type-feature { border-left-color: var(--tt-type-feature) !important; }
+  .tt-wi-type-issue   { border-left-color: var(--tt-type-issue)   !important; }
+
+  /* ---- Type/state badge pill ---- */
+  .tt-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    line-height: 1.6;
+  }
+  .tt-badge-story   { background: var(--tt-type-story-bg);   color: var(--tt-type-story);   }
+  .tt-badge-bug     { background: var(--tt-type-bug-bg);     color: var(--tt-type-bug);     }
+  .tt-badge-task    { background: var(--tt-type-task-bg);    color: var(--tt-type-task);    }
+  .tt-badge-epic    { background: var(--tt-type-epic-bg);    color: var(--tt-type-epic);    }
+  .tt-badge-feature { background: var(--tt-type-feature-bg); color: var(--tt-type-feature); }
+  .tt-badge-neutral {
+    background: rgba(138,143,153,0.12);
+    color: var(--tt-text-muted);
+  }
+  .tt-badge-success {
+    background: rgba(26,171,92,0.14);
+    color: var(--tt-success);
+  }
+  .tt-badge-warn {
+    background: rgba(245,158,11,0.14);
+    color: var(--tt-warn);
+  }
+  .tt-badge-danger {
+    background: rgba(229,62,62,0.14);
+    color: var(--tt-danger);
+  }
+  .tt-badge-info {
+    background: rgba(91,168,255,0.14);
+    color: var(--tt-primary);
+  }
+
+  /* ---- Metric chip (StatusBar / CoverageBar) ---- */
+  .tt-metric-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--tt-surface-high);
+    border: 1px solid var(--tt-outline-soft);
+    color: var(--tt-text-secondary);
+    transition: background 0.12s ease;
+  }
+  .tt-metric-chip .tt-chip-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ---- Section header (uppercase left-accent line) ---- */
+  .tt-section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--tt-text-muted);
+    padding: 0 4px;
+  }
+  .tt-section-header::before {
+    content: "";
+    display: block;
+    width: 3px;
+    height: 12px;
+    border-radius: 2px;
+    background: var(--tt-primary);
+    flex-shrink: 0;
+  }
+
+  /* ---- Action group (button groups with separator) ---- */
+  .tt-action-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .tt-action-sep {
+    width: 1px;
+    height: 20px;
+    background: var(--tt-outline);
+    flex-shrink: 0;
+    margin: 0 4px;
+  }
+
+  /* ---- Elevated card (with shadow + slightly tighter radius) ---- */
+  .tt-card {
+    background: var(--tt-surface-container);
+    border: 1px solid var(--tt-outline);
+    border-radius: 14px;
+    box-shadow: var(--tt-shadow-sm);
+  }
+
+  /* ---- Animations ---- */
+  @keyframes tt-fade-up {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0);   }
+  }
+  @keyframes tt-badge-pop {
+    0%   { transform: scale(0.7); opacity: 0; }
+    60%  { transform: scale(1.12); }
+    100% { transform: scale(1);   opacity: 1; }
+  }
+  @keyframes tt-pulse-dot {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.35; }
+  }
+  .tt-animate-fade-up   { animation: tt-fade-up   0.18s cubic-bezier(0.16,1,0.3,1) both; }
+  .tt-animate-badge-pop { animation: tt-badge-pop 0.22s cubic-bezier(0.16,1,0.3,1) both; }
+  .tt-animate-pulse-dot { animation: tt-pulse-dot 1.4s ease-in-out infinite; }
 
   /* ---- Rendered ADO HTML in detail pane ---- */
   .tt-html :where(p, ul, ol) {

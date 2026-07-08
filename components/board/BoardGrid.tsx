@@ -291,6 +291,38 @@ export function BoardGrid() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Badge helpers — map WI type/state strings to CSS class names
+// ---------------------------------------------------------------------------
+function wiTypeBadgeClass(t: string): string {
+  const k = (t || "").toLowerCase();
+  if (k.includes("story") || k.includes("user story")) return "tt-badge-story";
+  if (k.includes("bug") || k.includes("issue")) return "tt-badge-bug";
+  if (k.includes("task")) return "tt-badge-task";
+  if (k.includes("epic")) return "tt-badge-epic";
+  if (k.includes("feature")) return "tt-badge-feature";
+  return "tt-badge-neutral";
+}
+
+function wiTypeBorderClass(t: string): string {
+  const k = (t || "").toLowerCase();
+  if (k.includes("story") || k.includes("user story")) return "tt-wi-type-story";
+  if (k.includes("bug") || k.includes("issue")) return "tt-wi-type-bug";
+  if (k.includes("task")) return "tt-wi-type-task";
+  if (k.includes("epic")) return "tt-wi-type-epic";
+  if (k.includes("feature")) return "tt-wi-type-feature";
+  return "";
+}
+
+function wiStateBadgeClass(s: string): string {
+  const k = (s || "").toLowerCase();
+  if (k === "active" || k === "in progress" || k === "in review") return "tt-badge-success";
+  if (k === "resolved" || k === "done" || k === "closed") return "tt-badge-info";
+  if (k === "new" || k === "proposed" || k === "to do") return "tt-badge-warn";
+  if (k === "removed") return "tt-badge-danger";
+  return "tt-badge-neutral";
+}
+
 function LaneGroup({
   lane,
   laneRows,
@@ -314,8 +346,8 @@ function LaneGroup({
 }) {
   return (
     <>
-      <tr className="tt-group-row">
-        <td className="px-2 py-1.5">
+      <tr className="tt-group-row border-t border-[var(--tt-outline)] first:border-t-0">
+        <td className="px-2 py-2">
           <input
             type="checkbox"
             className="tt-check"
@@ -326,17 +358,21 @@ function LaneGroup({
             onChange={(e) => onToggleLane(e.target.checked)}
           />
         </td>
-        <td colSpan={6} className="px-2 py-1.5">
-          <span className="tt-group-tri">▼</span>
-          <span className="text-sm font-semibold text-[var(--tt-text-secondary)]">
-            {lane}
-          </span>{" "}
-          <span className="text-xs text-[var(--tt-text-muted)]">({laneRows.length})</span>
+        <td colSpan={6} className="px-2 py-2">
+          <div className="flex items-center gap-2">
+            <span className="tt-group-tri">▼</span>
+            <span className="text-xs font-bold uppercase tracking-wide text-[var(--tt-text-secondary)]">
+              {lane}
+            </span>
+            <span className="tt-badge tt-badge-neutral">{laneRows.length}</span>
+          </div>
         </td>
       </tr>
       {laneRows.map((r) => {
-        const tc = typeColor(r.wi_type);
         const isActive = r.wi_id === activeWiId;
+        const typeBadgeClass = wiTypeBadgeClass(r.wi_type);
+        const typeBorderClass = wiTypeBorderClass(r.wi_type);
+        const stateBadgeClass = wiStateBadgeClass(r.state);
         return (
           <tr
             key={r.wi_id}
@@ -353,29 +389,37 @@ function LaneGroup({
                 onChange={(e) => onToggleRow(r.wi_id, e.target.checked)}
               />
             </td>
-            <td className="px-2 py-1.5 font-semibold text-[var(--tt-primary)]">
-              {r.wi_id}
+            {/* ID with type left-border accent */}
+            <td className="px-2 py-1.5">
+              <span
+                className={`border-l-2 pl-1.5 font-mono text-xs font-bold text-[var(--tt-primary)] ${typeBorderClass}`}
+              >
+                {r.wi_id}
+              </span>
             </td>
             <td
-              className="max-w-0 truncate px-2 py-1.5 text-[var(--tt-text-primary)]"
+              className="max-w-0 truncate px-2 py-1.5 text-sm text-[var(--tt-text-primary)]"
               title={r.title}
             >
               {r.title}
             </td>
-            <td className="px-2 py-1.5 text-sm" style={{ color: tc ?? "var(--tt-text-secondary)" }}>
-              {r.wi_type}
+            {/* Type badge */}
+            <td className="px-2 py-1.5">
+              <span className={`tt-badge ${typeBadgeClass}`}>
+                {r.wi_type}
+              </span>
             </td>
-            <td
-              className="px-2 py-1.5 text-sm"
-              style={{ color: stateColor(r.state) }}
-            >
-              {r.state || "n/a"}
+            {/* State badge */}
+            <td className="px-2 py-1.5">
+              <span className={`tt-badge ${stateBadgeClass}`}>
+                {r.state || "n/a"}
+              </span>
             </td>
-            <td className="truncate px-2 py-1.5 text-sm text-[var(--tt-text-secondary)]">
-              {r.assigned_to}
+            <td className="max-w-[120px] truncate px-2 py-1.5 text-xs text-[var(--tt-text-secondary)]">
+              {r.assigned_to || "—"}
             </td>
-            <td className="truncate px-2 py-1.5 text-sm text-[var(--tt-text-secondary)]">
-              {r.board_lane}
+            <td className="max-w-[120px] truncate px-2 py-1.5 text-xs text-[var(--tt-text-muted)]">
+              {r.board_lane || "—"}
             </td>
           </tr>
         );
