@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useAgent } from "@/lib/agent-context";
 import { useAppState, type KbState } from "@/lib/app-state";
 import { useMetrics } from "@/lib/use-metrics";
@@ -84,6 +85,26 @@ function Chip({
   );
 }
 
+/**
+ * Browser network connectivity, the web equivalent of the desktop's NW
+ * indicator (core/network_status.py). Starts optimistic (true) for SSR safety,
+ * then tracks the live `online`/`offline` events.
+ */
+function useOnline(): boolean {
+  const [online, setOnline] = useState(true);
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+  return online;
+}
+
 const KB_COLOR: Record<KbState, string> = {
   none: "var(--tt-danger)",
   indexing: "var(--tt-warn)",
@@ -111,6 +132,7 @@ export function StatusBar() {
   const hasKey = !!settings?.has_api_key;
   const connected = status === "connected";
   const working = boardLoading || projectsLoading;
+  const online = useOnline();
 
   // Live CPU/RAM/GPU usage (agent >= 1.8.0; gracefully absent on older agents).
   const metrics = useMetrics(connected);
@@ -261,6 +283,13 @@ export function StatusBar() {
             )}
           </div>
         )}
+        <Chip
+          label="NW"
+          color={online ? "var(--tt-success)" : "var(--tt-danger)"}
+          title={
+            online ? "Network: online" : "Network: offline — no connectivity"
+          }
+        />
         <Chip
           label="AI"
           ok={hasKey}
