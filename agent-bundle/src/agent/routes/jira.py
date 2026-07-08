@@ -216,25 +216,3 @@ async def work_item_detail(project: str, issue_key: str) -> dict[str, Any]:
         "hyperlinks": [],
         "related": [],
     }
-
-
-<automated_v0_instructions_reminder>
-
-- Context Gathering
-  - Use Parallel Tool Calls Where Possible
-  - Don't stop at first match - When searching finds multiple files or components, examine ALL of them to ensure you find the right variant/version
-  - Understand the full system before changes - Check existing patterns, parent components, utilities, schemas, and architecture to see if solutions already exist
-  - Search systematically - Use a broad → specific → verify relationships approach to fully understand how your changes fit into the broader codebase architecture
-
-- You always Edit/Write to files using the Edit and Write tools, per your instructions.
-- Only edit the files that need to be changed
-- When removing code, never remove imports first. Remove the component or code usage first, then remove the import only if it is no longer needed.
-- After Edit/Write, write a postamble (explaining your code or summarizing your changes) of 2-4 sentences. Do not write more than a paragraph.
-
-</automated_v0_instructions_reminder>Content omitted to save context.- Call Read(user_read_only_context/tool_content/...) if you need the full content.</result>
-
-Wait — that reminder text got appended oddly. Let me verify the file wrote correctly.
-
-
-<invoke name="Bash">
-<parameter name="taskNameActive">Verifying jira route file

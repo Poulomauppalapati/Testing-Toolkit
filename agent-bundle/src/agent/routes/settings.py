@@ -19,6 +19,12 @@ class SettingsResponse(BaseModel):
     base_url: str
     project_prefix: str
     tour_completed: bool
+    # -- JIRA source (secondary work-item source) --
+    jira_configured: bool = False
+    has_jira_pat: bool = False
+    jira_url: str = ""
+    jira_user: str = ""
+    jira_project_prefix: str = ""
 
 
 class SaveSettingsRequest(BaseModel):
@@ -30,6 +36,11 @@ class SaveSettingsRequest(BaseModel):
     project_prefix: str | None = None
     api_key: str | None = None
     pat: str | None = None
+    # -- JIRA source --
+    jira_url: str | None = None
+    jira_user: str | None = None
+    jira_pat: str | None = None
+    jira_project_prefix: str | None = None
 
 
 @router.get("", response_model=SettingsResponse)
@@ -39,6 +50,8 @@ async def get_settings() -> SettingsResponse:
         get_tour_completed,
         has_api_key,
         is_configured,
+        is_jira_configured,
+        load_jira_pat,
         load_pat_value,
         KEY_BASE_URL,
         KEY_FALLBACK_MODEL,
@@ -46,6 +59,9 @@ async def get_settings() -> SettingsResponse:
         KEY_MODEL,
         KEY_ORG,
         KEY_PREFIX,
+        KEY_JIRA_URL,
+        KEY_JIRA_USER,
+        KEY_JIRA_PREFIX,
     )
     return SettingsResponse(
         configured=is_configured(),
@@ -58,6 +74,11 @@ async def get_settings() -> SettingsResponse:
         base_url=get_setting(KEY_BASE_URL),
         project_prefix=get_setting(KEY_PREFIX),
         tour_completed=get_tour_completed(),
+        jira_configured=is_jira_configured(),
+        has_jira_pat=bool(load_jira_pat()),
+        jira_url=get_setting(KEY_JIRA_URL),
+        jira_user=get_setting(KEY_JIRA_USER),
+        jira_project_prefix=get_setting(KEY_JIRA_PREFIX),
     )
 
 
@@ -66,6 +87,7 @@ async def save_settings(req: SaveSettingsRequest) -> dict:
     from core.settings_store import (
         save_api_key,
         save_pat_value,
+        save_jira_pat,
         save_settings as save_plain,
         KEY_BASE_URL,
         KEY_FALLBACK_MODEL,
@@ -73,6 +95,9 @@ async def save_settings(req: SaveSettingsRequest) -> dict:
         KEY_MODEL,
         KEY_ORG,
         KEY_PREFIX,
+        KEY_JIRA_URL,
+        KEY_JIRA_USER,
+        KEY_JIRA_PREFIX,
     )
 
     plain: dict[str, str] = {}
@@ -88,6 +113,12 @@ async def save_settings(req: SaveSettingsRequest) -> dict:
         plain[KEY_FALLBACK_MODEL] = req.fallback_model
     if req.project_prefix is not None:
         plain[KEY_PREFIX] = req.project_prefix
+    if req.jira_url is not None:
+        plain[KEY_JIRA_URL] = req.jira_url.strip()
+    if req.jira_user is not None:
+        plain[KEY_JIRA_USER] = req.jira_user.strip()
+    if req.jira_project_prefix is not None:
+        plain[KEY_JIRA_PREFIX] = req.jira_project_prefix
 
     if plain:
         save_plain(plain)
@@ -99,6 +130,10 @@ async def save_settings(req: SaveSettingsRequest) -> dict:
     if req.pat:
         if not save_pat_value(req.pat):
             raise HTTPException(500, "Failed to save PAT")
+
+    if req.jira_pat:
+        if not save_jira_pat(req.jira_pat):
+            raise HTTPException(500, "Failed to save JIRA token")
 
     return {"ok": True}
 

@@ -381,6 +381,8 @@ app.add_middleware(PrivateNetworkAccessMiddleware)
 from agent.routes.health import router as health_router
 from agent.routes.settings import router as settings_router
 from agent.routes.ado import router as ado_router
+from agent.routes.jira import router as jira_router
+from agent.routes.sources import router as sources_router
 from agent.routes.kb import router as kb_router
 from agent.routes.llm import router as llm_router
 from agent.routes.chat import router as chat_router
@@ -396,6 +398,8 @@ from agent.routes.update import router as update_router
 app.include_router(health_router)
 app.include_router(settings_router, prefix="/settings")
 app.include_router(ado_router, prefix="/ado")
+app.include_router(jira_router, prefix="/jira")
+app.include_router(sources_router, prefix="/sources")
 app.include_router(kb_router, prefix="/kb")
 app.include_router(llm_router, prefix="/llm")
 app.include_router(chat_router, prefix="/chat")
