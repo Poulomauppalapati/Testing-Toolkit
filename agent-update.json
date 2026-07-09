@@ -1,7 +1,7 @@
 {
-  "version": "2.10.1",
+  "version": "2.10.2",
   "ref": "main",
-  "generatedAt": "2026-07-09T06:17:35.697Z",
+  "generatedAt": "2026-07-09T06:25:20.082Z",
   "files": [
     {
       "path": ".env.enc",
@@ -126,7 +126,7 @@
     {
       "path": "agent/routes/settings.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/settings.py?ref=main",
-      "hash": "af6e513f15920d837f5ea843c79fa99fb8327d72e044c23f26adbe2453796a5e"
+      "hash": "5a9b169ff82b4be64a0ee4ca7355149ef31f392a1b178f62fddb9bd4609b8540"
     },
     {
       "path": "agent/routes/sources.py",
@@ -156,7 +156,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "09129ff0f881912b4a2fab6f66c8b5cc0c50e1491b2fc15e43d68397237471db"
+      "hash": "0dd79004d05bb7185e363dfeedc42d7fc834da8ed1bced8ec137a61208ae3481"
     },
     {
       "path": "automation/__init__.py",
@@ -311,7 +311,7 @@
     {
       "path": "core/settings_store.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/settings_store.py?ref=main",
-      "hash": "ded1d2aed94a129408319c17172bab4b6845fa1cd02158211e04d0686eff18e6"
+      "hash": "8f93aa0a3f1d28750a80a2a50318a6810d03d7b00d1158c17af955a5009b443d"
     },
     {
       "path": "core/source_registry.py",
