@@ -96,7 +96,13 @@ export function NavPanel() {
                     tabIndex={0}
                     data-selected={isSelected}
                     onClick={() => selectProject(full)}
-                    onKeyDown={(e) => e.key === "Enter" && selectProject(full)}
+                    onKeyDown={(e) => {
+                      // ARIA button pattern: activate on Enter and Space.
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        selectProject(full);
+                      }
+                    }}
                     className="tt-list-item flex items-center gap-2 text-sm"
                     title={full}
                   >
@@ -147,7 +153,13 @@ export function NavPanel() {
                     tabIndex={0}
                     data-selected={isSelected}
                     onClick={() => selectBoard(b)}
-                    onKeyDown={(e) => e.key === "Enter" && selectBoard(b)}
+                    onKeyDown={(e) => {
+                      // ARIA button pattern: activate on Enter and Space.
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        selectBoard(b);
+                      }
+                    }}
                     className="tt-list-item flex items-center gap-2 text-sm"
                     title={b.label}
                   >

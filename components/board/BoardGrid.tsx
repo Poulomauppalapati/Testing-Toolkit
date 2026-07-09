@@ -480,7 +480,21 @@ function LaneGroup({
           <tr
             key={r.wi_id}
             onClick={() => onActivate(r.wi_id)}
-            className={`cursor-pointer border-b border-[var(--tt-outline-soft)] border-l-[3px] transition-colors ${typeBorderClass} ${
+            tabIndex={0}
+            aria-selected={isActive}
+            aria-label={`View details for work item ${r.wi_id}${r.title ? `: ${r.title}` : ""}`}
+            onKeyDown={(e) => {
+              // Keyboard activation (WCAG 2.1.1). Only when the row itself is
+              // focused — don't hijack Space/Enter from the inner checkbox.
+              if (
+                e.target === e.currentTarget &&
+                (e.key === "Enter" || e.key === " ")
+              ) {
+                e.preventDefault();
+                onActivate(r.wi_id);
+              }
+            }}
+            className={`cursor-pointer border-b border-[var(--tt-outline-soft)] border-l-[3px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--tt-focus,#3a6ea5)] focus-visible:ring-inset ${typeBorderClass} ${
               isActive ? "tt-row-selected" : "hover:bg-[var(--tt-surface-container)]"
             }`}
           >
