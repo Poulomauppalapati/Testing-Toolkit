@@ -24,9 +24,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-# Hugging Face cache folder names for the two bundled models (see model_bundle).
-_EMBEDDER_CACHE = "models--qdrant--bge-small-en-v1.5-onnx-q"
-_RERANKER_CACHE = "models--Xenova--ms-marco-MiniLM-L-6-v2"
 
 _PASS = "pass"
 _WARN = "warn"
@@ -70,42 +67,6 @@ def capabilities() -> dict[str, Any]:
     caps["dense_retrieval"] = _safe(_dense)
     caps["reranker"] = _safe(_rerank)
 
-    # Bundled offline model cache.
-    def _bundle() -> bool:
-        from kb.model_bundle import bundled_models_dir
-        return bundled_models_dir() is not None
-
-    def _emb_files() -> bool:
-        from kb.model_bundle import has_model
-        return has_model(_EMBEDDER_CACHE)
-
-    def _rer_files() -> bool:
-        from kb.model_bundle import has_model
-        return has_model(_RERANKER_CACHE)
-
-    caps["model_bundle"] = _safe(_bundle)
-    caps["embedder_model_files"] = _safe(_emb_files)
-    caps["reranker_model_files"] = _safe(_rer_files)
-
-    # Hardware capability vs. ACTUAL runtime binding.
-    caps["gpu_capable"] = _safe(
-        lambda: bool(__import__("core.hardware", fromlist=["gpu_available"])
-                     .gpu_available())
-    )
-
-    def _runtime() -> dict[str, Any]:
-        from kb.embeddings import (
-            active_execution_provider,
-            model_runtime_info,
-            runtime_accelerated,
-        )
-        return {
-            "models": model_runtime_info(),
-            "accelerated": bool(runtime_accelerated()),
-            "active_provider": active_execution_provider(),
-        }
-
-    caps["model_runtime"] = _safe(_runtime, {})
 
     # Optional extraction backends.
     caps["ocr"] = _safe(
@@ -186,81 +147,6 @@ def run_doctor() -> dict[str, Any]:
         _check(checks, "reranker", "Cross-encoder reranker (API /rerank)", _WARN,
                f"probe failed: {e!r}")
 
-    # --- Bundled offline model files ---------------------------------------
-    try:
-        from kb.model_bundle import bundled_models_dir, has_model
-
-        root = bundled_models_dir()
-        if root is None:
-            _check(checks, "model_bundle", "Offline model cache", _WARN,
-                   "no bundled models dir found; models would be downloaded "
-                   "on first use (fails offline)",
-                   "Reinstall the agent to restore the bundled models.")
-        else:
-            emb = has_model(_EMBEDDER_CACHE)
-            rer = has_model(_RERANKER_CACHE)
-            if emb and rer:
-                _check(checks, "model_bundle", "Offline model cache", _PASS,
-                       f"both models present under {root}")
-            else:
-                missing = ", ".join(
-                    n for n, ok in (("embedder", emb), ("reranker", rer))
-                    if not ok
-                ) or "some files"
-                _check(checks, "model_bundle", "Offline model cache", _FAIL,
-                       f"missing: {missing} (under {root})",
-                       "Reinstall the agent to restore the bundled models.")
-    except Exception as e:  # noqa: BLE001
-        _check(checks, "model_bundle", "Offline model cache", _WARN,
-               f"probe failed: {e!r}")
-
-    # --- Actual model runtime (which EP did models bind to?) ---------------
-    try:
-        from kb.embeddings import (
-            active_execution_provider,
-            model_runtime_info,
-        )
-
-        info = model_runtime_info()
-        if not info:
-            _check(checks, "model_runtime", "Model execution provider", _PASS,
-                   "no model loaded yet (built on first index/retrieval)")
-        else:
-            ep = active_execution_provider()
-            if ep:
-                _check(checks, "model_runtime", "Model execution provider",
-                       _PASS, f"running on accelerator: {ep}")
-            else:
-                provs = next(
-                    (i.get("providers") for i in info.values()
-                     if i.get("providers")), None
-                )
-                _check(checks, "model_runtime", "Model execution provider",
-                       _PASS,
-                       f"running on CPU (providers: {provs})")
-    except Exception as e:  # noqa: BLE001
-        _check(checks, "model_runtime", "Model execution provider", _WARN,
-               f"probe failed: {e!r}")
-
-    # --- GPU / accelerator (informational) ---------------------------------
-    try:
-        from core.hardware import (
-            chip_name,
-            gpu_available,
-            gpu_device_name,
-        )
-
-        if gpu_available():
-            _check(checks, "gpu", "Accelerator", _PASS,
-                   f"{gpu_device_name() or 'GPU'} ({chip_name() or 'unknown'})")
-        else:
-            _check(checks, "gpu", "Accelerator", _WARN,
-                   f"no accelerator detected; using CPU "
-                   f"({chip_name() or 'unknown'})",
-                   "This is fine - retrieval runs on CPU. A supported GPU "
-                   "would speed up embedding/reranking.")
-    except Exception as e:  # noqa: BLE001
-        _check(checks, "gpu", "Accelerator", _WARN, f"probe failed: {e!r}")
 
     # --- OCR (optional) -----------------------------------------------------
     try:

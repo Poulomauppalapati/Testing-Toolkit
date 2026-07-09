@@ -22,7 +22,6 @@ import { StatusBar } from "./StatusBar";
 import { BoardGrid } from "@/components/board/BoardGrid";
 import { ActionBar } from "@/components/board/ActionBar";
 import { LogPanel } from "@/components/board/LogPanel";
-import { CoverageBar } from "@/components/dashboard/CoverageBar";
 import { DialogHost } from "@/components/dialogs/DialogHost";
 
 export function AppShell() {
@@ -120,7 +119,7 @@ export function AppShell() {
     // Either not configured for auto-update, or the silent apply failed.
     pushLog?.(
       "WARN",
-      "Agent changes require a reinstall to take effect. Pausing the app."
+      "An update is required. Pausing the app until you update."
     );
     setUpdateBlocked(s);
   }, [check, apply, ensureConfigured, pushLog]);
@@ -191,7 +190,6 @@ export function AppShell() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {navVisible ? <NavPanel /> : <ActivityBar />}
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <CoverageBar />
           {/* Board grid fills the space; the action bar sits BELOW it (desktop
               parity — main_window stacks the grid, then the action row, then
               the log dock at the bottom). */}

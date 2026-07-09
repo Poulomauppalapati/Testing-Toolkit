@@ -8,8 +8,6 @@ import {
   Brain,
   ChevronRight,
   RefreshCw,
-  Layers,
-  SearchCode,
   KeyRound,
   Sun,
   Moon,
@@ -131,7 +129,6 @@ export function ActivityBar() {
           </button>
         )}
       />
-      <RailButton icon={Layers} label="AI Stack" onClick={() => openDialog("aistack")} />
       <RailButton icon={Settings} label="Settings" onClick={() => openDialog("settings")} />
       <RailButton
         icon={Brain}
@@ -139,12 +136,6 @@ export function ActivityBar() {
         onClick={() => openDialog("kb")}
         disabled={!currentProject}
         badge={currentProject ? KB_BADGE[kbState] : undefined}
-      />
-      <RailButton
-        icon={SearchCode}
-        label="Retrieval preview"
-        onClick={() => openDialog("retrieval")}
-        disabled={!currentProject}
       />
       <RailButton
         icon={KeyRound}

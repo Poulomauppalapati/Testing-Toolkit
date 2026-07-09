@@ -187,24 +187,23 @@ _ADO_TOOLS: Final[list[dict[str, Any]]] = [
 
 def get_tool_definitions(ctx: ToolContext) -> list[dict[str, Any]]:
     """Return tool definitions for available integrations.
-    Merges custom tools with MCP server tools when available."""
+    MCP server tools take priority; custom tools serve as fallback only
+    when the corresponding MCP server is not running."""
     tools: list[dict[str, Any]] = []
 
-    # Custom tools (always available as baseline)
-    if ctx.has_ado:
-        tools.extend(_ADO_TOOLS)
-
-    # MCP tools (dynamic, may be empty if servers not ready)
+    # MCP tools first (official ADO/JIRA/Playwright servers)
     if ctx.mcp_bridge is not None:
         from core.mcp_bridge import MCPBridge
         bridge: MCPBridge = ctx.mcp_bridge
         if bridge.is_ready:
-            mcp_tools = bridge.get_tool_definitions()
-            # Deduplicate: skip MCP tools that clash with custom tool names
-            custom_names = {t["name"] for t in tools}
-            for mt in mcp_tools:
-                if mt["name"] not in custom_names:
-                    tools.append(mt)
+            tools.extend(bridge.get_tool_definitions())
+
+    # Custom tools only as fallback (skip if MCP already covers ADO)
+    if ctx.has_ado:
+        mcp_names = {t["name"] for t in tools}
+        for t in _ADO_TOOLS:
+            if t["name"] not in mcp_names:
+                tools.append(t)
 
     return tools
 
@@ -439,23 +438,27 @@ def execute_tool(
     name: str, tool_input: dict[str, Any], ctx: ToolContext,
 ) -> str:
     """Execute a tool call and return the string result.
-    Routes to custom handler first, then MCP bridge.
-    On error, returns a JSON error object (never raises)."""
-    # Custom handler (fast path)
+    Routes to MCP bridge first (official servers), falls back to custom
+    handlers when MCP is unavailable. On error, returns a JSON error object
+    (never raises)."""
+    # MCP bridge first (official ADO/JIRA/Playwright servers)
+    if ctx.mcp_bridge is not None:
+        from core.mcp_bridge import MCPBridge
+        bridge: MCPBridge = ctx.mcp_bridge
+        if bridge.has_tool(name):
+            try:
+                result = bridge.call_tool(name, tool_input)
+                if result is not None:
+                    return result
+            except Exception:
+                pass  # ponytail: swallow MCP errors; fall through to custom handler
+
+    # Custom handler (fallback when MCP unavailable or doesn't have the tool)
     handler = _HANDLERS.get(name)
     if handler is not None:
         try:
             return handler(tool_input, ctx)
         except Exception as e:
             return _json_result({"error": str(e)})
-
-    # MCP bridge (dynamic tools from running servers)
-    if ctx.mcp_bridge is not None:
-        from core.mcp_bridge import MCPBridge
-        bridge: MCPBridge = ctx.mcp_bridge
-        if bridge.has_tool(name):
-            result = bridge.call_tool(name, tool_input)
-            if result is not None:
-                return result
 
     return _json_result({"error": f"Unknown tool: {name}"})

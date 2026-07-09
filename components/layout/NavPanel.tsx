@@ -6,13 +6,11 @@ import {
   Settings,
   Brain,
   KeyRound,
-  SearchCode,
   ChevronLeft,
   Sun,
   Moon,
   RefreshCw,
   RefreshCcw,
-  Layers,
   LayoutDashboard,
   KanbanSquare,
 } from "lucide-react";
@@ -217,12 +215,6 @@ export function NavPanel() {
             )}
           />
           <NavLabelBtn
-            title="AI Stack — how the pipeline works"
-            onClick={() => openDialog("aistack")}
-            icon={<Layers className="h-3.5 w-3.5" strokeWidth={2} />}
-            label="AI Stack"
-          />
-          <NavLabelBtn
             title="Settings"
             onClick={() => openDialog("settings")}
             icon={<Settings className="h-3.5 w-3.5" strokeWidth={2} />}
@@ -234,13 +226,6 @@ export function NavPanel() {
             onClick={() => openDialog("kb")}
             icon={<Brain className="h-3.5 w-3.5" strokeWidth={2} />}
             label="KB"
-          />
-          <NavLabelBtn
-            title="Preview which KB chunks the retriever would supply for a story"
-            disabled={!currentProject}
-            onClick={() => openDialog("retrieval")}
-            icon={<SearchCode className="h-3.5 w-3.5" strokeWidth={2} />}
-            label="Retrieval"
           />
           <NavLabelBtn
             title="Manage encrypted test-environment credentials for E2E automation"
