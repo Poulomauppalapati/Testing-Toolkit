@@ -288,10 +288,25 @@ async def kb_status(project: str) -> dict:
     if kb_dir.exists():
         docs = [f.name for f in kb_dir.iterdir() if f.is_file()]
 
+    n_chunks = 0
+    n_documents = 0
+    indexed = index_file.exists()
+    if indexed:
+        try:
+            import core.project_store as ps
+            idx = ps.get_index(project)
+            chunks = getattr(idx, "chunks", None) or []
+            n_chunks = len(chunks)
+            n_documents = len({getattr(c, "source", "") for c in chunks} or docs)
+        except Exception:
+            n_documents = len(docs)
+
     return {
         "project": project,
         "documents": docs,
-        "indexed": index_file.exists(),
+        "indexed": indexed,
+        "n_chunks": n_chunks,
+        "n_documents": n_documents,
     }
 
 

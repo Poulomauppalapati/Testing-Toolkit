@@ -34,7 +34,7 @@ import {
   setLastBoardPref,
 } from "./preferences";
 
-export type KbState = "none" | "indexing" | "ready" | "error";
+export type KbState = "none" | "indexing" | "context" | "ready" | "error";
 
 export type KbUploadStatus =
   | "queued"
@@ -202,9 +202,16 @@ export function AppStateProvider({
   const [kbMessage, setKbMessage] = useState("KB: no project selected");
   const [kbProgress, setKbProgress] = useState<number | null>(null);
   const [kbDirty, setKbDirty] = useState(false);
+  const kbDirtyRef = useRef(false);
 
-  const markKbDirty = useCallback(() => setKbDirty(true), []);
-  const clearKbDirty = useCallback(() => setKbDirty(false), []);
+  const markKbDirty = useCallback(() => {
+    setKbDirty(true);
+    kbDirtyRef.current = true;
+  }, []);
+  const clearKbDirty = useCallback(() => {
+    setKbDirty(false);
+    kbDirtyRef.current = false;
+  }, []);
 
   // KB upload batch state lives here (not in the dialog) so it persists when
   // the KB window is closed/reopened mid-upload and so the status bar can show
@@ -401,28 +408,110 @@ export function AppStateProvider({
     [pushLog]
   );
 
-  const finalizeKbIndex = useCallback(
-    (res: { n_chunks: number; n_documents: number }) => {
-      if (res.n_chunks > 0) {
+  // Auto-generate project context after indexing with retry logic.
+  // Runs as a fire-and-forget side effect from finalizeKbIndex.
+  const contextGenRef = useRef<AbortController | null>(null);
+
+  const runContextGeneration = useCallback(
+    async (project: string, forceRegen = false) => {
+      // Abort any prior context gen in flight (e.g. project switch mid-gen).
+      contextGenRef.current?.abort();
+      const ctl = new AbortController();
+      contextGenRef.current = ctl;
+
+      // Check if context already exists — skip regeneration on routine page
+      // loads where the KB and context are both current.
+      if (!forceRegen) {
+        try {
+          const existing = await agent.projectContext(project);
+          if (ctl.signal.aborted) return;
+          if (existing.has && existing.n_items > 0) {
+            setKbState("ready");
+            setKbMessage(`KB ready | Context: ${existing.n_items} items`);
+            setKbProgress(null);
+            return;
+          }
+        } catch {
+          // Older agents or network hiccup — fall through to generate.
+        }
+      }
+
+      setKbState("context");
+      setKbMessage("Generating project context...");
+      setKbProgress(null);
+
+      const MAX_ATTEMPTS = 3;
+      const BASE_DELAY_MS = 5000;
+
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        if (ctl.signal.aborted) return;
+        try {
+          setKbMessage(
+            attempt > 1
+              ? `Generating project context (retry ${attempt}/${MAX_ATTEMPTS})...`
+              : "Generating project context..."
+          );
+          const ctx = await agent.regenerateContext(project);
+          if (ctl.signal.aborted) return;
+          if (ctx.has) {
+            pushLog("SUCCESS", `Project context extracted: ${ctx.n_items} item(s).`);
+          } else {
+            pushLog("INFO", "Context generation completed (no items extracted).");
+          }
+          setKbState("ready");
+          setKbMessage(
+            ctx.has
+              ? `KB ready | Context: ${ctx.n_items} items`
+              : "KB ready (context empty)"
+          );
+          setKbProgress(null);
+          return;
+        } catch (e) {
+          if (ctl.signal.aborted) return;
+          const msg = (e as Error).message || "unknown error";
+          pushLog(
+            "WARN",
+            `Context generation attempt ${attempt}/${MAX_ATTEMPTS} failed: ${msg}`
+          );
+          if (attempt < MAX_ATTEMPTS) {
+            const delay = BASE_DELAY_MS * attempt;
+            setKbMessage(
+              `Context gen failed, retrying in ${Math.round(delay / 1000)}s...`
+            );
+            await new Promise((r) => setTimeout(r, delay));
+          }
+        }
+      }
+      // All retries exhausted — still mark KB ready (context is optional).
+      if (!ctl.signal.aborted) {
+        pushLog("ERROR", "Context generation failed after all retries. KB is still usable for retrieval.");
         setKbState("ready");
-        setKbMessage(
-          `KB ready (${res.n_documents} docs, ${res.n_chunks} chunks)`
-        );
+        setKbMessage("KB ready (context generation failed)");
+        setKbProgress(null);
+      }
+    },
+    [pushLog]
+  );
+
+  const finalizeKbIndex = useCallback(
+    (res: { n_chunks: number; n_documents: number }, project: string, forceContextRegen = false) => {
+      if (res.n_chunks > 0) {
+        setKbProgress(null);
+        clearKbDirty();
+        // Transition to context generation phase instead of directly to "ready".
+        runContextGeneration(project, forceContextRegen);
       } else {
         setKbState("none");
         setKbMessage("KB: no files uploaded");
+        setKbProgress(null);
+        clearKbDirty();
       }
-      setKbProgress(null);
-      setKbDirty(false);
     },
-    []
+    [runContextGeneration, clearKbDirty]
   );
 
   const runKbIndexOnce = useCallback(
     async (project: string) => {
-      setKbState("indexing");
-      setKbMessage("Indexing");
-      setKbProgress(null);
       try {
         const status = await agent.kbStatus(project);
         if (!status.documents || status.documents.length === 0) {
@@ -431,11 +520,27 @@ export function AppStateProvider({
           setKbProgress(null);
           return;
         }
+        // If the index is already current (indexed=true, has documents) and
+        // this is NOT a dirty reindex, skip the indexing animation entirely and
+        // jump straight to context check. This prevents the "100% Indexing"
+        // flash on every page load. Uses the ref for immediate read (state may
+        // be batched and stale).
+        if (status.indexed && status.documents.length > 0 && !kbDirtyRef.current) {
+          finalizeKbIndex(
+            { n_chunks: status.n_chunks ?? status.documents.length, n_documents: status.n_documents ?? status.documents.length },
+            project,
+            false // do NOT force-regen; just check if context exists
+          );
+          return;
+        }
+        setKbState("indexing");
+        setKbMessage("Indexing");
+        setKbProgress(null);
         // The agent dedupes: if an index is already running for this project
         // (e.g. started before this tab opened), this reattaches to it instead
         // of starting a second pass.
         const res = await agent.kbIndex(project, kbJobHandlers());
-        finalizeKbIndex(res);
+        finalizeKbIndex(res, project, true); // force context regen after fresh index
       } catch {
         setKbState("error");
         setKbMessage("KB index error (see log)");

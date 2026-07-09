@@ -110,6 +110,7 @@ function useOnline(): boolean {
 const KB_COLOR: Record<KbState, string> = {
   none: "var(--tt-danger)",
   indexing: "var(--tt-warn)",
+  context: "var(--tt-info)",
   ready: "var(--tt-success)",
   error: "var(--tt-danger)",
 };
@@ -224,6 +225,14 @@ export function StatusBar() {
             )}
           </>
         )}
+        {kbState === "context" && (
+          <span
+            className="h-1.5 w-28 overflow-hidden rounded-full bg-[var(--tt-outline)]"
+            aria-label="Project context generation in progress"
+          >
+            <span className="block h-full w-2/5 rounded-full bg-[var(--tt-info)] tt-progress-indeterminate" />
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-4">
         {metrics && (
@@ -309,7 +318,7 @@ export function StatusBar() {
         <Chip
           label="KB"
           color={KB_COLOR[kbState]}
-          pulse={kbState === "indexing"}
+          pulse={kbState === "indexing" || kbState === "context"}
           title={kbMessage || `Knowledge base: ${kbState}`}
         />
         {/* Agent / web version */}

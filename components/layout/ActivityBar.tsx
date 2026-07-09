@@ -22,6 +22,7 @@ import { useAppUpdate } from "@/lib/use-app-update";
 const KB_BADGE: Record<KbState, string | undefined> = {
   none: "var(--tt-danger)",
   indexing: "var(--tt-warn)",
+  context: "var(--tt-info)",
   ready: "var(--tt-success)",
   error: "var(--tt-danger)",
 };

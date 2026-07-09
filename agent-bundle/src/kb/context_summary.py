@@ -235,6 +235,11 @@ async def extract_project_context_async(
     user_prompt = _EXTRACTION_USER_TEMPLATE.format(context=doc_text)
     log("[INFO] Extracting project context from KB documents...")
 
+    # Context extraction sends ~200k chars to the model and expects ~8k tokens
+    # back. The default 120s timeout is too tight for large KBs on slower
+    # gateways. Temporarily raise it for this call, then restore.
+    original_timeout = getattr(client, "timeout_sec", 120.0)
+    client.timeout_sec = max(original_timeout, 300.0)
     try:
         result = await client.complete_async(
             model=model,
@@ -258,6 +263,8 @@ async def extract_project_context_async(
     except Exception as exc:  # noqa: BLE001
         log(f"[WARN] Context extraction failed (non-blocking): {exc!r}")
         return ProjectContext(kb_fingerprint=kb_fingerprint)
+    finally:
+        client.timeout_sec = original_timeout
 
 
 def save_context_summary(path: Path, ctx: ProjectContext) -> bool:
