@@ -26,6 +26,11 @@ truststore>=0.9
 
 # --- Secure credential storage ---
 keyring>=24.0
+# Required for the portable Fernet decryption of the bundled encrypted service
+# key (core/app_config.py::_portable_decrypt_bytes). Without it a fresh install
+# cannot load the shipped key and silently drops into Manual Mode. The wheel
+# ships in the wheelhouse (cryptography-*-cp311-abi3-*), so this stays offline.
+cryptography>=42.0
 
 # --- E2E browser automation (Playwright over CDP attach) ---
 # NOT in this file: playwright is installed as a SEPARATE optional step by

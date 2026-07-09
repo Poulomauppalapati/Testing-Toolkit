@@ -306,8 +306,8 @@ def detect_platform() -> tuple[str, str]:
 # --------------------------------------------------------------------------
 # Python discovery
 # --------------------------------------------------------------------------
-def _py_ok(exe: str) -> bool:
-    """True if `exe` is a runnable Python >= MIN_PY."""
+def _py_version(exe: str) -> tuple[int, int] | None:
+    """Return (major, minor) for `exe`, or None if it cannot be determined."""
     try:
         out = _run(
             [exe, "-c", "import sys;print('%d.%d' % sys.version_info[:2])"],
@@ -316,14 +316,20 @@ def _py_ok(exe: str) -> bool:
             timeout=20,
         )
     except Exception:
-        return False
+        return None
     if out.returncode != 0:
-        return False
+        return None
     try:
         major, minor = (int(x) for x in out.stdout.strip().split("."))
     except ValueError:
-        return False
-    return (major, minor) >= MIN_PY
+        return None
+    return (major, minor)
+
+
+def _py_ok(exe: str) -> bool:
+    """True if `exe` is a runnable Python >= MIN_PY."""
+    ver = _py_version(exe)
+    return ver is not None and ver >= MIN_PY
 
 
 def find_bundled_python(os_name: str, arch: str) -> str | None:
@@ -339,31 +345,97 @@ def find_bundled_python(os_name: str, arch: str) -> str | None:
     return None
 
 
-def find_system_python() -> str | None:
-    """Find a venv-capable Python already on the machine."""
-    names = ["python3", "python"]
-    if os.name == "nt":
-        names = ["py", "python", "python3"]
-    for name in names:
-        exe = shutil.which(name)
-        if not exe:
-            continue
-        # `py` is a launcher; normalise to a real interpreter path.
-        if Path(name).stem == "py":
-            try:
-                real = _run(
-                    [exe, "-3", "-c", "import sys;print(sys.executable)"],
-                    capture_output=True,
-                    text=True,
-                    timeout=20,
-                )
-                if real.returncode == 0 and real.stdout.strip():
-                    exe = real.stdout.strip()
-            except Exception:
-                pass
-        if _py_ok(exe):
-            return exe
+# Interpreter minor versions we actively probe for, newest-first within the
+# range the project supports. Version-specific names (python3.12, `py -3.12`)
+# let us find a wheelhouse-matching interpreter even when the default `python3`
+# is a different version.
+_PROBE_MINORS = (13, 12, 11, 10, 9)
+
+
+def _resolve_launcher_version(py_exe: str, flag: str) -> str | None:
+    """Resolve the real interpreter path behind the Windows `py` launcher for a
+    given version flag (e.g. '-3.12'). Returns the path or None."""
+    try:
+        real = _run(
+            [py_exe, flag, "-c", "import sys;print(sys.executable)"],
+            capture_output=True, text=True, timeout=20,
+        )
+        if real.returncode == 0 and real.stdout.strip():
+            return real.stdout.strip()
+    except Exception:
+        pass
     return None
+
+
+def _candidate_system_pythons() -> list[str]:
+    """Enumerate distinct, runnable system interpreters (>= MIN_PY).
+
+    Probes generic names AND version-specific names so we can later PREFER an
+    interpreter whose version matches the bundled wheelhouse. Order is not
+    significant here; the caller ranks by version.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def _add(exe: str | None) -> None:
+        if not exe:
+            return
+        try:
+            key = str(Path(exe).resolve())
+        except Exception:
+            key = exe
+        if key in seen:
+            return
+        seen.add(key)
+        if _py_ok(exe):
+            found.append(exe)
+
+    # Generic names.
+    for name in ("python3", "python"):
+        _add(shutil.which(name))
+
+    # Version-specific POSIX names (python3.12, python3.11, ...).
+    for minor in _PROBE_MINORS:
+        _add(shutil.which(f"python3.{minor}"))
+
+    # Windows `py` launcher: resolve the default and each version flag.
+    if os.name == "nt":
+        py = shutil.which("py")
+        if py:
+            _add(_resolve_launcher_version(py, "-3"))
+            for minor in _PROBE_MINORS:
+                _add(_resolve_launcher_version(py, f"-3.{minor}"))
+    return found
+
+
+def find_system_python(prefer: set[str] | None = None) -> str | None:
+    """Find a venv-capable system Python, preferring a wheelhouse-matching one.
+
+    `prefer` is a set of "major.minor" strings (the versions the bundled
+    wheelhouse can satisfy offline). When provided, an interpreter whose version
+    is in that set wins; otherwise we fall back to the newest runnable
+    interpreter >= MIN_PY (so the online fallback can still install for it).
+    """
+    candidates = _candidate_system_pythons()
+    if not candidates:
+        return None
+
+    versioned = [(exe, _py_version(exe)) for exe in candidates]
+    versioned = [(exe, v) for exe, v in versioned if v is not None]
+
+    if prefer:
+        matches = [
+            (exe, v) for exe, v in versioned if f"{v[0]}.{v[1]}" in prefer
+        ]
+        if matches:
+            # Newest matching version wins.
+            matches.sort(key=lambda t: t[1], reverse=True)
+            return matches[0][0]
+
+    # No wheelhouse-matching interpreter: return the newest available so the
+    # online fallback (or an already-covered pure-python install) can proceed.
+    versioned.sort(key=lambda t: t[1], reverse=True)
+    return versioned[0][0]
 
 
 # --------------------------------------------------------------------------
@@ -452,32 +524,106 @@ def _pkg_satisfies(python_exe: str, requirement: str) -> bool:
         return False
 
 
-def wheelhouse_supports(os_name: str, arch: str) -> bool:
-    """Heuristic: does the bundled wheelhouse contain wheels for this platform?
+# Highest CPython 3.x minor we assume a stable-ABI (abi3) wheel can run on.
+# abi3 wheels are forward-compatible, so a `cp39-abi3` wheel runs on 3.9..this.
+_CEILING_MINOR = 14
 
-    The bundle historically ships Windows/amd64 wheels only. Any binary
-    (non-pure-python) wheel encodes its platform in the filename, e.g.
-    `onnxruntime-1.17-cp311-cp311-win_amd64.whl`. If we find binary wheels but
-    none whose platform tag matches this OS/arch, an offline install will fail,
-    so callers should allow an online fallback.
+_TAG_OS = {"windows": "win", "macos": "macosx", "linux": "linux"}
+_TAG_ARCH = {"amd64": ("amd64", "x86_64"), "arm64": ("arm64", "aarch64")}
+
+
+def _wheel_pyminors(name: str) -> set[int] | None:
+    """Return the CPython 3.x minors a wheel supports as a BINARY constraint, or
+    None when it imposes no version constraint (pure-python).
+
+    - `...-py3-none-any` / `...-none-any` -> None (pure python)
+    - `cp3XX-abi3`                        -> floor {XX .. CEILING}
+    - `cp3XX-cp3XX`                       -> exact {XX}
+    """
+    import re
+
+    n = name.lower()
+    if "-none-any." in n or "-py3-none-" in n or "-py2.py3-none-" in n:
+        return None
+    m = re.search(r"cp3(\d+)-abi3", n)
+    if m:
+        return set(range(int(m.group(1)), _CEILING_MINOR + 1))
+    m = re.search(r"cp3(\d+)-cp3\d+", n)
+    if m:
+        return {int(m.group(1))}
+    return None
+
+
+def _wheelhouse_pyversions(os_name: str, arch: str) -> set[str] | None:
+    """Python versions the wheelhouse can satisfy OFFLINE for this platform.
+
+    Returns:
+      - {"*"}          : only pure-python deps -> any Python version works.
+      - {"3.12", ...}  : offline works for exactly these versions.
+      - set()          : platform has binary wheels but no single version can
+                         satisfy every binary dep (they disagree).
+      - None           : platform is not covered by any binary wheel at all
+                         (offline install of binary deps is impossible here).
+
+    The supported set is the INTERSECTION across binary packages (every binary
+    dependency must have a wheel for a version to be offline-installable), where
+    each package's set is the UNION across its matching-platform wheels.
     """
     if not WHEELHOUSE.is_dir():
-        return False
-    tag_os = {"windows": "win", "macos": "macosx", "linux": "linux"}.get(os_name, os_name)
-    tag_arch = {"amd64": ("amd64", "x86_64"), "arm64": ("arm64", "aarch64")}.get(
-        arch, (arch,)
-    )
-    binary_wheels = False
+        return None
+    tag_os = _TAG_OS.get(os_name, os_name)
+    tag_arch = _TAG_ARCH.get(arch, (arch,))
+
+    per_pkg: dict[str, set[int]] = {}
+    saw_platform_binary = False
+    saw_any_binary = False
     for whl in WHEELHOUSE.glob("*.whl"):
         name = whl.name.lower()
-        # Pure-python wheels (`...-py3-none-any.whl`) work everywhere; ignore.
-        if name.endswith("-none-any.whl"):
-            continue
-        binary_wheels = True
-        if tag_os in name and any(a in name for a in tag_arch):
-            return True
-    # If there are no binary wheels at all, pure-python deps install anywhere.
-    return not binary_wheels
+        constraint = _wheel_pyminors(name)
+        if constraint is None:
+            continue  # pure-python; imposes no constraint
+        saw_any_binary = True
+        if not (tag_os in name and any(a in name for a in tag_arch)):
+            continue  # binary wheel for a different platform
+        saw_platform_binary = True
+        pkg = name.split("-")[0]
+        per_pkg.setdefault(pkg, set()).update(constraint)
+
+    if not saw_platform_binary:
+        # No binary wheels for THIS platform. If the bundle has no binary wheels
+        # at all, pure-python installs anywhere; otherwise the required binary
+        # deps cannot be satisfied offline here.
+        return {"*"} if not saw_any_binary else None
+
+    supported: set[int] | None = None
+    for minors in per_pkg.values():
+        supported = minors if supported is None else (supported & minors)
+    if not supported:
+        return set()
+    return {f"3.{m}" for m in sorted(supported)}
+
+
+def wheelhouse_supports(
+    os_name: str, arch: str, py_version: tuple[int, int] | None = None
+) -> bool:
+    """Does the bundled wheelhouse cover an OFFLINE install for this platform
+    (and, when given, this specific Python version)?
+
+    When `py_version` is None this answers "is the platform covered for SOME
+    version?"; callers that already know the interpreter pass its version so a
+    Python-version/wheel-tag mismatch (e.g. wheelhouse is cp312 but the machine
+    runs 3.11) correctly reports 'not covered' and enables the online fallback.
+    """
+    supported = _wheelhouse_pyversions(os_name, arch)
+    if supported is None:
+        return False
+    if "*" in supported:
+        return True
+    if not supported:
+        return False
+    if py_version is None:
+        return True
+    return f"{py_version[0]}.{py_version[1]}" in supported
 
 
 def ensure_pip(python_exe: str) -> bool:
@@ -1688,35 +1834,59 @@ def main() -> int:
     launch_python: str | None = None
     use_pythonpath = False
 
-    system_py = find_system_python()
-    bundled_py = find_bundled_python(os_name, arch)
-
-    # Decide whether an online fallback is permitted. The bundle ships
-    # Windows/amd64 wheels, so on other OSes/arches the offline install can't
-    # satisfy binary deps; there we allow pip to pull the missing wheels from
-    # PyPI (bundled wheels are still preferred). Set TT_OFFLINE_ONLY=1 to force
-    # a strictly offline install (e.g. on an air-gapped network).
+    # Which Python versions can the wheelhouse satisfy OFFLINE for this
+    # platform? Drives interpreter SELECTION (prefer a matching version) and
+    # per-interpreter online-fallback decisions.
     offline_only = os.environ.get("TT_OFFLINE_ONLY") == "1"
-    covered = wheelhouse_supports(os_name, arch)
-    allow_online = (not offline_only) and (not covered)
-    if covered:
-        info(f"Bundled wheelhouse covers {os_name}-{arch} (offline install).")
-    elif offline_only:
+    supported = _wheelhouse_pyversions(os_name, arch)
+    prefer = (
+        None if (supported is None or "*" in supported or not supported)
+        else supported
+    )
+    if supported is None:
+        info(
+            f"Bundled wheelhouse has no binary wheels for {os_name}-{arch}; "
+            "an online fallback (PyPI) is required unless TT_OFFLINE_ONLY=1."
+        )
+    elif "*" in supported:
+        info(f"Bundled wheelhouse is pure-python for {os_name}-{arch} (any Python).")
+    elif not supported:
         warn(
-            f"Wheelhouse may not cover {os_name}-{arch}, but TT_OFFLINE_ONLY=1 "
-            "is set; staying strictly offline."
+            f"Bundled binary wheels for {os_name}-{arch} do not agree on a single "
+            "Python version; an online fallback may be required."
         )
     else:
-        warn(
-            f"Bundled wheels do not cover {os_name}-{arch}; will pull any "
-            "missing wheels from PyPI as a fallback (needs internet)."
+        info(
+            f"Bundled wheelhouse covers {os_name}-{arch} offline for Python "
+            f"{', '.join(sorted(supported))}."
         )
 
+    # Prefer a system Python whose version the wheelhouse can satisfy offline.
+    system_py = find_system_python(prefer)
+    bundled_py = find_bundled_python(os_name, arch)
+
+    def _covered(exe: str | None) -> bool:
+        return exe is not None and wheelhouse_supports(
+            os_name, arch, _py_version(exe)
+        )
+
+    def _allow_online(exe: str | None) -> bool:
+        # An online fallback is allowed when NOT air-gapped and this specific
+        # interpreter is not offline-covered (wrong OS/arch OR wrong version).
+        return (not offline_only) and (not _covered(exe))
+
     if system_py:
-        info(f"Found system Python: {system_py}")
+        pv = _py_version(system_py)
+        vtxt = f" (Python {pv[0]}.{pv[1]})" if pv else ""
+        info(f"Found system Python: {system_py}{vtxt}")
+        if not _covered(system_py) and not offline_only:
+            warn(
+                "This Python is not offline-covered by the bundle; missing "
+                "wheels will be pulled from PyPI (needs internet)."
+            )
         launch_python = install_via_venv(system_py)
-        # Offline venv failed on an uncovered platform -> retry allowing PyPI.
-        if not launch_python and allow_online:
+        # Offline venv failed for this interpreter -> retry allowing PyPI.
+        if not launch_python and _allow_online(system_py):
             info("Retrying venv install with online fallback...")
             shutil.rmtree(VENV_DIR, ignore_errors=True)
             launch_python = install_via_venv(system_py, online=True)
@@ -1725,7 +1895,7 @@ def main() -> int:
         info(f"Using bundled Python: {bundled_py}")
         # Bundled runtimes are often embeddable -> use the --target strategy.
         launch_python = install_via_target(bundled_py)
-        if not launch_python and allow_online:
+        if not launch_python and _allow_online(bundled_py):
             info("Retrying portable install with online fallback...")
             launch_python = install_via_target(bundled_py, online=True)
         use_pythonpath = launch_python is not None
@@ -1734,28 +1904,47 @@ def main() -> int:
         # venv path failed but we still have a real Python -> target install.
         info("Falling back to portable install with system Python...")
         launch_python = install_via_target(system_py)
-        if not launch_python and allow_online:
+        if not launch_python and _allow_online(system_py):
             info("Retrying portable install with online fallback...")
             launch_python = install_via_target(system_py, online=True)
         use_pythonpath = launch_python is not None
 
     if not launch_python:
         error("Could not install the agent.")
-        if offline_only and not covered:
+        have_py = system_py or bundled_py
+        ver_hint = (
+            f"Python {', '.join(sorted(supported))}"
+            if (supported and "*" not in supported)
+            else "Python 3.9+"
+        )
+        if offline_only and not _covered(have_py):
+            if have_py and supported and "*" not in supported:
+                error(
+                    f"TT_OFFLINE_ONLY=1 is set but the bundle only ships offline "
+                    f"wheels for {ver_hint} on {os_name}-{arch}; the available "
+                    "interpreter is a different version. Install a matching Python "
+                    "and re-run, or unset TT_OFFLINE_ONLY to allow a PyPI fallback."
+                )
+            else:
+                error(
+                    f"TT_OFFLINE_ONLY=1 is set but the bundle has no offline wheels "
+                    f"for {os_name}-{arch}. Add runtime/{os_name}-{arch} + matching "
+                    "wheels to the bundle, or unset TT_OFFLINE_ONLY for a PyPI "
+                    "fallback."
+                )
+        elif not have_py:
             error(
-                f"TT_OFFLINE_ONLY=1 is set but the bundle has no {os_name}-{arch} "
-                f"wheels. Either add runtime/{os_name}-{arch} + matching wheels to "
-                "the bundle, or unset TT_OFFLINE_ONLY to allow a PyPI fallback."
-            )
-        elif os_name != "windows":
-            error(
-                f"The offline install failed on {os_name}-{arch} and the online "
-                "fallback could not reach PyPI. Install a local Python 3.9+ and "
-                "ensure this machine can reach the internet (or a private mirror), "
-                "then re-run."
+                f"No suitable Python found. Install {ver_hint}"
+                + (" (e.g. from the Microsoft Store)" if os_name == "windows" else "")
+                + " and re-run."
             )
         else:
-            error("Install Python 3.9+ (e.g. from the Microsoft Store) and re-run.")
+            error(
+                f"The offline install failed on {os_name}-{arch} and the online "
+                f"fallback could not reach PyPI. Ensure {ver_hint} is installed "
+                "and this machine can reach the internet (or a private mirror), "
+                "then re-run."
+            )
         return 1
 
     # --- Optional: playwright (E2E browser automation) -------------------
