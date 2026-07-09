@@ -38,16 +38,28 @@ _VAULT = CredentialVault()
 # Test-case discovery (from the generation JSON sidecar)
 # ---------------------------------------------------------------------
 def _latest_sidecar_test_cases(project: str) -> list[dict[str, Any]]:
-    """Load flat test cases from the most recent generated JSON sidecar.
+    """Aggregate flat test cases across ALL generated JSON sidecars, keeping
+    each work item's MOST RECENT generation.
 
-    Generation writes ``review_*.json`` next to each reviewer .xlsx with a
-    flat ``test_cases`` list (id, title, steps, category, priority). We use
-    the newest sidecar only, matching the desktop dialog.
+    Generation writes one ``review_*.json`` per run (next to each reviewer
+    .xlsx) with a flat ``test_cases`` list where each entry's ``id`` is the
+    parent work item. A run may cover several work items, and different work
+    items are frequently generated in separate runs. Reading only the newest
+    sidecar (the old behavior) therefore dropped every work item except the
+    one in the latest run -- so selecting multiple work items on the board
+    showed test cases for just one of them.
+
+    We walk sidecars newest -> oldest and, for each work item id, take its
+    test cases from the FIRST (newest) sidecar that contains it. This yields
+    every work item that has ever been generated, each at its latest version,
+    and a later regeneration of a work item supersedes its older test cases.
     """
     paths = ensure_project(project)
     gen_dir = paths.generated_dir
     if not gen_dir.exists():
         return []
+    seen_wi: set[str] = set()
+    aggregated: list[dict[str, Any]] = []
     for json_path in sorted(
         gen_dir.glob("review_*.json"),
         key=lambda p: p.stat().st_mtime,
@@ -58,9 +70,19 @@ def _latest_sidecar_test_cases(project: str) -> list[dict[str, Any]]:
         except (json.JSONDecodeError, OSError):
             continue
         tcs = data if isinstance(data, list) else data.get("test_cases", [])
-        if tcs:
-            return tcs
-    return []
+        if not tcs:
+            continue
+        # Work items introduced by THIS (newer) sidecar win; skip any work
+        # item already contributed by a more recent sidecar.
+        wi_in_file = {str(tc.get("id", "")) for tc in tcs}
+        new_wi = wi_in_file - seen_wi
+        if not new_wi:
+            continue
+        for tc in tcs:
+            if str(tc.get("id", "")) in new_wi:
+                aggregated.append(tc)
+        seen_wi |= new_wi
+    return aggregated
 
 
 @router.get("/test-cases/{project}")

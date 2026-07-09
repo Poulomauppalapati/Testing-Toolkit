@@ -9,7 +9,7 @@ import { type SaveSettingsPayload } from "@/lib/agent-client";
 // Claude trio. Order: [0]=primary, [1]=fast, [2]=fallback. Models are managed by
 // the backend and are no longer user-editable in Settings (desktop parity).
 const SEED_MODELS = [
-  "bedrock.anthropic.claude-opus-4-6",
+  "bedrock.anthropic.claude-opus-4-8",
   "bedrock.anthropic.claude-sonnet-4-6",
   "bedrock.anthropic.claude-haiku-4-5",
 ];

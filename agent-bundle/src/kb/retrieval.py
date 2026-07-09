@@ -107,6 +107,47 @@ def _embed_texts(embedder: Any, texts: list[str]) -> Any:
     return embedder.embed(texts)
 
 
+def _drop_stale_vectors(
+    index_dir: Path, model_name: str, dim: int, on_log: LogFn | None,
+) -> None:
+    """Delete an existing on-disk vector store when it was built with a
+    different embedding model or dimension than the current embedder. Without
+    this, a model/dim upgrade would leave the old vectors in place (because the
+    resume logic only embeds MISSING ids) and query vectors of the new
+    dimension would silently mismatch. Best-effort; never raises."""
+    import shutil
+
+    p = index_dir / _MANIFEST_FILE
+    if not p.exists():
+        return
+    try:
+        from kb.kb_crypto import read_decrypted_text
+        text = read_decrypted_text(p)
+        if text is None:
+            return
+        man = json.loads(text)
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return
+    old_model = str(man.get("model", ""))
+    old_dim = int(man.get("dim", 0) or 0)
+    if not old_model and not old_dim:
+        return  # lexical-only prior index; nothing to invalidate
+    if old_model == str(model_name) and old_dim == int(dim):
+        return  # same embedding identity; keep and resume
+    _log(on_log, f"[INFO] Embedding model/dim changed "
+                 f"({old_model}/{old_dim} -> {model_name}/{dim}); "
+                 f"rebuilding dense vectors from scratch.")
+    for name in ("vectors.npy", "vector_ids.json", _MANIFEST_FILE):
+        try:
+            (index_dir / name).unlink(missing_ok=True)
+        except OSError:
+            pass
+    try:
+        shutil.rmtree(index_dir / "lance", ignore_errors=True)
+    except OSError:
+        pass
+
+
 # ---------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------
@@ -166,6 +207,12 @@ def build_hybrid_index(
         try:
             dim = int(getattr(embedder, "dim", 0))
             model_name = str(getattr(embedder, "name", "embedder"))
+            # If a prior index used a different embedding model/dim, its stored
+            # vectors are incompatible with the new query vectors. Drop the old
+            # vector store + manifest so we re-embed every chunk from scratch
+            # (otherwise `already == len(ids)` would skip re-embedding and leave
+            # mismatched-dimension vectors on disk).
+            _drop_stale_vectors(index_dir, model_name, dim, on_log)
             store = open_vector_store(index_dir, dim or 384)
             already = store.count()
             if already < len(ids):
@@ -572,14 +619,20 @@ def hybrid_has_dense(index_dir: Path | str) -> bool:
 
 def hybrid_index_is_current(
     index_dir: Path | str, n_chunks: int, min_built_at: float,
-    want_dense: bool = False,
+    want_dense: bool = False, want_model: str = "", want_dim: int = 0,
 ) -> bool:
     """Cheap check (reads only the small manifest) to decide whether the
     hybrid index already reflects the current chunk set, so callers can skip
     a redundant rebuild. True only if the manifest exists, its chunk count
     matches, it was built at/after the source index, and - when want_dense
     is True - the existing index already has dense vectors (so flipping
-    dense on forces a rebuild that adds them)."""
+    dense on forces a rebuild that adds them).
+
+    When want_model/want_dim are supplied, the stored embedding model name and
+    vector dimension MUST also match. This forces exactly one rebuild whenever
+    the configured embedding model or dimension changes (e.g. upgrading from
+    text-embedding-3-small/512 to text-embedding-3-large/3072); otherwise stale
+    vectors of the wrong dimension would silently mismatch query vectors."""
     try:
         from kb.kb_crypto import read_decrypted_text
         p = Path(index_dir) / _MANIFEST_FILE
@@ -590,6 +643,12 @@ def hybrid_index_is_current(
             return False
         man = json.loads(text)
         if want_dense and not bool(man.get("dense", False)):
+            return False
+        # Embedding identity guard: a changed model or dim invalidates vectors.
+        if want_dense and want_dim and int(man.get("dim", 0)) != int(want_dim):
+            return False
+        if (want_dense and want_model
+                and str(man.get("model", "")) != str(want_model)):
             return False
         return (int(man.get("n_chunks", -1)) == int(n_chunks)
                 and float(man.get("built_at", 0.0)) >= float(min_built_at)

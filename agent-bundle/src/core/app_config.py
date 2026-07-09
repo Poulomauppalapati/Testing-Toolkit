@@ -202,8 +202,10 @@ DEFAULT_LLM_BASE_URL: Final[str] = "https://api.anthropic.com"
 LLM_API_VERSION:      Final[str] = "2025-04-15"
 
 # Primary model drives test-case generation (quality matters).
-DEFAULT_MODEL: Final[str] = "bedrock.anthropic.claude-opus-4-6"
-# Fast model for the recursive retrieval map steps.
+# Opus 4-8 is the newest/largest frontier Claude in the GenAI catalog
+# (bedrock, 128k output tokens) -> best reasoning + coverage quality.
+DEFAULT_MODEL: Final[str] = "bedrock.anthropic.claude-opus-4-8"
+# Fast model for the recursive retrieval map steps (newest default Sonnet).
 DEFAULT_FAST_MODEL: Final[str] = "bedrock.anthropic.claude-sonnet-4-6"
 # Safety fallback model used when primary/fast fail or rate-limit.
 DEFAULT_FALLBACK_MODEL: Final[str] = "bedrock.anthropic.claude-haiku-4-5"
@@ -253,8 +255,12 @@ MODEL_OCR:          Final[str] = _cfg("MODEL_OCR")
 # --- Embedding model (consumed by kb.embeddings API embedder) ---
 # API-based embeddings (matches desktop). Override for a different
 # embedding model/dimension.
-EMBED_MODEL: Final[str] = _cfg("EMBED_MODEL", "azure.text-embedding-3-small")
-EMBED_DIM:   Final[int] = int(_cfg("EMBED_DIM", "512") or "512")
+# text-embedding-3-large is the highest-quality embedding model in the
+# catalog (native 3072 dims). Using full dimensionality maximizes retrieval
+# fidelity. NOTE: changing model/dim invalidates existing vectors -> a KB
+# re-index is required (handled automatically via the embedding fingerprint).
+EMBED_MODEL: Final[str] = _cfg("EMBED_MODEL", "azure.text-embedding-3-large")
+EMBED_DIM:   Final[int] = int(_cfg("EMBED_DIM", "3072") or "3072")
 
 # Token budgets for the Recursive Language Model (approximate; we count
 # characters at ~4 chars/token). If the whole project KB fits under

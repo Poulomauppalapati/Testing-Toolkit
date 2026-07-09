@@ -351,9 +351,27 @@ def _build_hybrid_from_index(
     try:
         from kb.retrieval import hybrid_index_is_current
 
+        # Configured embedding identity (cheap constants, no model load) so a
+        # model/dim upgrade forces exactly one rebuild.
+        want_model = ""
+        want_dim = 0
+        if want_dense:
+            try:
+                from core.app_config import EMBED_DIM, EMBED_MODEL
+
+                # The API embedder names itself "api:<model>" (see
+                # kb.embeddings._APIEmbedder.name); match that so the manifest
+                # comparison in hybrid_index_is_current is consistent.
+                want_model = f"api:{EMBED_MODEL}"
+                want_dim = int(EMBED_DIM)
+            except Exception:
+                want_model, want_dim = "", 0
+
         if not force and hybrid_index_is_current(p.hybrid_dir, len(chunks),
                                                   index.built_at,
-                                                  want_dense=want_dense):
+                                                  want_dense=want_dense,
+                                                  want_model=want_model,
+                                                  want_dim=want_dim):
             if on_log is not None:
                 try:
                     on_log("[INFO] Hybrid index already current; reused.")

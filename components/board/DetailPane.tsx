@@ -18,6 +18,9 @@ import {
   FileCheck2,
   FileCog,
   ExternalLink as OpenIcon,
+  CheckSquare,
+  Square,
+  MinusSquare,
 } from "lucide-react";
 import {
   agent,
@@ -706,7 +709,11 @@ function OutputsContent({
   const { openDialog, setGenerateCtx } = useAppState();
   const [files, setFiles] = useState<ArtifactFile[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState<string>("");
+  // Multi-select: paths of every ticked artifact. The most-recently-clicked
+  // path (activePath) drives the single-target Download link and menu actions.
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [activePath, setActivePath] = useState<string>("");
+  const [busy, setBusy] = useState(false);
   const [menu, setMenu] = useState<
     { x: number; y: number; art: ParsedArtifact } | null
   >(null);
@@ -717,8 +724,15 @@ function OutputsContent({
     agent
       .listArtifacts(project)
       .then((fs) => {
+        const live = new Set(fs.map((f) => f.path));
         setFiles(fs);
-        setSelected((cur) => (fs.some((f) => f.path === cur) ? cur : ""));
+        // Drop any selections whose files no longer exist.
+        setSelectedPaths((cur) => {
+          const next = new Set<string>();
+          cur.forEach((p) => live.has(p) && next.add(p));
+          return next;
+        });
+        setActivePath((cur) => (live.has(cur) ? cur : ""));
       })
       .catch(() => setFiles([]))
       .finally(() => setLoading(false));
@@ -739,22 +753,73 @@ function OutputsContent({
     [parsed]
   );
 
+  // All artifact paths in current display order (for select-all).
+  const allPaths = useMemo(() => parsed.map((p) => p.file.path), [parsed]);
+  const allSelected =
+    allPaths.length > 0 && allPaths.every((p) => selectedPaths.has(p));
+  const someSelected = selectedPaths.size > 0 && !allSelected;
+
+  const toggleOne = (path: string) => {
+    setSelectedPaths((cur) => {
+      const next = new Set(cur);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+    setActivePath(path);
+  };
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelectedPaths(new Set());
+      setActivePath("");
+    } else {
+      setSelectedPaths(new Set(allPaths));
+    }
+  };
+
   const openPath = (path: string) => {
     if (!path) return;
     window.open(agent.artifactDownloadUrl(path), "_blank", "noopener");
   };
 
-  const deletePath = async (path: string) => {
-    if (!path) return;
-    try {
-      await agent.deleteArtifact(path);
-      pushLog("SUCCESS", "Deleted artifact.");
-      setSelected((cur) => (cur === path ? "" : cur));
-      refresh();
-    } catch (e) {
-      pushLog("ERROR", `Delete failed: ${(e as Error).message}`);
+  // Delete one or many artifacts. Bulk deletes run sequentially and report a
+  // single summary; the list refreshes once at the end.
+  const deletePaths = async (paths: string[]) => {
+    const targets = paths.filter(Boolean);
+    if (targets.length === 0) return;
+    if (
+      targets.length > 1 &&
+      typeof window !== "undefined" &&
+      !window.confirm(`Delete ${targets.length} selected artifact(s)?`)
+    ) {
+      return;
     }
+    setBusy(true);
+    let ok = 0;
+    let failed = 0;
+    for (const path of targets) {
+      try {
+        await agent.deleteArtifact(path);
+        ok += 1;
+      } catch (e) {
+        failed += 1;
+        pushLog("ERROR", `Delete failed: ${(e as Error).message}`);
+      }
+    }
+    setBusy(false);
+    if (ok > 0) {
+      pushLog(
+        "SUCCESS",
+        `Deleted ${ok} artifact(s)${failed ? ` (${failed} failed)` : ""}.`
+      );
+    }
+    setSelectedPaths(new Set());
+    setActivePath("");
+    refresh();
   };
+
+  const deletePath = (path: string) => deletePaths([path]);
 
   // Right-click actions: load an artifact back into the Generate dialog for
   // regeneration with feedback, or push it to ADO.
@@ -779,9 +844,29 @@ function OutputsContent({
       <h3 className="text-sm font-bold text-[var(--tt-text-primary)]">
         Generated artifacts{projectLabel ? ` - ${projectLabel}` : ""}
       </h3>
-      <p className="text-xs text-[var(--tt-text-muted)]">
-        {parsed.length} file(s) across {boardCount} board(s).
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-[var(--tt-text-muted)]">
+          {parsed.length} file(s) across {boardCount} board(s)
+          {selectedPaths.size > 0 ? ` · ${selectedPaths.size} selected` : ""}.
+        </p>
+        {parsed.length > 0 && (
+          <button
+            type="button"
+            className="flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs text-[var(--tt-text-secondary)] transition-colors hover:bg-[var(--tt-surface-high)]"
+            onClick={toggleAll}
+            title={allSelected ? "Deselect all" : "Select all"}
+          >
+            {allSelected ? (
+              <CheckSquare className="h-3.5 w-3.5 text-[var(--tt-primary)]" />
+            ) : someSelected ? (
+              <MinusSquare className="h-3.5 w-3.5 text-[var(--tt-primary)]" />
+            ) : (
+              <Square className="h-3.5 w-3.5" />
+            )}
+            {allSelected ? "Deselect all" : "Select all"}
+          </button>
+        )}
+      </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-[8px] border border-[var(--tt-outline)] bg-[var(--tt-surface-deepest)]">
         {parsed.length === 0 ? (
@@ -792,7 +877,9 @@ function OutputsContent({
         ) : (
           parsed.map((p) => {
             const f = p.file;
-            const isSel = f.path === selected;
+            const isActive = f.path === activePath;
+            const isChecked = selectedPaths.has(f.path);
+            const isSel = isActive || isChecked;
             const isPdf = /\.pdf$/i.test(f.name);
             const ArtIcon = isPdf ? FileText : p.tcType === "implementation"
               ? FileCog
@@ -806,26 +893,66 @@ function OutputsContent({
               : isPdf                         ? "tt-badge-neutral"
               :                                 "tt-badge-neutral";
             return (
-              <button
+              <div
                 key={f.path}
-                onClick={() => setSelected(f.path)}
+                role="button"
+                tabIndex={0}
+                onClick={() => setActivePath(f.path)}
                 onDoubleClick={() => openPath(f.path)}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    openPath(f.path);
+                  } else if (e.key === " ") {
+                    e.preventDefault();
+                    toggleOne(f.path);
+                  }
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
-                  setSelected(f.path);
+                  setActivePath(f.path);
                   setMenu({ x: e.clientX, y: e.clientY, art: p });
                 }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors"
+                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors"
                 style={{
-                  background: isSel ? "var(--tt-row-sel)" : "transparent",
-                  color: isSel ? "#ffffff" : "var(--tt-text-secondary)",
+                  background: isChecked
+                    ? "var(--tt-row-sel)"
+                    : isActive
+                      ? "var(--tt-surface-high)"
+                      : "transparent",
+                  color: isChecked ? "#ffffff" : "var(--tt-text-secondary)",
                 }}
                 title={f.name}
               >
+                {/* Selection checkbox */}
+                <span
+                  role="checkbox"
+                  aria-checked={isChecked}
+                  aria-label={`Select ${f.name}`}
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleOne(f.path);
+                  }}
+                  className="flex shrink-0 items-center"
+                >
+                  {isChecked ? (
+                    <CheckSquare
+                      className="h-3.5 w-3.5"
+                      style={{ color: "rgba(255,255,255,0.85)" }}
+                    />
+                  ) : (
+                    <Square
+                      className="h-3.5 w-3.5"
+                      style={{ color: "var(--tt-text-faint)" }}
+                    />
+                  )}
+                </span>
                 {/* File type icon */}
                 <ArtIcon
                   className="h-3.5 w-3.5 shrink-0"
-                  style={{ color: isSel ? "rgba(255,255,255,0.7)" : "var(--tt-primary)" }}
+                  style={{ color: isChecked ? "rgba(255,255,255,0.7)" : "var(--tt-primary)" }}
                 />
                 {/* Board + group label */}
                 <span className="min-w-0 flex-1 truncate">
@@ -835,7 +962,7 @@ function OutputsContent({
                 {p.phaseLabel && p.phaseLabel !== "General" && (
                   <span
                     className={`tt-badge ${phaseBadgeClass} shrink-0`}
-                    style={isSel ? { background: "rgba(255,255,255,0.18)", color: "white" } : undefined}
+                    style={isChecked ? { background: "rgba(255,255,255,0.18)", color: "white" } : undefined}
                   >
                     {p.phaseLabel}
                   </span>
@@ -845,22 +972,22 @@ function OutputsContent({
                   className="shrink-0 font-mono tabular-nums"
                   style={{
                     fontSize: "9px",
-                    color: isSel ? "rgba(255,255,255,0.55)" : "var(--tt-text-faint)",
+                    color: isChecked ? "rgba(255,255,255,0.55)" : "var(--tt-text-faint)",
                   }}
                 >
                   {p.when}
                 </span>
-              </button>
+              </div>
             );
           })
         )}
       </div>
 
       <div className="flex items-center gap-2">
-        {selected ? (
+        {activePath ? (
           <a
             className="tt-btn-primary !px-4 !py-1.5 text-sm"
-            href={agent.artifactDownloadUrl(selected)}
+            href={agent.artifactDownloadUrl(activePath)}
             download
             target="_blank"
             rel="noopener noreferrer"
@@ -874,10 +1001,14 @@ function OutputsContent({
         )}
         <button
           className="tt-btn-danger !px-4 !py-1.5 text-sm"
-          disabled={!selected}
-          onClick={() => deletePath(selected)}
+          disabled={busy || (selectedPaths.size === 0 && !activePath)}
+          onClick={() =>
+            deletePaths(
+              selectedPaths.size > 0 ? Array.from(selectedPaths) : [activePath]
+            )
+          }
         >
-          Delete
+          {selectedPaths.size > 1 ? `Delete (${selectedPaths.size})` : "Delete"}
         </button>
         <button
           className="tt-btn-ghost !px-4 !py-1.5 text-sm"
