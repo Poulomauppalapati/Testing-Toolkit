@@ -9,9 +9,14 @@ import {
   ChevronRight,
   RefreshCw,
   Layers,
+  SearchCode,
+  KeyRound,
+  Sun,
+  Moon,
   type LucideIcon,
 } from "lucide-react";
 import { useAppState, type KbState } from "@/lib/app-state";
+import { useTheme } from "@/lib/theme";
 import { Dropdown } from "@/components/ui/dropdown";
 import { agent } from "@/lib/agent-client";
 import { useAppUpdate } from "@/lib/use-app-update";
@@ -67,6 +72,7 @@ export function ActivityBar() {
     kbState,
   } = useAppState();
 
+  const { theme, toggleTheme } = useTheme();
   const { apply: applyUpdate, busy: updateBusy } = useAppUpdate(pushLog);
 
   async function onUpdateClick() {
@@ -133,6 +139,23 @@ export function ActivityBar() {
         onClick={() => openDialog("kb")}
         disabled={!currentProject}
         badge={currentProject ? KB_BADGE[kbState] : undefined}
+      />
+      <RailButton
+        icon={SearchCode}
+        label="Retrieval preview"
+        onClick={() => openDialog("retrieval")}
+        disabled={!currentProject}
+      />
+      <RailButton
+        icon={KeyRound}
+        label="Test credentials"
+        onClick={() => openDialog("credentials")}
+        disabled={!currentProject}
+      />
+      <RailButton
+        icon={theme === "dark" ? Sun : Moon}
+        label={theme === "dark" ? "Light theme" : "Dark theme"}
+        onClick={toggleTheme}
       />
       <RailButton
         icon={ChevronRight}
