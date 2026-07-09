@@ -49,7 +49,7 @@ async def get_settings() -> SettingsResponse:
         get_setting,
         get_tour_completed,
         has_api_key,
-        is_configured,
+        is_any_source_configured,
         is_jira_configured,
         load_jira_pat,
         load_pat_value,
@@ -64,7 +64,9 @@ async def get_settings() -> SettingsResponse:
         KEY_JIRA_PREFIX,
     )
     return SettingsResponse(
-        configured=is_configured(),
+        # App-level gate: ADO is optional, so setup is done once EITHER source
+        # (Azure DevOps or JIRA) is configured.
+        configured=is_any_source_configured(),
         has_api_key=has_api_key(),
         has_pat=bool(load_pat_value()),
         organization=get_setting(KEY_ORG),

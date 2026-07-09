@@ -71,8 +71,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   };
 
   const save = async () => {
-    if (!values.pat.trim() || !values.organization.trim()) {
-      setStatus("PAT and Organization are required.");
+    // ADO is optional (like JIRA): allow saving with it blank. Only block the
+    // half-filled case, which can't authenticate and is almost always a typo.
+    const pat = values.pat.trim();
+    const org = values.organization.trim();
+    if ((pat && !org) || (!pat && org)) {
+      setStatus("Enter both Azure DevOps PAT and Organization, or leave both blank.");
       return;
     }
     setBusy(true);

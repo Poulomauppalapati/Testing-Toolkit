@@ -78,24 +78,39 @@ function SetupWizard({
   const log = (m: string) => setLogs((p) => [...p, m]);
 
   const connect = async () => {
-    if (!values.pat.trim() || !values.organization.trim()) {
-      log("[ERROR] PAT and Organization are required.");
+    // Azure DevOps is optional. Require both PAT and Organization together (or
+    // neither) — a half-filled pair can't authenticate.
+    const pat = values.pat.trim();
+    const org = values.organization.trim();
+    const adoProvided = !!pat && !!org;
+    if ((pat && !org) || (!pat && org)) {
+      log("[ERROR] Enter both PAT and Organization, or leave both blank.");
       return;
     }
     setBusy(true);
     setLogs([]);
-    log("[INFO] Saving settings and connecting...");
+    log("[INFO] Saving settings...");
     try {
       await agent.saveSettings(toPayload(values));
-      const v = await agent.verifyPat();
-      if (!v.ok) {
-        log(`[ERROR] ADO connection failed: ${v.detail}`);
-        setBusy(false);
-        return;
+      if (adoProvided) {
+        log("[INFO] Verifying Azure DevOps connection...");
+        const v = await agent.verifyPat();
+        if (!v.ok) {
+          log(`[ERROR] ADO connection failed: ${v.detail}`);
+          setBusy(false);
+          return;
+        }
+        log("[SUCCESS] ADO connected.");
       }
-      log("[SUCCESS] ADO connected.");
       const s = await agent.getSettings();
-      onConnected(s);
+      // Configured when a source (ADO or JIRA) is set up. Otherwise proceed to
+      // the app in manual mode — the user can add JIRA later from Settings.
+      if (s.configured) {
+        onConnected(s);
+      } else {
+        log("[INFO] No source configured yet — opening in manual mode.");
+        onSkip();
+      }
     } catch (e) {
       log(`[ERROR] Setup failed: ${(e as Error).message}`);
       setBusy(false);
@@ -132,10 +147,11 @@ function SetupWizard({
           Set up your connection
         </h2>
         <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-          Enter your LLM API and Azure DevOps details. On{" "}
+          Optionally enter your LLM API and Azure DevOps details. On{" "}
           <b className="text-[var(--tt-text-secondary)]">Save &amp; Connect</b> the app stores
-          credentials, verifies the PAT, and loads your projects. No API key?
-          You can still proceed and use Manual Mode.
+          credentials, verifies Azure DevOps (when provided), and loads your
+          projects. Azure DevOps is optional — you can connect JIRA later from
+          Settings, or proceed in Manual Mode.
         </p>
 
         <div className="mt-5">

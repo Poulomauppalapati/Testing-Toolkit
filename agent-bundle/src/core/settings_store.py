@@ -334,10 +334,13 @@ def set_tour_completed(value: bool) -> bool:
 # First-run detection
 # ---------------------------------------------------------------------
 def is_configured() -> bool:
-    """True when the minimum one-time setup is complete: an LLM API
-    key, an ADO PAT, and an organization are all present. (Manual mode
-    can run without the API key, but first-run setup still collects it;
-    the user may skip it and the app falls back to manual mode.)"""
+    """True when Azure DevOps is set up (PAT + organization).
+
+    This stays ADO-specific: source resolution (source_resolver, sources
+    route) uses it to decide whether ADO is usable. For the app-level
+    "has the user finished first-run setup?" gate, use
+    is_any_source_configured(), since ADO is now optional (JIRA-only setups
+    are valid too)."""
     has_pat = bool((load_pat() or "").strip())
     has_org = bool(get_setting(KEY_ORG).strip())
     return has_pat and has_org
@@ -399,6 +402,14 @@ def is_jira_configured() -> bool:
         and get_setting(KEY_JIRA_USER).strip()
         and load_jira_pat()
     )
+
+
+def is_any_source_configured() -> bool:
+    """True when AT LEAST ONE work-item source is set up (ADO or JIRA).
+
+    This is the app-level first-run gate: ADO is optional, so the user has
+    finished setup as soon as either Azure DevOps or JIRA is configured."""
+    return is_configured() or is_jira_configured()
 
 
 def build_jira_runtime_config() -> "RuntimeConfig":

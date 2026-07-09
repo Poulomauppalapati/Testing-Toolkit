@@ -214,24 +214,28 @@ export function ConnectionFields({
         </>
       )}
 
-      <SectionHeader>Azure DevOps</SectionHeader>
-      <Field label="PAT" required>
+      <SectionHeader>Azure DevOps (optional)</SectionHeader>
+      <Field label="PAT">
         <MaskedField
           value={values.pat}
-          placeholder="Personal Access Token (required)"
+          placeholder="Personal Access Token"
           onChange={(v) => set("pat", v)}
         />
       </Field>
-      <Field label="Organization" required>
+      <Field label="Organization">
         <input
           type="text"
           className="tt-input"
-          placeholder="e.g. pwc-us-adv-digital (required)"
+          placeholder="e.g. pwc-us-adv-digital"
           value={values.organization}
           onChange={(e) => set("organization", e.target.value)}
         />
       </Field>
-      <p className="pl-[152px] text-xs text-[var(--tt-danger)]">* required</p>
+      <p className="pl-[152px] text-xs text-muted-foreground">
+        Connect Azure DevOps to browse boards and generate test cases from ADO
+        work items. Provide both PAT and Organization, or leave blank to use
+        JIRA only.
+      </p>
       {!readOnlyModels && (
         <>
           <Field label="Strip project prefix">

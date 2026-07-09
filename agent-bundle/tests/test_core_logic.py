@@ -65,6 +65,22 @@ def test_resolve_source_jira_only(monkeypatch):
     assert resolve_source("Unsuffixed") is SourceType.JIRA
 
 
+def test_is_any_source_configured_ado_optional(monkeypatch):
+    # App-level first-run gate: setup is done when EITHER source is configured,
+    # so ADO is optional (JIRA-only is a valid, fully-configured setup).
+    import core.settings_store as ss
+
+    for ado, jira, expected in [
+        (False, False, False),
+        (True, False, True),   # ADO only
+        (False, True, True),   # JIRA only -> ADO optional
+        (True, True, True),
+    ]:
+        monkeypatch.setattr(ss, "is_configured", lambda a=ado: a)
+        monkeypatch.setattr(ss, "is_jira_configured", lambda j=jira: j)
+        assert ss.is_any_source_configured() is expected
+
+
 # --------------------------------------------------------------------------
 # app_config: env parser, _cfg precedence, name/worker helpers
 # --------------------------------------------------------------------------
