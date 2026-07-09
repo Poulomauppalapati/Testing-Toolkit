@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useAppState } from "@/lib/app-state";
 import { SettingsDialog } from "./SettingsDialog";
 import { GenerateDialog } from "./GenerateDialog";
@@ -14,10 +15,10 @@ import { E2EDialog } from "./E2EDialog";
 import { AboutDialog } from "./AboutDialog";
 import { ViewLogDialog } from "./ViewLogDialog";
 import { AiStackDialog } from "./AiStackDialog";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { Modal } from "@/components/ui/modal";
 
-export function DialogHost() {
-  const { dialog, closeDialog } = useAppState();
-
+function renderDialog(dialog: string, closeDialog: () => void): ReactNode {
   switch (dialog) {
     case "settings":
       return <SettingsDialog onClose={closeDialog} />;
@@ -48,4 +49,33 @@ export function DialogHost() {
     default:
       return null;
   }
+}
+
+export function DialogHost() {
+  const { dialog, closeDialog } = useAppState();
+
+  if (!dialog) return null;
+
+  // Isolate each dialog: a render fault surfaces a recoverable error dialog
+  // instead of white-screening the whole app (the board stays alive).
+  return (
+    <ErrorBoundary
+      label="this dialog"
+      resetKey={dialog}
+      fallback={(error) => (
+        <Modal open title="Something went wrong" onClose={closeDialog} width={480}>
+          <div className="p-5 text-sm text-[var(--tt-text-muted)]">
+            <p className="mb-2 text-[var(--tt-text-bright)]">
+              This action hit an unexpected error and was stopped safely.
+            </p>
+            <p className="break-words text-xs text-[var(--tt-text-faint)]">
+              {error.message || "Unknown error."}
+            </p>
+          </div>
+        </Modal>
+      )}
+    >
+      {renderDialog(dialog, closeDialog)}
+    </ErrorBoundary>
+  );
 }

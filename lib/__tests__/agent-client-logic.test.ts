@@ -9,6 +9,7 @@ import {
 import type { WorkItemRow } from "../agent-client";
 import { userStoryIds } from "../board-utils";
 import { humanSize } from "../../components/ui/download-links";
+import { ErrorBoundary } from "../../components/ui/error-boundary";
 
 describe("userStoryIds (SIT/UAT auto-select parity)", () => {
   const row = (wi_id: number | string, wi_type: string): WorkItemRow =>
@@ -146,6 +147,15 @@ describe("list endpoints never crash consumers on malformed payloads", () => {
     stubFetch({ credentials: [{ environment: "SIT" }] });
     const out = await agent.listCredentials("Proj");
     expect(out).toHaveLength(1);
+  });
+});
+
+describe("ErrorBoundary derives error state from a thrown error", () => {
+  // Regression: a component fault (e.g. the TT-002 credentials crash) must be
+  // captured into boundary state instead of white-screening the whole app.
+  it("maps a thrown error into { error }", () => {
+    const err = new Error("boom");
+    expect(ErrorBoundary.getDerivedStateFromError(err)).toEqual({ error: err });
   });
 });
 
