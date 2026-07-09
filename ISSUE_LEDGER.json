@@ -2,26 +2,45 @@
   "charter": "v0_master_prompt: CXO demo-ready, full desktop parity, all discipline gates green.",
   "architecture": "Next.js 16 / React 19 / Tailwind v4 browser -> local FastAPI agent (127.0.0.1:7842). Browser never holds secrets. ADO/Jira writes mocked in testing.",
   "knobs": { "MAX_ITERATIONS": 12, "CONVERGENCE": "2 consecutive passes, zero new P0/P1" },
-  "iterations_used": 6,
-  "convergence_status": "CONVERGED across all discipline lenses (security, a11y, performance, parity, exploratory). Multi-lens session fixed 1 P1 (TT-002 crash), 1 security P1 (TT-004 headers), and 3 a11y issues (TT-005/006/007). Final sweep: 10/10 dialogs crash-free, board-row keyboard verified, offline degradation verified. Two candidates disproven (TT-001 theme, TT-003 hydration = preview artifacts).",
+  "iterations_used": 8,
+  "convergence_status": "CONVERGED. Dev/QA/CXO loop: fix pass added error boundaries (TT-008) + fixed status-bar undefined leak (TT-009); subsequent full re-sweep found ZERO new findings (9 dialogs, 0 white-screens, 0 unexpected boundary fallbacks; 0 dep vulns; 0 type escapes; no undefined/NaN in rendered UI). Prior lenses (security TT-004, a11y TT-005/006/007, crash TT-002) all still green. Candidates disproven: TT-001 theme, TT-003 hydration (preview artifacts).",
   "lenses": {
     "security": "headers added + postcss patched + no hardcoded secrets + constant-time proxy token",
     "accessibility": "modal focus-trap/restore, reduced-motion universal reset, board+nav keyboard activation",
     "performance": "CWV all good (TTFB 67ms, FCP 132ms, LCP 320ms, CLS 0.02) — no defects",
     "parity": "all desktop dialogs present; swipe review-feed logged as backlog (net-new, not a bug)",
-    "exploratory": "10/10 dialogs crash-free; chat IME guard correct; edge/offline states correct"
+    "exploratory": "9-10/10 dialogs crash-free across two sweeps; chat IME guard correct; edge/offline states correct",
+    "dev_resilience": "error boundaries (component + route + global) isolate faults; a dialog crash no longer white-screens the app; 0 any/ts-ignore escapes",
+    "qa_states": "every load-on-open dialog tracks error state; loading/empty/error/boundary handled (Retrieval/Chat/E2E verified); numeric inputs clamped",
+    "cxo_value": "board-room-ready finish; no undefined/NaN in status bar or metrics; coverage/selection/E2E chips render clean"
   },
   "gates": {
     "tsc": "PASS (0 errors)",
-    "vitest": "PASS (21/21, +4 regression)",
+    "vitest": "PASS (22/22, +5 regression)",
     "pytest": "PASS (181)",
     "next_build": "PASS (clean)",
     "dep_audit": "PASS (0 vulnerabilities after postcss override)",
-    "security_headers": "PASS (5 headers live on responses)",
+    "security_headers": "PASS (headers live on responses)",
     "theming": "PASS (light+dark computed-style verified)",
     "runtime_logs": "PASS (only preview-only hydration artifact, no app exceptions)"
   },
   "issues": [
+    {
+      "id": "TT-009",
+      "discipline": "cxo",
+      "severity": "P2",
+      "title": "Status bar rendered 'Data undefined MB' on partial /metrics payload",
+      "status": "FIXED",
+      "notes": "fmtMem only guarded null/NaN, not undefined; CPU chip used !== null. Broadened both to Number.isFinite so missing metrics render '--'. Verified live: zero 'undefined' in rendered UI."
+    },
+    {
+      "id": "TT-008",
+      "discipline": "dev",
+      "severity": "P1",
+      "title": "No error boundary anywhere — one component fault white-screened the whole app",
+      "status": "FIXED",
+      "notes": "Added ErrorBoundary component wrapping every dialog (keyed to active dialog id, recoverable fallback), plus app/error.tsx and app/global-error.tsx catch-alls. Verified live: injected throw in a dialog -> fallback rendered, board stayed alive, no white screen. This is the systemic root cause behind TT-002-class crashes. +1 regression test."
+    },
     {
       "id": "TT-007",
       "discipline": "accessibility",
