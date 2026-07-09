@@ -1392,7 +1392,7 @@ export const agent = {
     const res = await agentFetch<{ credentials: MaskedCredential[] }>(
       `/credentials/${encodeURIComponent(project)}`
     );
-    return res.credentials;
+    return res.credentials ?? [];
   },
 
   /**
@@ -1428,7 +1428,7 @@ export const agent = {
         }),
       }
     );
-    return res.credentials;
+    return res.credentials ?? [];
   },
 
   /** Delete a single credential by environment name. */
@@ -1440,7 +1440,7 @@ export const agent = {
       `/credentials/${encodeURIComponent(project)}/${encodeURIComponent(env)}`,
       { method: "DELETE" }
     );
-    return res.credentials;
+    return res.credentials ?? [];
   },
 
   /** List generated test cases available to run for a project. */
@@ -1448,7 +1448,7 @@ export const agent = {
     const res = await agentFetch<{ test_cases: E2ETestCase[] }>(
       `/e2e/test-cases/${encodeURIComponent(project)}`
     );
-    return res.test_cases;
+    return res.test_cases ?? [];
   },
 
   /** List environments (from the vault) that can be run against. */
