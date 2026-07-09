@@ -43,7 +43,21 @@ const STATUS_ICON: Record<RowStatus, ReactElement> = {
  * Progress + logs stream live; the password never leaves the agent host.
  */
 export function E2EDialog({ onClose }: { onClose: () => void }) {
-  const { currentProject, displayName, pushLog } = useAppState();
+  const {
+    currentProject,
+    displayName,
+    pushLog,
+    selected: boardSelection,
+  } = useAppState();
+
+  // Desktop parity: the E2E dialog is scoped to the work items ticked on the
+  // board. Only test cases whose parent WI is in the board selection are shown
+  // and run; when nothing is ticked we fall back to all test cases ("All Work
+  // Items" in the desktop app). wi_id compared as string (WiId is string|number).
+  const wiScope = useMemo(
+    () => new Set([...boardSelection].map((id) => String(id))),
+    [boardSelection]
+  );
 
   const [envs, setEnvs] = useState<E2EEnvironment[]>([]);
   const [selectedEnv, setSelectedEnv] = useState("");
@@ -81,8 +95,12 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
         // Default to the first runnable environment.
         const firstRunnable = e.find((x) => x.has_password) || e[0];
         if (firstRunnable) setSelectedEnv(firstRunnable.env);
-        // Select all test cases by default.
-        setSelected(new Set(tc.map((t) => t.index)));
+        // Pre-select the test cases in scope (board selection), or all when
+        // nothing is ticked on the board.
+        const scoped = wiScope.size
+          ? tc.filter((t) => wiScope.has(String(t.wi_id)))
+          : tc;
+        setSelected(new Set(scoped.map((t) => t.index)));
       } catch (err) {
         if (!cancelled)
           setError(err instanceof Error ? err.message : "Failed to load E2E data");
@@ -93,7 +111,7 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, [currentProject]);
+  }, [currentProject, wiScope]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -102,6 +120,15 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
   const envRunnable = useMemo(
     () => envs.find((e) => e.env === selectedEnv)?.has_password ?? false,
     [envs, selectedEnv]
+  );
+
+  // Test cases in scope for this run (filtered to the board selection).
+  const visibleTestCases = useMemo(
+    () =>
+      wiScope.size
+        ? testCases.filter((t) => wiScope.has(String(t.wi_id)))
+        : testCases,
+    [testCases, wiScope]
   );
 
   const canRun =
@@ -115,7 +142,8 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
       return next;
     });
 
-  const selectAll = () => setSelected(new Set(testCases.map((t) => t.index)));
+  const selectAll = () =>
+    setSelected(new Set(visibleTestCases.map((t) => t.index)));
   const selectNone = () => setSelected(new Set());
 
   const run = async (indices: number[]) => {
@@ -292,7 +320,7 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
             <div className="flex items-center justify-between text-xs text-[var(--tt-text-muted)]">
               <span className="flex items-center gap-1.5">
                 <Loader2 className="h-3 w-3 animate-spin text-[var(--tt-primary)]" />
-                Running {progress?.current ?? 0} / {progress?.total ?? (selected.size > 0 ? selected.size : testCases.length)}
+                Running {progress?.current ?? 0} / {progress?.total ?? (selected.size > 0 ? selected.size : visibleTestCases.length)}
               </span>
               <span className="tabular-nums">{progressPct != null ? `${progressPct}%` : "—"}</span>
             </div>
@@ -368,7 +396,13 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
           <div className="flex flex-col rounded-lg border border-[var(--tt-outline)]">
             <div className="flex items-center justify-between border-b border-[var(--tt-outline)] px-3 py-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-[var(--tt-text-muted)]">
-                Test cases ({selected.size}/{testCases.length})
+                Test cases ({selected.size}/{visibleTestCases.length})
+                {wiScope.size > 0 && (
+                  <span className="ml-1.5 normal-case text-[var(--tt-text-faint)]">
+                    · scoped to {wiScope.size} selected work item
+                    {wiScope.size === 1 ? "" : "s"}
+                  </span>
+                )}
               </span>
               <div className="flex gap-2">
                 <button
@@ -396,9 +430,15 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
                 <p className="px-3 py-6 text-center text-sm text-[var(--tt-text-muted)]">
                   No generated test cases. Generate test cases first.
                 </p>
+              ) : visibleTestCases.length === 0 ? (
+                <p className="px-3 py-6 text-center text-sm text-[var(--tt-text-muted)]">
+                  No E2E test cases for the selected work item
+                  {wiScope.size === 1 ? "" : "s"}. Untick items on the board to
+                  see all test cases, or generate test cases for the selection.
+                </p>
               ) : (
                 <ul className="divide-y divide-[var(--tt-outline)]">
-                  {testCases.map((tc) => {
+                  {visibleTestCases.map((tc) => {
                     const st = rowStatus[String(tc.index)] || "pending";
                     // Look up last-run result for this TC by title
                     const lastTc = lastRun?.results.find(
