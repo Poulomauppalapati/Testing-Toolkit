@@ -14,6 +14,8 @@ interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   width?: number;
+  /** Open near-fullscreen (96vw x 92vh), ignoring `width`. */
+  maximized?: boolean;
 }
 
 /**
@@ -32,6 +34,7 @@ export function Modal({
   children,
   footer,
   width = 720,
+  maximized = false,
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -104,8 +107,10 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className="tt-dialog tt-dialog-enter flex max-h-[90vh] w-full flex-col overflow-hidden shadow-2xl outline-none"
-        style={{ maxWidth: width }}
+        className={`tt-dialog tt-dialog-enter flex w-full flex-col overflow-hidden shadow-2xl outline-none ${
+          maximized ? "h-[92vh] max-h-[92vh]" : "max-h-[90vh]"
+        }`}
+        style={maximized ? { maxWidth: "96vw", width: "96vw" } : { maxWidth: width }}
       >
         {/* Dialog header (title + close) */}
         <header className="flex shrink-0 items-center justify-between border-b border-[var(--tt-outline-soft)] px-6 py-3.5 select-none">

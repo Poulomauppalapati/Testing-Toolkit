@@ -317,6 +317,10 @@ export interface ProjectContextSummary {
     business_rules: number;
     screens: number;
     test_data_needs: number;
+    edge_cases: number;
+    non_functional: number;
+    dependencies: number;
+    glossary: number;
   }>;
   summary: string;
 }

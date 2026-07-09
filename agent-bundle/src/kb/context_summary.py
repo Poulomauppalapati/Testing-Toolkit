@@ -25,33 +25,52 @@ from typing import Any, Callable, Final
 
 LogFn = Callable[[str], None]
 
-_MAX_INPUT_CHARS: Final[int] = 80000
-_MAX_TOKENS: Final[int] = 4096
+# Deep-context budgets. Large on purpose: the goal is a thorough, whole-project
+# mental model, not a shallow summary. ~200k chars (~50k tokens) of source with
+# up to 8k tokens of structured output comfortably fits modern gateway models.
+_MAX_INPUT_CHARS: Final[int] = 200000
+_MAX_TOKENS: Final[int] = 8192
 
 _EXTRACTION_SYSTEM: Final[str] = (
-    "You are a Senior QA analyst building a mental model of a system under "
-    "test. Given project documentation excerpts, extract a structured "
-    "understanding. Be exhaustive but only state what is explicitly in the "
-    "documents. Do NOT invent or assume anything not stated. Output valid "
-    "JSON only, no prose, no code fence."
+    "You are a Principal QA architect building a COMPLETE, in-depth mental "
+    "model of a system under test from its documentation. Your goal is total "
+    "coverage: capture every actor, entity, workflow, rule, screen, "
+    "integration, edge case, dependency, and domain term the documents "
+    "describe -- leave nothing material out. Write rich, specific, "
+    "multi-sentence descriptions that a tester could act on directly (include "
+    "concrete values, thresholds, state names, field names, and conditions "
+    "verbatim where stated). Be exhaustive, but state ONLY what is explicitly "
+    "supported by the documents -- never invent, assume, or generalize beyond "
+    "the text. Output valid JSON only: no prose, no markdown, no code fence."
 )
 
 _EXTRACTION_USER_TEMPLATE: Final[str] = """\
-Analyze the following project documentation and extract:
+Analyze the following project documentation and extract a DEEP, EXHAUSTIVE
+model of the entire system. For each category list EVERY distinct item the
+documents describe (do not cap the count), each with a detailed, specific
+description grounded in the text:
 
-1. ACTORS: Who uses this system? List each role/persona and their key permissions or responsibilities.
-2. ENTITIES: What are the key business data objects? (e.g., "Assessment", "Task", "Order")
-3. WORKFLOWS: What are the main business processes? For each, list the states/transitions if described.
-4. INTEGRATIONS: What external systems, APIs, or batch jobs does this system connect to?
-5. BUSINESS_RULES: What validation rules, constraints, thresholds, or conditions are explicitly stated?
-6. SCREENS: What UI pages/screens/dialogs are mentioned? What is each for?
-7. TEST_DATA_NEEDS: What types of test data would a tester need to exercise this system?
+1. ACTORS: Every role/persona/user type. Describe permissions, responsibilities, and what each can and cannot do.
+2. ENTITIES: Every key business data object (e.g., "Assessment", "Order"). Describe its important fields, identifiers, and relationships to other entities.
+3. WORKFLOWS: Every business process. Describe the ordered steps, all states, and every transition/trigger/guard condition mentioned.
+4. INTEGRATIONS: Every external system, API, file feed, batch job, or service. Describe direction of data flow, trigger/schedule, and payload if stated.
+5. BUSINESS_RULES: Every validation rule, constraint, threshold, calculation, or condition. Quote exact numbers, limits, and formulas verbatim.
+6. SCREENS: Every UI page/screen/dialog/tab. Describe its purpose, key fields/controls, and the actions available on it.
+7. TEST_DATA_NEEDS: Every kind of test data required to exercise the system, including specific data shapes, seed records, and preconditions.
+8. EDGE_CASES: Every explicitly stated edge case, boundary, negative/error path, failure mode, or exception-handling behavior.
+9. NON_FUNCTIONAL: Every non-functional requirement -- performance, security, access control, compliance/regulatory, availability, accessibility, auditing.
+10. DEPENDENCIES: Every sequencing/ordering dependency, precondition, upstream/downstream data flow, and cross-module or cross-team dependency.
+11. GLOSSARY: Every domain term, acronym, abbreviation, status code, or product-specific name, with its precise meaning as used in the documents.
 
-Output as a JSON object with exactly these 7 keys. Each value is a list of objects with "name" and "description" fields.
+Output a JSON object with EXACTLY these 11 keys (lowercase): actors, entities,
+workflows, integrations, business_rules, screens, test_data_needs, edge_cases,
+non_functional, dependencies, glossary. Each value is a list of objects with
+"name" and "description" fields.
 Example format:
-{{"actors": [{{"name": "Admin", "description": "Full system access, manages users and configuration"}}], ...}}
+{{"actors": [{{"name": "Admin", "description": "Full system access; manages users, configuration, and role assignments. Cannot delete audit records."}}], ...}}
 
-If a category has no information in the documents, return an empty list for that key.
+If a category truly has no information in the documents, return an empty list
+for that key. Prefer more items with richer descriptions over fewer.
 
 <documents>
 {context}
@@ -75,6 +94,10 @@ class ProjectContext:
     business_rules: list[ContextItem] = field(default_factory=list)
     screens: list[ContextItem] = field(default_factory=list)
     test_data_needs: list[ContextItem] = field(default_factory=list)
+    edge_cases: list[ContextItem] = field(default_factory=list)
+    non_functional: list[ContextItem] = field(default_factory=list)
+    dependencies: list[ContextItem] = field(default_factory=list)
+    glossary: list[ContextItem] = field(default_factory=list)
     # Metadata
     extracted_at: float = 0.0
     kb_fingerprint: str = ""
@@ -84,6 +107,8 @@ class ProjectContext:
             self.actors, self.entities, self.workflows,
             self.integrations, self.business_rules,
             self.screens, self.test_data_needs,
+            self.edge_cases, self.non_functional,
+            self.dependencies, self.glossary,
         ])
 
     def to_prompt_section(self) -> str:
@@ -99,6 +124,10 @@ class ProjectContext:
             ("BUSINESS RULES", self.business_rules),
             ("SCREENS/PAGES", self.screens),
             ("TEST DATA NEEDS", self.test_data_needs),
+            ("EDGE CASES / NEGATIVE PATHS", self.edge_cases),
+            ("NON-FUNCTIONAL REQUIREMENTS", self.non_functional),
+            ("DEPENDENCIES / DATA FLOWS", self.dependencies),
+            ("GLOSSARY / TERMINOLOGY", self.glossary),
         ]
         for title, items in sections:
             if items:
@@ -134,6 +163,10 @@ class ProjectContext:
             business_rules=_parse_items(data.get("business_rules")),
             screens=_parse_items(data.get("screens")),
             test_data_needs=_parse_items(data.get("test_data_needs")),
+            edge_cases=_parse_items(data.get("edge_cases")),
+            non_functional=_parse_items(data.get("non_functional")),
+            dependencies=_parse_items(data.get("dependencies")),
+            glossary=_parse_items(data.get("glossary")),
             extracted_at=float(data.get("extracted_at", 0.0)),
             kb_fingerprint=str(data.get("kb_fingerprint", "")),
         )

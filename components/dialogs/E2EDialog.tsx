@@ -50,10 +50,12 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
     selected: boardSelection,
   } = useAppState();
 
-  // Desktop parity: the E2E dialog is scoped to the work items ticked on the
-  // board. Only test cases whose parent WI is in the board selection are shown
-  // and run; when nothing is ticked we fall back to all test cases ("All Work
-  // Items" in the desktop app). wi_id compared as string (WiId is string|number).
+  // STRICT scoping (user directive): the E2E dialog shows ONLY test cases whose
+  // parent work item is ticked on the board. There is NO fallback to "all test
+  // cases" -- if the user ticks nothing, or ticks work items that have no
+  // generated test cases, the list is empty by design. This is what makes a
+  // work item appear here "only if it actually has test cases". wi_id is
+  // compared as a string (WiId is string|number; E2ETestCase.wi_id is string).
   const wiScope = useMemo(
     () => new Set([...boardSelection].map((id) => String(id))),
     [boardSelection]
@@ -95,11 +97,9 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
         // Default to the first runnable environment.
         const firstRunnable = e.find((x) => x.has_password) || e[0];
         if (firstRunnable) setSelectedEnv(firstRunnable.env);
-        // Pre-select the test cases in scope (board selection), or all when
-        // nothing is ticked on the board.
-        const scoped = wiScope.size
-          ? tc.filter((t) => wiScope.has(String(t.wi_id)))
-          : tc;
+        // Pre-select ONLY the test cases whose parent WI is in the board
+        // selection. No board selection -> nothing pre-selected (no fallback).
+        const scoped = tc.filter((t) => wiScope.has(String(t.wi_id)));
         setSelected(new Set(scoped.map((t) => t.index)));
       } catch (err) {
         if (!cancelled)
@@ -122,12 +122,10 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
     [envs, selectedEnv]
   );
 
-  // Test cases in scope for this run (filtered to the board selection).
+  // Test cases in scope for this run: STRICTLY the ones whose parent WI is
+  // ticked on the board. Empty when nothing is ticked (no fallback to all).
   const visibleTestCases = useMemo(
-    () =>
-      wiScope.size
-        ? testCases.filter((t) => wiScope.has(String(t.wi_id)))
-        : testCases,
+    () => testCases.filter((t) => wiScope.has(String(t.wi_id))),
     [testCases, wiScope]
   );
 
@@ -310,10 +308,10 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
         currentProject ? ` - ${displayName(currentProject)}` : ""
       }`}
       onClose={running ? () => {} : onClose}
-      width={980}
+      maximized
       footer={footer}
     >
-      <div className="flex flex-col gap-4">
+      <div className="flex h-full flex-col gap-4">
         {/* ── Progress bar — shown at TOP during an active run ──────── */}
         {running && (
           <div className="flex flex-col gap-1">
@@ -391,7 +389,7 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
           </select>
         </label>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Test case list */}
           <div className="flex flex-col rounded-lg border border-[var(--tt-outline)]">
             <div className="flex items-center justify-between border-b border-[var(--tt-outline)] px-3 py-2">
@@ -421,7 +419,7 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
                 </button>
               </div>
             </div>
-            <div className="max-h-72 overflow-auto">
+            <div className="min-h-0 flex-1 overflow-auto">
               {loading ? (
                 <p className="px-3 py-6 text-center text-sm text-[var(--tt-text-muted)]">
                   Loading...
@@ -430,11 +428,18 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
                 <p className="px-3 py-6 text-center text-sm text-[var(--tt-text-muted)]">
                   No generated test cases. Generate test cases first.
                 </p>
+              ) : wiScope.size === 0 ? (
+                <p className="px-3 py-6 text-center text-sm leading-relaxed text-[var(--tt-text-muted)]">
+                  Tick one or more work items on the board, then reopen this
+                  dialog. Only test cases belonging to the selected work item(s)
+                  are shown here.
+                </p>
               ) : visibleTestCases.length === 0 ? (
-                <p className="px-3 py-6 text-center text-sm text-[var(--tt-text-muted)]">
-                  No E2E test cases for the selected work item
-                  {wiScope.size === 1 ? "" : "s"}. Untick items on the board to
-                  see all test cases, or generate test cases for the selection.
+                <p className="px-3 py-6 text-center text-sm leading-relaxed text-[var(--tt-text-muted)]">
+                  The selected work item{wiScope.size === 1 ? "" : "s"} ha
+                  {wiScope.size === 1 ? "s" : "ve"} no generated E2E test cases.
+                  Pick work item(s) that have test cases, or generate test cases
+                  for this selection first.
                 </p>
               ) : (
                 <ul className="divide-y divide-[var(--tt-outline)]">
@@ -503,7 +508,7 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
                 />
               </div>
             )}
-            <div className="max-h-72 flex-1 overflow-auto bg-[var(--tt-surface-deepest)] font-mono text-xs leading-relaxed">
+            <div className="min-h-0 flex-1 overflow-auto bg-[var(--tt-surface-deepest)] font-mono text-xs leading-relaxed">
               {logs.length === 0 ? (
                 <p className="px-3 py-3 text-[var(--tt-text-muted)]">
                   Run output will appear here.

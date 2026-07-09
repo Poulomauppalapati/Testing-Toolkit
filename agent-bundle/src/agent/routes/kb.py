@@ -469,6 +469,10 @@ def _context_payload(project: str) -> dict:
         "business_rules": len(ctx.business_rules),
         "screens": len(ctx.screens),
         "test_data_needs": len(ctx.test_data_needs),
+        "edge_cases": len(ctx.edge_cases),
+        "non_functional": len(ctx.non_functional),
+        "dependencies": len(ctx.dependencies),
+        "glossary": len(ctx.glossary),
     }
     return {
         "has": True,
