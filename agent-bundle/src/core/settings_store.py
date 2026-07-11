@@ -1,14 +1,8 @@
-"""
-settings_store.py
-Global settings for the Testing Toolkit.
+"""Persist user-managed work-item source settings and UI preferences.
 
-Secret values (the LLM API key, PAT, base URL) go in the OS keyring
-first; fallback uses machine-locked encryption (Windows DPAPI via
-CryptProtectData, or HMAC-derived key on other platforms). The encrypted
-file is non-portable: copying it to another user/machine produces garbage.
-
-Non-secret values (model ids, organization, project prefix) live in a
-plain JSON file in the workspace.
+ADO/JIRA secrets use the OS keyring first, with a machine-locked encrypted
+file fallback. AI endpoint, credential, and model selection are intentionally
+central configuration in :mod:`core.app_config`; they are never user settings.
 """
 
 from __future__ import annotations
@@ -22,14 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any, Final
 
-from core.app_config import (
-    DEFAULT_ANTHROPIC_BASE_URL,
-    DEFAULT_FALLBACK_MODEL,
-    DEFAULT_FAST_MODEL,
-    DEFAULT_MODEL,
-    DEFAULT_PROJECT_PREFIX,
-    SETTINGS_PATH,
-)
+from core.app_config import DEFAULT_PROJECT_PREFIX, SETTINGS_PATH
 from core.pat_store import load_pat, save_pat  # reused PAT storage
 
 # ---------------------------------------------------------------------
@@ -149,12 +136,8 @@ def _decrypt_value(stored: str) -> str | None:
 
 
 # ---------------------------------------------------------------------
-# API key secure storage (keyring -> encrypted file fallback)
+# Source credential storage (keyring -> encrypted file fallback)
 # ---------------------------------------------------------------------
-_API_SERVICE: Final[str] = "testing_toolkit_llm"
-_API_USERNAME: Final[str] = "default"
-_API_FALLBACK_PATH: Final[Path] = Path.home() / ".testing_toolkit_apikey"
-
 
 def _keyring_get(service: str, user: str) -> str | None:
     try:
@@ -217,38 +200,10 @@ def _file_delete(path: Path) -> bool:
         return False
 
 
-def load_api_key() -> str | None:
-    """Return the stored LLM API key, or None."""
-    val = _keyring_get(_API_SERVICE, _API_USERNAME)
-    if val:
-        return val
-    return _file_get(_API_FALLBACK_PATH)
-
-
-def save_api_key(key: str) -> bool:
-    """Persist the LLM API key. Returns True if any backend took it."""
-    if not key or not key.strip():
-        return False
-    key = key.strip()
-    if _keyring_set(_API_SERVICE, _API_USERNAME, key):
-        return True
-    return _file_set(_API_FALLBACK_PATH, key)
-
-
-def clear_api_key() -> bool:
-    a = _keyring_delete(_API_SERVICE, _API_USERNAME)
-    b = _file_delete(_API_FALLBACK_PATH)
-    return a or b
-
-
 # ---------------------------------------------------------------------
-# Non-secret settings (plain JSON)
+# Non-secret source settings (plain JSON)
 # ---------------------------------------------------------------------
-KEY_BASE_URL:   Final[str] = "anthropic_base_url"
-KEY_MODEL:          Final[str] = "anthropic_model"
-KEY_FAST_MODEL:     Final[str] = "anthropic_fast_model"
-KEY_FALLBACK_MODEL: Final[str] = "anthropic_fallback_model"
-KEY_ORG:            Final[str] = "organization"
+KEY_ORG: Final[str] = "organization"
 KEY_PREFIX:     Final[str] = "project_prefix"
 KEY_TLS_MODE:   Final[str] = "tls_mode"
 KEY_TOUR_DONE:  Final[str] = "tour_completed"
@@ -259,10 +214,6 @@ KEY_JIRA_USER:   Final[str] = "jira_user"
 KEY_JIRA_PREFIX: Final[str] = "jira_project_prefix"
 
 _DEFAULTS: Final[dict[str, str]] = {
-    KEY_BASE_URL:   DEFAULT_ANTHROPIC_BASE_URL,
-    KEY_MODEL:          DEFAULT_MODEL,
-    KEY_FAST_MODEL:     DEFAULT_FAST_MODEL,
-    KEY_FALLBACK_MODEL: DEFAULT_FALLBACK_MODEL,
     KEY_ORG:        "",
     KEY_PREFIX:     DEFAULT_PROJECT_PREFIX,
     KEY_TLS_MODE:   "system",
@@ -334,23 +285,17 @@ def set_tour_completed(value: bool) -> bool:
 # First-run detection
 # ---------------------------------------------------------------------
 def is_configured() -> bool:
-    """True when Azure DevOps is set up (PAT + organization).
-
-    This stays ADO-specific: source resolution (source_resolver, sources
-    route) uses it to decide whether ADO is usable. For the app-level
-    "has the user finished first-run setup?" gate, use
-    is_any_source_configured(), since ADO is now optional (JIRA-only setups
-    are valid too)."""
+    """True when Azure DevOps is usable (PAT + organization)."""
     has_pat = bool((load_pat() or "").strip())
     has_org = bool(get_setting(KEY_ORG).strip())
     return has_pat and has_org
 
 
 def has_api_key() -> bool:
-    # True if the user configured a key OR the agent ships a bundled one.
+    """True when the centrally managed AI service credential is available."""
     from core.app_config import LLM_API_KEY
 
-    return bool((load_api_key() or "").strip() or LLM_API_KEY)
+    return bool(LLM_API_KEY)
 
 
 # Convenience wrapper so callers do not need to import pat_store too.
@@ -404,14 +349,6 @@ def is_jira_configured() -> bool:
     )
 
 
-def is_any_source_configured() -> bool:
-    """True when AT LEAST ONE work-item source is set up (ADO or JIRA).
-
-    This is the app-level first-run gate: ADO is optional, so the user has
-    finished setup as soon as either Azure DevOps or JIRA is configured."""
-    return is_configured() or is_jira_configured()
-
-
 def build_jira_runtime_config() -> "RuntimeConfig":
     """RuntimeConfig carrying the JIRA PAT + TLS mode. The JIRA URL/user are
     passed to the jira.* functions explicitly, not via RuntimeConfig."""
@@ -434,63 +371,28 @@ def build_runtime_config() -> "RuntimeConfig":
 
 
 def build_llm_client(cfg: "RuntimeConfig | None" = None):
-    """Return a configured LLMClient, or None when no API key is
-    stored (the signal that the app must use Manual Mode)."""
+    """Build a client from centrally managed AI configuration only."""
     from core.anthropic_client import LLMClient
     from core.app_config import LLM_API_KEY, LLM_BASE_URL, LLM_PROVIDER_FORMAT
-    # A user-entered key (settings/keyring) wins; otherwise fall back to the
-    # bundled service-account key shipped in .env.enc. Only truly keyless
-    # installs (no user key AND no bundle) drop to Manual Mode.
-    key = (load_api_key() or "").strip() or LLM_API_KEY
-    if not key:
+
+    if not LLM_API_KEY:
         return None
     if cfg is None:
         cfg = build_runtime_config()
     return LLMClient(
-        api_key=key,
-        base_url=get_setting(KEY_BASE_URL) or LLM_BASE_URL,
+        api_key=LLM_API_KEY,
+        base_url=LLM_BASE_URL,
         ssl_verify=cfg.build_ssl(),
         provider_format=LLM_PROVIDER_FORMAT,
     )
 
 
-# Backwards-compat alias
-build_anthropic_client = build_llm_client
-
-
-def model_pair() -> tuple[str, str]:
-    """(primary_model, fast_model).
-
-    The fast model resolves via get_setting so the configured DEFAULT_FAST_MODEL
-    (Sonnet) applies when the user hasn't explicitly chosen one. Reading
-    _load_all() directly here was the bug behind "Fast mode used Opus": the raw
-    store has no default, so an unset fast model fell back to primary (Opus).
-    Only fall back to primary if get_setting somehow yields nothing.
-    """
-    primary = get_setting(KEY_MODEL)
-    fast = get_setting(KEY_FAST_MODEL) or primary
-    return primary, fast
-
-
-def model_triple() -> tuple[str, str, str]:
-    """(primary, fast, fallback). Fast/fallback use their configured defaults
-    (Sonnet / Haiku) via get_setting, falling back to primary only if blank."""
-    primary = get_setting(KEY_MODEL)
-    fast = get_setting(KEY_FAST_MODEL) or primary
-    fallback = get_setting(KEY_FALLBACK_MODEL) or primary
-    return primary, fast, fallback
-
-
 def runtime_summary() -> dict[str, Any]:
-    """Non-secret snapshot for logging / about dialogs (no secrets)."""
+    """Non-secret source/runtime snapshot for diagnostics."""
     return {
-        "base_url": get_setting(KEY_BASE_URL),
-        "model": get_setting(KEY_MODEL),
-        "fast_model": get_setting(KEY_FAST_MODEL) or get_setting(KEY_MODEL),
-        "fallback_model": get_setting(KEY_FALLBACK_MODEL) or get_setting(KEY_MODEL),
         "organization": get_setting(KEY_ORG),
         "project_prefix": get_setting(KEY_PREFIX),
         "tls_mode": get_setting(KEY_TLS_MODE),
-        "has_api_key": has_api_key(),
+        "ai_service_configured": has_api_key(),
         "has_pat": bool(load_pat_value()),
     }

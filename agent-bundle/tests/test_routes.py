@@ -77,12 +77,42 @@ def test_updates_are_detection_only(client):
 
 
 def test_settings_roundtrip(client, tmp_install):
-    # Save a couple of settings, then read them back.
-    r = client.post("/settings", json={"values": {"org": "acme-corp"}})
+    r = client.post("/settings", json={"organization": "acme-corp"})
     assert r.status_code in (200, 201), r.text
     r2 = client.get("/settings")
     assert r2.status_code == 200
-    assert isinstance(r2.json(), dict)
+    body = r2.json()
+    assert body["organization"] == "acme-corp"
+    assert set(body) == {
+        "ado_configured", "jira_configured", "has_pat", "organization",
+        "project_prefix", "tour_completed", "has_jira_pat", "jira_url",
+        "jira_user", "jira_project_prefix",
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["api_key", "base_url", "model", "fast_model", "fallback_model"],
+)
+def test_settings_rejects_ai_overrides(client, field):
+    r = client.post("/settings", json={field: "browser-controlled"})
+    assert r.status_code == 422, r.text
+
+
+def test_llm_and_chat_reject_model_overrides(client):
+    completion = client.post(
+        "/llm/complete", json={"user": "ping", "model": "wrong-model"}
+    )
+    assert completion.status_code == 422, completion.text
+    chat = client.post(
+        "/chat/stream",
+        json={
+            "project": "P",
+            "messages": [{"role": "user", "content": "ping"}],
+            "model": "wrong-model",
+        },
+    )
+    assert chat.status_code == 422, chat.text
 
 
 def test_tour_roundtrip(client):
@@ -141,7 +171,7 @@ def test_context_worker_can_start_without_asyncio_loop(monkeypatch):
 # Full contract sweep: no route may return 500.
 # --------------------------------------------------------------------------
 _BODIES = {
-    "/settings": {"values": {"org": "x"}},
+    "/settings": {"organization": "x"},
     "/settings/tour": {"completed": True},
     "/kb/retrieve": {"project": "P", "query": "q", "top_k": 3},
     "/kb/embed": {"texts": ["a", "b"]},

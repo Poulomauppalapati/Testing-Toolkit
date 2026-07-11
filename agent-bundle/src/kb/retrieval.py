@@ -418,17 +418,14 @@ class HybridRetriever:
             return self._reranker
         self._reranker_tried = True
         try:
-            from core.app_config import RERANK_MODEL
+            from core.app_config import LLM_API_KEY, LLM_BASE_URL, RERANK_MODEL
             from core.model_router import Task, route
-            from core.settings_store import (
-                KEY_BASE_URL, build_llm_client, build_runtime_config,
-                get_setting, load_api_key,
-            )
+            from core.settings_store import build_llm_client, build_runtime_config
 
             model = route(Task.LLM_RERANK)
             client = build_llm_client()
-            api_key = (load_api_key() or "").strip()
-            base_url = get_setting(KEY_BASE_URL)
+            api_key = LLM_API_KEY
+            base_url = LLM_BASE_URL
             try:
                 ssl_verify = build_runtime_config().build_ssl()
             except Exception:

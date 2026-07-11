@@ -168,8 +168,7 @@ def multimedia_capabilities() -> dict[str, bool]:
     # API key present = OCR and transcription available (routed to API)
     try:
         from core.app_config import LLM_API_KEY
-        from core.settings_store import load_api_key
-        has_key = bool(load_api_key() or LLM_API_KEY)
+        has_key = bool(LLM_API_KEY)
     except Exception:
         has_key = False
 
@@ -231,13 +230,13 @@ def _extract_image_ocr(path: Path, on_log: LogFn | None) -> str:
     Routes through the GenAI proxy - no local ONNX or Tesseract needed."""
     try:
         import httpx
-        from core.app_config import LLM_API_KEY, LLM_BASE_URL, MODEL_OCR
-        from core.settings_store import load_api_key, get_setting, KEY_BASE_URL
+        from core.app_config import LLM_API_KEY, LLM_BASE_URL
+        from core.model_router import Task, route
         from core.settings_store import build_runtime_config
 
-        key = load_api_key() or LLM_API_KEY
-        url = get_setting(KEY_BASE_URL) or LLM_BASE_URL
-        model = MODEL_OCR or "azure.gpt-4o"
+        key = LLM_API_KEY
+        url = LLM_BASE_URL
+        model = route(Task.OCR_EXTRACT)
 
         if not key or not url:
             _log(on_log, "[WARN] No API key/URL for vision OCR; skipping image.")
@@ -440,11 +439,10 @@ def _transcribe_audio_whisper(
     try:
         import httpx
         from core.app_config import LLM_API_KEY, LLM_BASE_URL
-        from core.settings_store import load_api_key, get_setting, KEY_BASE_URL
         from core.settings_store import build_runtime_config
 
-        key = load_api_key() or LLM_API_KEY
-        url = get_setting(KEY_BASE_URL) or LLM_BASE_URL
+        key = LLM_API_KEY
+        url = LLM_BASE_URL
 
         if not key or not url:
             _log(on_log, "[WARN] No API key/URL for audio transcription; skipping.")

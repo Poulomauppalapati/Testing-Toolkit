@@ -15,14 +15,10 @@ import { guardAdoWrites, enterApp, selectFirstProject, mockAgent } from "./helpe
 
 test.describe("Action bar button states (no project selected)", () => {
   test.beforeEach(async ({ page }) => {
-    // Unconfigured agent -> no projects -> action buttons that need a project
-    // must be disabled.
+    // No configured source -> empty shell -> project-dependent actions disabled.
     await mockAgent(page, { configured: false, projects: [] });
     guardAdoWrites(page);
-    await page.goto("/");
-    const skip = page.getByRole("button", { name: "Skip (manual mode)" });
-    await expect(skip).toBeVisible();
-    await skip.click();
+    await enterApp(page);
     await expect(page.getByText("Projects", { exact: true })).toBeVisible();
   });
 

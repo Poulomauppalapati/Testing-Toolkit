@@ -79,12 +79,12 @@ async def parse_documents(
     client = None
     model = ""
     if use_llm:
-        from core.settings_store import build_llm_client, model_pair
+        from core.model_router import Task, route
+        from core.settings_store import build_llm_client
 
         client = build_llm_client()
         if client is not None:
-            primary, fast = model_pair()
-            model = fast or primary
+            model = route(Task.DEFECT_PARSE)
 
     tmpdir = Path(tempfile.mkdtemp(prefix="tt_defects_"))
     saved: list[Path] = []

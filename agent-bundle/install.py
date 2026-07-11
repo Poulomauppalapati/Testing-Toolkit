@@ -1532,9 +1532,9 @@ def _install_cryptography_optional(launch_python: str, use_pythonpath: bool) -> 
     cryptography (+ cffi/pycparser deps) is pre-downloaded as wheels committed
     in agent-bundle/wheelhouse/, so this works with zero network access. It is
     kept OUT of requirements.txt on purpose: it is only needed to Fernet-decrypt
-    the bundled service key (core/app_config.py), the import is already guarded,
-    and the app falls back to Manual Mode without it. A hard requirement would
-    fail the ENTIRE offline install whenever a shipped bundle's wheelhouse
+    the centrally managed bundled service key (core/app_config.py), and the
+    import is already guarded. A hard requirement would fail the ENTIRE offline
+    install whenever a shipped bundle's wheelhouse
     predates the wheel (the 2.10.1 regression). Non-fatal either way.
     Skipped when cryptography>=42.0 is already present. Installs into the SAME
     place the agent imports from: the venv for the venv strategy, or LIB_DIR
@@ -1577,8 +1577,9 @@ def _install_cryptography_optional(launch_python: str, use_pythonpath: bool) -> 
             ok("cryptography installed from wheelhouse.")
         else:
             warn("cryptography install from wheelhouse failed (non-fatal).")
-            warn("The bundled service key can't be decrypted; the app will run "
-                 "in Manual Mode until you enter credentials in Settings.")
+            warn("The centrally managed AI service key cannot be decrypted. "
+                 "AI features will remain unavailable; contact the Testing "
+                 "Toolkit administrator.")
             trace(f"pip stderr: {r.stderr[:1000]}")
     except Exception as exc:  # noqa: BLE001
         warn(f"cryptography install raised an exception (non-fatal): {exc}")

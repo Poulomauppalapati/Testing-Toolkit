@@ -1137,7 +1137,6 @@ export const agent = {
       messages: { role: "user" | "assistant"; content: string }[];
       use_kb?: boolean;
       use_tools?: boolean;
-      model?: string;
       attachment_text?: string;
       images?: { media_type: string; data_b64: string }[];
     },
@@ -1157,7 +1156,6 @@ export const agent = {
         messages: req.messages,
         use_kb: req.use_kb ?? true,
         use_tools: req.use_tools ?? true,
-        model: req.model,
         attachment_text: req.attachment_text ?? "",
         images: req.images ?? [],
       }),
@@ -1687,7 +1685,6 @@ export const agent = {
   async complete(params: {
     system?: string;
     user: string;
-    model?: string;
     max_tokens?: number;
     temperature?: number;
     thinking_budget?: number;
@@ -1701,14 +1698,6 @@ export const agent = {
       method: "POST",
       body: JSON.stringify(params),
     });
-  },
-
-  async listModels(refresh = false): Promise<ModelInfo[]> {
-    // Default reads the agent-side cache (instant). Pass refresh=true to
-    // force a fresh probe (the "Fetch models" button).
-    return agentFetch<ModelInfo[]>(
-      `/llm/models${refresh ? "?refresh=true" : ""}`
-    );
   },
 
   async recentLog(maxBytes = 60000): Promise<RecentLog> {
@@ -1741,12 +1730,6 @@ export const agent = {
 /** True when an agent request failed because the route does not exist (404). */
 function isAgent404(e: unknown): boolean {
   return !!(e as Error)?.message?.includes("Agent 404");
-}
-
-export interface ModelInfo {
-  id: string;
-  provider: string;
-  label: string;
 }
 
 export interface RecentLog {

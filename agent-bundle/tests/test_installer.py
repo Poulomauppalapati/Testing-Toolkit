@@ -319,9 +319,9 @@ def test_optional_cryptography_deps_are_deliverable():
     dep closure (cryptography + cffi + pycparser) must be deliverable via the
     extra-wheels overlay for both shipped platforms (win_amd64 + manylinux).
 
-    This guards the bundled-service-key path: without these the app silently
-    drops to Manual Mode. cryptography (abi3) covers 3.11+; cffi is per-minor
-    (cp312) matching the version-aware interpreter selection.
+    This guards the centrally managed bundled-service-key path: without these,
+    AI features are unavailable. cryptography (abi3) covers 3.11+; cffi is
+    per-minor (cp312) matching the version-aware interpreter selection.
     """
     import re
 

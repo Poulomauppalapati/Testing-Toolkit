@@ -214,12 +214,10 @@ DEFAULT_FALLBACK_MODEL: Final[str] = "bedrock.anthropic.claude-haiku-4-5"
 DEFAULT_ANTHROPIC_BASE_URL = DEFAULT_LLM_BASE_URL
 ANTHROPIC_VERSION = LLM_API_VERSION
 
-# Env-overridable LLM endpoint + key. Primary source is settings_store
-# (per-user settings.json); these act as the fallback when settings has no
-# value. Callers use e.g. `(load_api_key() or "").strip() or LLM_API_KEY`.
-# BASE_URL/API_KEY resolve with precedence: process env > bundled .env(.enc)
-# > hardcoded default. This lets the frozen agent ship a service-account key
-# in .env.enc while cloud/dev deployments override via process env.
+# Centrally managed LLM endpoint + credential. These are never browser/user
+# settings. Resolution precedence is process env > bundled .env(.enc) > the
+# hardcoded endpoint default, allowing deployment overrides while preserving
+# the packaged service configuration.
 LLM_BASE_URL: Final[str] = _cfg("BASE_URL", DEFAULT_LLM_BASE_URL)
 LLM_API_KEY:  Final[str] = _cfg("API_KEY")
 

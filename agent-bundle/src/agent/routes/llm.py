@@ -1,18 +1,16 @@
-"""LLM proxy endpoints — calls Anthropic API using locally-stored key."""
+"""Internal LLM health endpoint using centrally managed configuration."""
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 router = APIRouter()
 
 
 class CompleteRequest(BaseModel):
-    model: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
     system: str = ""
     user: str
     max_tokens: int = 4096
@@ -30,22 +28,18 @@ class CompleteResponse(BaseModel):
 
 @router.post("/complete", response_model=CompleteResponse)
 async def complete(req: CompleteRequest) -> CompleteResponse:
-    """Single-shot LLM completion via the locally-stored API key."""
-    from core.settings_store import get_setting, load_api_key, KEY_BASE_URL, KEY_MODEL
-    from core.anthropic_client import AnthropicClient
-    from core.settings_store import build_runtime_config
+    """Run a bounded internal completion for connectivity diagnostics."""
+    from core.model_router import Task, route
+    from core.settings_store import build_llm_client
 
-    api_key = load_api_key()
-    if not api_key:
-        raise HTTPException(400, "No API key configured")
-
-    base_url = get_setting(KEY_BASE_URL)
-    model = req.model or get_setting(KEY_MODEL)
-
-    cfg = build_runtime_config()
-    client = AnthropicClient(
-        api_key=api_key, base_url=base_url, ssl_verify=cfg.build_ssl()
-    )
+    client = build_llm_client()
+    if client is None:
+        raise HTTPException(
+            503,
+            "The centrally managed AI service is not configured. "
+            "Contact the Testing Toolkit administrator.",
+        )
+    model = route(Task.CHAT_STREAMING)
     try:
         result = await client.complete_async(
             model=model,
@@ -65,67 +59,3 @@ async def complete(req: CompleteRequest) -> CompleteResponse:
         input_tokens=result.usage.input_tokens,
         output_tokens=result.usage.output_tokens,
     )
-
-
-@router.get("/models")
-async def list_models(refresh: bool = False) -> list[dict[str, str]]:
-    """List available/working models from the configured API, grouped by
-    provider (mirrors the desktop ConnectionFields.fetch_models).
-
-    The working-model probe is slow against corporate gateways, so the result
-    is cached on the agent and reused instantly on subsequent opens. Pass
-    ``?refresh=true`` (the "Fetch models" button) to bypass the cache and
-    re-probe. The cache is keyed to the current base URL + API key, so it is
-    invalidated automatically whenever either changes.
-    """
-    from core.settings_store import get_setting, load_api_key, KEY_BASE_URL
-    from core.anthropic_client import (
-        AnthropicClient,
-        group_models_by_provider,
-    )
-    from core.settings_store import build_runtime_config
-    from core import model_cache
-
-    api_key = load_api_key()
-    if not api_key:
-        raise HTTPException(400, "No API key configured")
-
-    base_url = get_setting(KEY_BASE_URL)
-
-    # Auto-use the cache unless an explicit refresh was requested.
-    if not refresh:
-        cached = model_cache.load(base_url, api_key)
-        if cached:
-            return cached
-
-    # Use the app's TLS handling (combined CA bundle / truststore) so corporate
-    # self-signed proxy chains (Zscaler etc.) verify correctly. Without this the
-    # client falls back to plain certifi and raises CERTIFICATE_VERIFY_FAILED.
-    cfg = build_runtime_config()
-    client = AnthropicClient(
-        api_key=api_key, base_url=base_url, ssl_verify=cfg.build_ssl()
-    )
-    try:
-        models = await client.list_working_models_async()
-    except Exception as e:
-        # On a refresh/probe failure, fall back to any cached list so the user
-        # still gets a usable dropdown instead of an empty one.
-        cached = model_cache.load(base_url, api_key)
-        if cached:
-            return cached
-        raise HTTPException(502, f"Failed to list models: {e!r}")
-
-    # Flatten into ordered [{id, provider, label}] so the web UI can render the
-    # same grouped dropdown the desktop builds with group_models_by_provider().
-    out: list[dict[str, str]] = []
-    for provider, items in group_models_by_provider(models):
-        for m in items:
-            out.append({
-                "id": m.id,
-                "provider": provider,
-                "label": getattr(m, "label", "") or m.id,
-            })
-
-    # Persist for instant reuse next time (best-effort).
-    model_cache.save(base_url, api_key, out)
-    return out

@@ -217,33 +217,22 @@ generation.
 The Chat dialog sends messages to the LLM with KB context attached, for
 interactive exploration of the project's requirement corpus.
 
-### 3.9 Manual mode
-
-When no API key is configured:
-- Copy the system prompt + work-item dump from the Generate dialog
-- Paste into any LLM session
-- Paste the JSON response back into the app
-- Continue the normal review > upload flow
-
 ---
 
-## 4. First-run setup
+## 4. First launch and source setup
 
-On first launch after agent install, a setup wizard collects:
-
-1. **LLM API** — base URL (GenAI proxy), API key, primary model, fast model
-2. **Azure DevOps** — Personal Access Token (PAT), organization URL
-3. **Display prefix** — optional short label shown in the status bar
-
-All settings are editable at any time from the Settings dialog (gear icon).
+The app shell opens immediately after installation. The guided tour is the only
+first-launch overlay; no work-item source is required to browse the application.
+Configure Azure DevOps and/or JIRA later from Settings. AI endpoint, credential,
+and model routing are centrally managed and are never exposed as user settings.
 
 ---
 
 ## 5. Workspace layout
 
 ```
-~/TestingToolkit/
-  settings.json              base_url, model, org, prefix, provider_format
+~/TestingToolkitWeb/
+  settings.json              source connections, display prefix, UI preferences
   projects/<name>/
     system_prompt.txt         per-project RLM generation prompt
     kb/                        requirement documents (source files)

@@ -55,9 +55,7 @@ def ocr_available() -> bool:
     """True when the OCR API is reachable (API key configured)."""
     try:
         from core.app_config import LLM_API_KEY
-        from core.settings_store import load_api_key
-        key = (load_api_key() or "").strip() or LLM_API_KEY
-        return bool(key)
+        return bool(LLM_API_KEY)
     except Exception:
         return False
 
@@ -116,13 +114,10 @@ def _ocr_single_image(img_bytes: bytes, page_idx: int) -> tuple[int, str]:
     try:
         from core.app_config import LLM_API_KEY, LLM_BASE_URL
         from core.model_router import Task, route
-        from core.settings_store import KEY_BASE_URL, get_setting, load_api_key
 
-        api_key = (load_api_key() or "").strip() or LLM_API_KEY
-        base_url = (get_setting(KEY_BASE_URL) or LLM_BASE_URL).rstrip("/")
         model = route(Task.OCR_EXTRACT)
 
-        if not api_key:
+        if not LLM_API_KEY:
             return page_idx, ""
 
         b64 = base64.b64encode(img_bytes).decode("ascii")
@@ -143,13 +138,13 @@ def _ocr_single_image(img_bytes: bytes, page_idx: int) -> tuple[int, str]:
             }],
         }
         headers = {
-            "Authorization": f"Bearer {api_key}",
-            "x-api-key": api_key,
+            "Authorization": f"Bearer {LLM_API_KEY}",
+            "x-api-key": LLM_API_KEY,
             "content-type": "application/json",
             "accept": "application/json",
         }
         with httpx.Client(timeout=httpx.Timeout(120.0), verify=False) as client:
-            resp = client.post(f"{base_url}/chat/completions",
+            resp = client.post(f"{LLM_BASE_URL.rstrip('/')}/chat/completions",
                                json=body, headers=headers)
         if resp.status_code == 200:
             data = resp.json()

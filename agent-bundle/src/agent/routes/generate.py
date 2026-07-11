@@ -283,61 +283,58 @@ async def _run_generate(job: Job, req: StartRequest) -> None:
                 "Contact the Testing Toolkit administrator."
             )
 
-        if True:  # keep the generation pipeline grouped under one guarded block
-            n_expected = len(req.wi_ids) or len(req.wi_keys)
-            job.log(f"[INFO] Fetching detail for {n_expected} work item(s)...")
-            job.set_progress("fetch", 0, n_expected)
-            dump, per_item, _n = await _fetch_work_item_dump(
-                req.project, req.wi_ids, req.wi_keys,
-                on_progress=lambda c, t: job.set_progress("fetch", c, t),
-                on_log=job.log,
-            )
-            if not dump:
-                raise RuntimeError("No work item detail could be fetched")
+        n_expected = len(req.wi_ids) or len(req.wi_keys)
+        job.log(f"[INFO] Fetching detail for {n_expected} work item(s)...")
+        job.set_progress("fetch", 0, n_expected)
+        dump, per_item, _n = await _fetch_work_item_dump(
+            req.project, req.wi_ids, req.wi_keys,
+            on_progress=lambda c, t: job.set_progress("fetch", c, t),
+            on_log=job.log,
+        )
+        if not dump:
+            raise RuntimeError("No work item detail could be fetched")
 
-            job.log("[INFO] Loading project knowledge base index...")
-            index = await asyncio.to_thread(ps.get_index, req.project)
-            retriever = await asyncio.to_thread(
-                ps.open_project_retriever, req.project
+        job.log("[INFO] Loading project knowledge base index...")
+        index = await asyncio.to_thread(ps.get_index, req.project)
+        retriever = await asyncio.to_thread(
+            ps.open_project_retriever, req.project
+        )
+
+        primary = route(Task.GENERATE_TEST_CASES)
+        fast = route(Task.NAVIGATE_CHUNKS)
+        job.log(f"[INFO] Model: {primary} (retrieval: {fast})")
+        system_prompt = ps.read_system_prompt(
+            req.project, req.tc_type or None
+        )
+        if req.regen_feedback and req.base_payload:
+            job.log("[INFO] Applying reviewer feedback (regeneration).")
+            system_prompt = _regen_system_prompt(
+                system_prompt, req.regen_feedback, req.base_payload
             )
 
-            primary = route(Task.GENERATE_TEST_CASES)
-            fast = route(Task.NAVIGATE_CHUNKS)
-            enable_decompose = True
-            enable_verify = True
-            job.log(f"[INFO] Model: {primary} (retrieval: {fast})")
-            system_prompt = ps.read_system_prompt(
-                req.project, req.tc_type or None
+        cache = GenCache(paths.cache_dir)
+        result = await generate_test_cases_rlm_async(
+            client=client,
+            primary_model=primary,
+            fast_model=fast,
+            system_prompt=system_prompt,
+            kb_index=index,
+            work_item_dump=dump,
+            per_item_dumps=per_item,
+            on_log=job.log,
+            on_progress=lambda c, t: job.set_progress("generate", c, t),
+            stop_event=job.stop_event,
+            cache=cache,
+            retriever=retriever,
+            enable_decompose=True,
+            enable_verify=True,
+            project_full=req.project,
+        )
+        if not result.ok or result.payload is None:
+            raise RuntimeError(
+                result.parse_error or "Generation produced no valid output"
             )
-            if req.regen_feedback and req.base_payload:
-                job.log("[INFO] Applying reviewer feedback (regeneration).")
-                system_prompt = _regen_system_prompt(
-                    system_prompt, req.regen_feedback, req.base_payload
-                )
-
-            cache = GenCache(paths.cache_dir)
-            result = await generate_test_cases_rlm_async(
-                client=client,
-                primary_model=primary,
-                fast_model=fast,
-                system_prompt=system_prompt,
-                kb_index=index,
-                work_item_dump=dump,
-                per_item_dumps=per_item,
-                on_log=job.log,
-                on_progress=lambda c, t: job.set_progress("generate", c, t),
-                stop_event=job.stop_event,
-                cache=cache,
-                retriever=retriever,
-                enable_decompose=enable_decompose,
-                enable_verify=enable_verify,
-                project_full=req.project,
-            )
-            if not result.ok or result.payload is None:
-                raise RuntimeError(
-                    result.parse_error or "Generation produced no valid output"
-                )
-            payload = result.payload
+        payload = result.payload
 
         # -- Post-processing (desktop parity) --------------------------------
         # 1) Test-data suggestions: enrich_payload reads a flat payload["steps"]
@@ -489,7 +486,7 @@ async def _run_generate(job: Job, req: StartRequest) -> None:
 
 @router.post("/start")
 async def start_generate(req: StartRequest) -> dict[str, str]:
-    if req.manual_payload is None and not req.wi_ids and not req.wi_keys:
+    if not req.wi_ids and not req.wi_keys:
         raise HTTPException(400, "No work items selected")
     job = JOBS.create("generate")
     job.log("[INFO] Starting test case generation...")

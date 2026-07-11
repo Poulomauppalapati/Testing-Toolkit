@@ -223,19 +223,15 @@ def _try_build_api_embedder() -> "_APIEmbedder | None":
     """Build API embedder if credentials are configured. Returns None if no
     API key is available (graceful skip to local fallback)."""
     from core.app_config import EMBED_DIM, EMBED_MODEL, LLM_API_KEY, LLM_BASE_URL
-    from core.settings_store import KEY_BASE_URL, build_runtime_config, get_setting
-    from core.settings_store import load_api_key
+    from core.settings_store import build_runtime_config
 
-    api_key = (load_api_key() or "").strip() or LLM_API_KEY
-    if not api_key:
+    if not LLM_API_KEY:
         return None
-
-    base_url = get_setting(KEY_BASE_URL) or LLM_BASE_URL
     ssl_verify = build_runtime_config().build_ssl()
 
     return _APIEmbedder(
-        base_url=base_url,
-        api_key=api_key,
+        base_url=LLM_BASE_URL,
+        api_key=LLM_API_KEY,
         model=EMBED_MODEL,
         dim=EMBED_DIM,
         ssl_verify=ssl_verify,
@@ -252,16 +248,14 @@ def embedding_backend_status() -> "tuple[bool, str]":
     key is configured."""
     try:
         from core.app_config import EMBED_MODEL, LLM_API_KEY
-        from core.settings_store import load_api_key
-        api_key = (load_api_key() or "").strip() or LLM_API_KEY
-        if api_key:
+        if LLM_API_KEY:
             return True, f"API embedding ({EMBED_MODEL})"
     except Exception as e:  # noqa: BLE001
         return False, f"embedding config error: {type(e).__name__}: {e}"
 
     return False, (
-        "no embedding API key configured. Add an LLM API key + base URL in "
-        "Settings, or set TT_ENFORCE_DENSE=0 to allow lexical-only retrieval."
+        "central embedding service is not configured; contact the Testing "
+        "Toolkit administrator or allow lexical-only retrieval."
     )
 
 

@@ -24,7 +24,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 router = APIRouter()
 
@@ -47,11 +47,12 @@ class ChatImage(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     project: str
     messages: list[ChatMessage]
     use_kb: bool = True
     use_tools: bool = True
-    model: str | None = None
     # Extra reference text (extracted from user attachments) folded into the
     # latest user turn by the caller; kept separate so we can log its size.
     attachment_text: str = ""
@@ -157,29 +158,22 @@ def _build_tool_context(project: str):
 @router.post("/stream")
 async def chat_stream(req: ChatRequest) -> StreamingResponse:
     """Stream an agentic chat completion as Server-Sent Events."""
-    from core.settings_store import (
-        get_setting,
-        load_api_key,
-        KEY_BASE_URL,
-        KEY_MODEL,
-        build_runtime_config,
-    )
-    from core.anthropic_client import AnthropicClient
     from core.chat_tools import execute_tool, get_tool_definitions
     from core.guardrails import check_input_guardrail
+    from core.model_router import Task, route
+    from core.settings_store import build_llm_client
 
-    api_key = load_api_key()
-    if not api_key:
-        raise HTTPException(400, "No API key configured")
+    client = build_llm_client()
+    if client is None:
+        raise HTTPException(
+            503,
+            "The centrally managed AI service is not configured. "
+            "Contact the Testing Toolkit administrator.",
+        )
     if not req.messages:
         raise HTTPException(400, "No messages provided")
 
-    base_url = get_setting(KEY_BASE_URL)
-    model = req.model or get_setting(KEY_MODEL)
-    cfg = build_runtime_config()
-    client = AnthropicClient(
-        api_key=api_key, base_url=base_url, ssl_verify=cfg.build_ssl()
-    )
+    model = route(Task.CHAT_STREAMING)
 
     # Input guardrail on the latest user turn (cheap, deterministic).
     last_user = next(

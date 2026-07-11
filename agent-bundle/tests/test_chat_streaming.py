@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-import types
 
 import pytest
 
@@ -14,7 +13,6 @@ import pytest
 async def test_chat_streams_incrementally(monkeypatch):
     import agent.routes.chat as c
     import core.settings_store as ss
-    import core.anthropic_client as ac
     import core.guardrails as gr
 
     class FakeResult:
@@ -35,12 +33,7 @@ async def test_chat_streams_incrementally(monkeypatch):
                 on_text_delta(ch)
             return FakeResult()
 
-    monkeypatch.setattr(ac, "AnthropicClient", FakeClient)
-    monkeypatch.setattr(ss, "load_api_key", lambda: "k")
-    monkeypatch.setattr(ss, "get_setting", lambda k: "m")
-    monkeypatch.setattr(
-        ss, "build_runtime_config",
-        lambda: types.SimpleNamespace(build_ssl=lambda: None))
+    monkeypatch.setattr(ss, "build_llm_client", lambda: FakeClient())
     monkeypatch.setattr(c, "_base_system_prompt", lambda p: "SYS")
     monkeypatch.setattr(gr, "check_input_guardrail", lambda t: None)
 

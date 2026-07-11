@@ -149,9 +149,10 @@ def _run_kb_index(job: "Job", project: str, force: bool = False) -> None:
     ctx_client = None
     ctx_model = ""
     try:
-        from core.settings_store import build_anthropic_client, model_pair
-        ctx_client = build_anthropic_client()
-        _, ctx_model = model_pair()
+        from core.model_router import Task, route
+        from core.settings_store import build_llm_client
+        ctx_client = build_llm_client()
+        ctx_model = route(Task.CONTEXTUALIZE_CHUNK)
     except Exception:
         ctx_client = None
         ctx_model = ""
@@ -239,9 +240,10 @@ def _run_context_job(
 
     try:
         if client is None:
-            from core.settings_store import build_anthropic_client, model_pair
-            client = build_anthropic_client()
-            _, model = model_pair()
+            from core.model_router import Task, route
+            from core.settings_store import build_llm_client
+            client = build_llm_client()
+            model = route(Task.CONTEXTUALIZE_CHUNK)
         import time
         from agent.jobs import JOBS
 
@@ -541,14 +543,14 @@ async def upload_template(
         llm_mapping = None
         llm_header_row = None
         try:
-            from core.settings_store import build_llm_client, model_pair
+            from core.model_router import Task, route
+            from core.settings_store import build_llm_client
             from testgen.template_analyzer import analyze_template_with_llm
 
             client = build_llm_client()
             if client is not None:
-                primary, _fast = model_pair()
                 llm_header_row, llm_mapping = analyze_template_with_llm(
-                    client, primary, str(tmp_path)
+                    client, route(Task.TEMPLATE_ANALYSIS), str(tmp_path)
                 )
         except Exception:  # noqa: BLE001 - LLM analysis is best-effort.
             llm_mapping = None
@@ -703,10 +705,11 @@ async def regenerate_context(project: str) -> dict:
     # An LLM client is required - degrade with a clear 409 when unavailable
     # (matches the desktop "No LLM" warning) rather than silently no-op.
     try:
-        from core.settings_store import build_llm_client, model_pair
+        from core.model_router import Task, route
+        from core.settings_store import build_llm_client
 
         client = build_llm_client()
-        primary, _fast = model_pair()
+        primary = route(Task.MAP_EXTRACT)
     except Exception:  # noqa: BLE001
         client = None
         primary = ""

@@ -161,9 +161,9 @@ def run_doctor() -> dict[str, Any]:
             _PASS if ok else _FAIL,
             reason,
             "" if ok else (
-                "Add an LLM API key + base URL in Settings so embeddings can "
-                "be generated via the gateway, or set TT_ENFORCE_DENSE=0 to "
-                "run lexical-only."
+                "Ask the Testing Toolkit administrator to configure the "
+                "central AI service, or set TT_ENFORCE_DENSE=0 to run "
+                "lexical-only."
             ),
         )
     except Exception as e:  # noqa: BLE001

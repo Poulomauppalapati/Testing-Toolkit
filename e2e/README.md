@@ -54,8 +54,8 @@ AGENT_URL=http://127.0.0.1:7842 npm run test:e2e
 
 | Spec | Flow | Needs agent |
 | --- | --- | --- |
-| `01-onboarding.spec.ts` | First-run Base URL placeholder; Skip → manual mode shell | no |
-| `02-dialogs.spec.ts` | Settings (masked Base URL), Help menu, About, log panel | no |
+| `01-onboarding.spec.ts` | No-source startup enters shell; Settings stays available | no |
+| `02-dialogs.spec.ts` | Source Settings, Help menu, About, log panel | no |
 | `03-read-flows.spec.ts` | List projects → boards → work items → detail pane | yes (read) |
 | `04-generate.spec.ts` | Select item → AI Generate → assert no ADO push | yes (LLM) |
 
