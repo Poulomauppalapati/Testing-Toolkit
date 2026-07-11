@@ -149,14 +149,20 @@ def info(msg: str) -> None:
     _log_line("INFO", msg)
 
 
-def milestone(msg: str) -> None:
-    """Show one user-facing phase while retaining it in the full trace log."""
-    print(f"\n==> {msg}", flush=True)
-    _log_line("STEP", msg)
+_ACTIVE_MILESTONE = ""
+
+
+def milestone(msg: str, estimate: str = "") -> None:
+    """Show one user-facing phase with a compact estimate."""
+    global _ACTIVE_MILESTONE
+    _ACTIVE_MILESTONE = msg
+    suffix = f"  (Est. {estimate})" if estimate else ""
+    print(f"\n==> {msg}{suffix}", flush=True)
+    _log_line("STEP", f"{msg}{suffix}")
 
 
 def warn(msg: str) -> None:
-    print(f"[WARN] {msg}", flush=True)
+    """Keep non-fatal implementation notices in the detailed log only."""
     _log_line("WARN", msg)
 
 
@@ -166,7 +172,7 @@ def error(msg: str) -> None:
 
 
 def ok(msg: str) -> None:
-    print(f"[SUCCESS] {msg}", flush=True)
+    """Record routine successes without interrupting milestone progress bars."""
     _log_line("SUCCESS", msg)
 
 
@@ -184,14 +190,29 @@ def progress(phase: str, message: str, percent: float | None = None, **extra) ->
         if percent is None:
             milestone(message)
             return
-        pct = max(0, min(100, int(round(percent))))
+        overall = max(0, min(100, int(round(percent))))
+        ranges = {
+            "cleaning": (66, 69),
+            "installing_deps": (70, 90),
+            "installing_crypto": (90, 92),
+            "installing_mcp": (91, 94),
+            "copying": (90, 96),
+            "verifying": (95, 98),
+            "starting": (97, 100),
+            "done": (100, 100),
+        }
+        start, end = ranges.get(phase, (0, 100))
+        local = 100 if start == end and overall >= end else int(
+            round(100 * (overall - start) / max(1, end - start))
+        )
+        local = max(2, min(100, local))
         width = 30
-        filled = int(round(width * pct / 100))
+        filled = int(round(width * local / 100))
         bar = "#" * filled + "-" * (width - filled)
-        sys.stdout.write(f"\r  {pct:3d}%|{bar}| {message:<42.42}")
+        sys.stdout.write(f"\r  {local:3d}%|{bar}| {message:<42.42}")
         sys.stdout.flush()
-        _log_line("PROGRESS", f"{pct}% {phase}: {message}")
-        if pct >= 100:
+        _log_line("PROGRESS", f"{overall}% overall / {local}% {phase}: {message}")
+        if local >= 100:
             sys.stdout.write("\n")
     except Exception:
         pass
@@ -1229,12 +1250,28 @@ def _print_log_tail(path: Path, lines: int = 40) -> None:
         pass
 
 
-def start_agent(launch_python: str, use_pythonpath: bool) -> None:
+def _health_matches_installed_agent(payload: dict, expected_version: str) -> bool:
+    """Reject a stale/legacy process that happens to answer on port 7842."""
+    return (
+        str(payload.get("version", "")) == expected_version
+        and payload.get("status") == "ok"
+        and "capabilities" in payload
+    )
+
+
+def start_agent(launch_python: str, use_pythonpath: bool) -> bool:
     info(f"Starting agent on localhost:{AGENT_PORT}...")
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / "agent.log"
     env = _agent_env(use_pythonpath)
     workdir = AGENT_DIR / "src"
+    try:
+        version_ns: dict = {}
+        exec((workdir / "agent" / "version.py").read_text(encoding="utf-8"), version_ns)
+        expected_version = str(version_ns["AGENT_VERSION"])
+    except Exception as exc:
+        error(f"Could not read installed agent version: {exc}")
+        return False
 
     # --- Diagnostic: import self-test before the detached launch -----------
     info("Running agent self-test (import check)...")
@@ -1252,7 +1289,7 @@ def start_agent(launch_python: str, use_pythonpath: bool) -> None:
             pass
         error(f"Full details saved to: {log_path}")
         progress("error", "Agent failed its self-test; see the installer log", 96)
-        return
+        return False
     ok("Self-test passed (agent imports cleanly).")
 
     # On a reinstall the OLD agent may still be holding port 7842. Wait for it
@@ -1263,6 +1300,12 @@ def start_agent(launch_python: str, use_pythonpath: bool) -> None:
         if _port_free(AGENT_PORT):
             break
         time.sleep(0.5)
+    if not _port_free(AGENT_PORT):
+        error(
+            f"Port {AGENT_PORT} is still owned by an older agent. "
+            "Close it and run the installer again."
+        )
+        return False
 
     # --- Launch the agent, capturing its output to the log file -----------
     try:
@@ -1285,9 +1328,11 @@ def start_agent(launch_python: str, use_pythonpath: bool) -> None:
     except Exception as exc:
         warn(f"Could not launch agent automatically: {exc}")
         progress("error", f"Could not launch the agent: {exc}", 97)
-        return
+        return False
 
-    # Poll the health endpoint without requiring any extra dependency.
+    # Poll the health endpoint and verify that it is THIS installed version,
+    # not any stale process that happened to claim the same port.
+    import json
     import urllib.request
 
     for _ in range(30):
@@ -1295,13 +1340,17 @@ def start_agent(launch_python: str, use_pythonpath: bool) -> None:
             with urllib.request.urlopen(
                 f"http://127.0.0.1:{AGENT_PORT}/health", timeout=1
             ) as resp:
-                if resp.status == 200:
-                    ok(f"Agent is running on localhost:{AGENT_PORT}")
-                    ok("Return to your browser - it will connect automatically.")
+                payload = json.loads(resp.read().decode("utf-8"))
+                if resp.status == 200 and _health_matches_installed_agent(
+                    payload, expected_version
+                ):
+                    ok(f"Agent {expected_version} is running on localhost:{AGENT_PORT}")
                     progress("done", "Agent is running", 100)
-                    return
+                    return True
+                trace(f"health identity mismatch: expected={expected_version} got={payload}")
         except Exception:
-            time.sleep(1)
+            pass
+        time.sleep(1)
     progress("error", "Agent did not report healthy in time", 99)
     warn("Agent did not report healthy within 30s.")
     warn(
@@ -1311,6 +1360,7 @@ def start_agent(launch_python: str, use_pythonpath: bool) -> None:
     )
     _print_log_tail(log_path)
     warn(f"Full log: {log_path}")
+    return False
 
 
 # --------------------------------------------------------------------------
@@ -1887,7 +1937,7 @@ def main() -> int:
     # the GenAI proxy API (kb/embeddings.py uses _APIEmbedder only). Nothing
     # to ship or check here.
 
-    milestone("Preparing installation")
+    milestone("Preparing installation", "under 1 min")
     progress("cleaning", "Preparing a clean install", 66)
     # Remove any previous build first (keeps user data) so re-installs are clean.
     clean_previous_install(os_name)
@@ -1941,7 +1991,7 @@ def main() -> int:
         # interpreter is not offline-covered (wrong OS/arch OR wrong version).
         return (not offline_only) and (not _covered(exe))
 
-    milestone("Installing dependencies")
+    milestone("Installing dependencies", "2–5 min")
 
     if system_py:
         pv = _py_version(system_py)
@@ -2043,7 +2093,7 @@ def main() -> int:
     # Non-fatal: agent starts without MCP tools; mcp_bridge degrades gracefully.
     _install_mcp_servers()
 
-    milestone("Installing and verifying the agent")
+    milestone("Installing and verifying the agent", "1–2 min")
 
     # --- Copy source -----------------------------------------------------
     # No local ML models are bundled: embeddings, reranking, OCR and audio
@@ -2060,13 +2110,15 @@ def main() -> int:
     if not args.no_autostart:
         register_autostart(os_name, launch_python, use_pythonpath)
     if not args.no_start:
-        start_agent(launch_python, use_pythonpath)
+        if not start_agent(launch_python, use_pythonpath):
+            error("The installed agent did not start with the expected version.")
+            return 1
     else:
         # Install-only mode (agent not started here).
         progress("done", "Installation complete", 100)
 
-    print()
-    ok("Installation complete.")
+    print("\nInstallation complete.")
+    _log_line("SUCCESS", "Installation complete.")
     info("The agent will auto-start on every login.")
     return 0
 

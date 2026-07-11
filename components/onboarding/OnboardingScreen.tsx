@@ -110,7 +110,7 @@ export function OnboardingScreen({
             {reinstall ? "Reinstall Testing Toolkit" : "Testing Toolkit"}
           </h1>
           <p className="text-muted-foreground">
-            AI-powered test case generation for Azure DevOps
+            AI-powered testing and quality automation
           </p>
         </div>
 
@@ -214,10 +214,15 @@ export function OnboardingScreen({
                   />
                 </svg>
               </motion.div>
-              <p className="text-sm">
-                Run the downloaded file to{" "}
-                {reinstall ? "complete the reinstall" : "complete setup"}
-              </p>
+              <div className="flex flex-1 items-center justify-between gap-4">
+                <p className="text-sm">
+                  Run the downloaded file to{" "}
+                  {reinstall ? "complete the reinstall" : "complete setup"}
+                </p>
+                <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+                  Usually 5–10 min
+                </span>
+              </div>
             </div>
 
             {/* This is intentionally an indeterminate visual indicator. The

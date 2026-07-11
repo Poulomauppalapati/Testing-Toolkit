@@ -113,6 +113,25 @@ def test_detect_platform_returns_known_vocab():
     assert arch in {"amd64", "arm64"} or arch  # any non-empty machine tag
 
 
+# --- launched-agent identity ----------------------------------------------
+def test_health_matches_exact_installed_agent():
+    assert inst._health_matches_installed_agent(
+        {"status": "ok", "version": "2.10.7", "capabilities": {}},
+        "2.10.7",
+    )
+
+
+def test_health_rejects_stale_or_legacy_process():
+    assert not inst._health_matches_installed_agent(
+        {"status": "ok", "version": "2.10.6", "capabilities": {}},
+        "2.10.7",
+    )
+    assert not inst._health_matches_installed_agent(
+        {"status": "ok", "version": "2.10.7"},
+        "2.10.7",
+    )
+
+
 # --- source/binary drift guard --------------------------------------------
 def test_every_hard_requirement_has_a_bundled_wheel():
     """Every HARD dep in requirements.txt must have a wheel in the wheelhouse.
