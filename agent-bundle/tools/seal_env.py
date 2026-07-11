@@ -8,6 +8,8 @@ hardening boundary, not protection from a determined local administrator.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -49,9 +51,44 @@ def _metadata(path: Path) -> str:
     return f"valid envelope v2; provider={values['LLM_PROVIDER_FORMAT']}; fields=3"
 
 
+def _values_from_legacy_envelope(path: Path) -> dict[str, str]:
+    """One-time release-owner migration; legacy support never enters runtime."""
+    try:
+        from cryptography.fernet import Fernet, InvalidToken
+    except ImportError as exc:
+        raise CredentialEnvelopeError("cryptography is required for migration") from exc
+
+    wrapping_key = base64.urlsafe_b64encode(
+        hashlib.sha256(b"TestingToolkit/GenAI/bundled-env/v1").digest()
+    )
+    try:
+        plaintext = Fernet(wrapping_key).decrypt(path.read_bytes()).decode("utf-8")
+    except (OSError, UnicodeDecodeError, InvalidToken) as exc:
+        raise CredentialEnvelopeError("legacy envelope authentication failed") from exc
+
+    legacy: dict[str, str] = {}
+    for raw in plaintext.splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#") and "=" in line:
+            name, value = line.split("=", 1)
+            legacy[name.strip()] = value.strip()
+    return {
+        "BASE_URL": legacy.get("BASE_URL", ""),
+        "API_KEY": legacy.get("API_KEY", ""),
+        "LLM_PROVIDER_FORMAT": legacy.get("LLM_PROVIDER_FORMAT", "anthropic"),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Seal Testing Toolkit release credentials")
-    parser.add_argument("--from-vercel-env", action="store_true", help="read named process variables")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--from-vercel-env", action="store_true", help="read named process variables")
+    source.add_argument(
+        "--migrate-legacy",
+        type=Path,
+        metavar="PATH",
+        help="one-time in-memory migration of an authenticated legacy envelope",
+    )
     parser.add_argument("--verify", action="store_true", help="authenticate output; print metadata only")
     parser.add_argument("--output", type=Path, default=OUTPUT)
     args = parser.parse_args()
@@ -60,9 +97,13 @@ def main() -> int:
         if args.verify:
             print(_metadata(args.output))
             return 0
-        if not args.from_vercel_env:
-            parser.error("--from-vercel-env is required; plaintext files are not accepted")
-        envelope = seal_credentials(_values_from_vercel_env())
+        if args.migrate_legacy:
+            values = _values_from_legacy_envelope(args.migrate_legacy)
+        elif args.from_vercel_env:
+            values = _values_from_vercel_env()
+        else:
+            parser.error("a named secret source is required; plaintext files are not accepted")
+        envelope = seal_credentials(values)
         write_envelope_atomic(args.output, envelope)
         _metadata(args.output)  # verify exact persisted bytes
         print(f"sealed authenticated credential envelope: {args.output} (values not displayed)")
