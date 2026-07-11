@@ -115,7 +115,7 @@ FastAPI app bound to `127.0.0.1:7842`. Responsibilities:
 - Run the self-healing E2E automation engine
 - Manage the local LanceDB vector store
 - Read/write the local workspace (`~/TestingToolkit`)
-- Self-update from GitHub-hosted manifest
+- Detect updates from the GitHub-hosted manifest; installation remains installer-only
 
 ### 3.3 Backend domain modules (`agent-bundle/src/`)
 

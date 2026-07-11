@@ -150,6 +150,40 @@ describe("list endpoints never crash consumers on malformed payloads", () => {
   });
 });
 
+describe("agent update policy is detection-only", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("checks status with GET and exposes no mutation methods", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        current: "2.10.6",
+        latest: "2.10.7",
+        update_available: true,
+        configured: true,
+        reachable: true,
+        install_dir: "",
+      }),
+      text: async () => "",
+      headers: new Headers({ "content-type": "application/json" }),
+    } as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(agent.updateStatus()).resolves.toMatchObject({
+      update_available: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://127.0.0.1:7842/update/status"
+    );
+    expect(fetchMock.mock.calls[0][1]).toBeUndefined();
+    expect("applyUpdate" in agent).toBe(false);
+    expect("configureUpdate" in agent).toBe(false);
+    expect("updateProgress" in agent).toBe(false);
+  });
+});
+
 describe("ErrorBoundary derives error state from a thrown error", () => {
   // Regression: a component fault (e.g. the TT-002 credentials crash) must be
   // captured into boundary state instead of white-screening the whole app.

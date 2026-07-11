@@ -35,7 +35,7 @@ from agent.version import AGENT_VERSION, AGENT_PORT
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Startup: ensure workspace exists, preload ONNX models, start updater.
+    """Startup: ensure workspace exists and preload optional runtime models.
 
     Every step is best-effort: a failure here must NEVER stop the server from
     coming up, otherwise the browser can never reach /health and the app stays
@@ -71,14 +71,9 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     threading.Thread(target=_bg_preload, daemon=True, name="preload").start()
 
-    # Start background auto-updater (best-effort).
-    try:
-        from agent.updater import start_update_loop, resolve_manifest_url
-        manifest_url = resolve_manifest_url()
-        if manifest_url:
-            start_update_loop(manifest_url)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[agent] updater not started (non-fatal): {exc}", flush=True)
+    # Updates are intentionally detection-only. The browser checks the manifest
+    # through GET /update/status and directs users to the installer when a newer
+    # version exists; a running agent never patches or restarts itself.
 
     # Self-heal the Windows login task so it (a) launches headlessly (pythonw),
     # and (b) actually survives a cold boot / Windows Fast Startup. Older tasks

@@ -45,7 +45,7 @@ export function NavPanel() {
   } = useAppState();
 
   const { theme, toggleTheme } = useTheme();
-  const { apply: applyUpdate, busy: updateBusy } = useAppUpdate(pushLog);
+  const { check: checkForUpdate, busy: updateBusy } = useAppUpdate(pushLog);
   const [width, setWidth] = useState(() => getPreferences().sizes.navWidth);
 
   const sourceOpts = {
@@ -55,7 +55,7 @@ export function NavPanel() {
 
   async function onUpdateClick() {
     setLogVisible(true);
-    await applyUpdate();
+    await checkForUpdate();
   }
 
   async function openLogFolder() {

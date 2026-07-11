@@ -150,8 +150,8 @@ export function InstallationSection() {
               Reinstall the agent
             </h4>
             <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-              A full clean reinstall — not just a refresh. Use this if the app is
-              broken or behaving unexpectedly.
+              Refresh the local agent from the latest installer. Use this for
+              updates or recovery without deleting project data.
             </p>
           </div>
           <button
@@ -234,16 +234,22 @@ function ReinstallConfirm({
               are kept — nothing you&apos;ve produced is deleted.
             </span>
           </li>
-          <li className="flex gap-2">
-            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-            <span className="text-muted-foreground">
-              Transient <b className="text-foreground">caches are cleared</b>{" "}
-              (KB embedding/vector cache and stale build cache), then all your{" "}
-              <b className="text-foreground">knowledge bases are re-indexed</b>{" "}
-              automatically once the agent restarts. This can take a while for
-              large KBs.
-            </span>
-          </li>
+            <li className="flex gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+              <span className="text-muted-foreground">
+                Your <b className="text-foreground">project knowledge base</b>,
+                vector index and project context are retained. Afterward, the
+                selective indexer processes only files that were added, changed or
+                removed.
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+              <span className="text-muted-foreground">
+                Agent code and disposable runtime caches are refreshed without
+                resetting your completed tour.
+              </span>
+            </li>
           <li className="flex gap-2">
             <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
             <span className="text-muted-foreground">

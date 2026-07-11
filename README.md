@@ -177,12 +177,13 @@ Web v3.0.0 ships a complete CXO-level design system:
 
 ---
 
-## Distribution and auto-update
+## Distribution and updates
 
 The agent bundle (Python + models) is large and lives on a dedicated `parts`
 branch. The web app's onboarding screen offers a one-click installer per OS;
 the installer pulls bundle parts from GitHub at install time. The running agent
-self-updates from an `agent-update.json` manifest on the `parts` branch.
+checks `agent-update.json` for newer versions but never patches itself. Updates
+are installed through the normal installer while project data is preserved.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full distribution flow.
 

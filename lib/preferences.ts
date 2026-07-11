@@ -31,10 +31,9 @@ export interface UiPreferences {
   /** true once the user has finished (or skipped) the guided tour. */
   tourCompleted: boolean;
   /**
-   * Set by the Reinstall flow before the agent restarts. Survives the page
-   * reload so that, once the freshly-reinstalled agent reconnects, the app
-   * automatically re-indexes every knowledge base. Cleared when reindexing
-   * finishes. (A reinstall keeps settings, fetched models and these prefs.)
+   * Deprecated migration field. Older releases set this to force every KB to
+   * rebuild after reinstall. It is always normalized to false now; normal
+   * index-currentness checks rebuild only stale or incompatible projects.
    */
   pendingReindex: boolean;
   /**
@@ -94,7 +93,8 @@ function load(): UiPreferences {
       panels: { ...DEFAULTS.panels, ...(parsed.panels ?? {}) },
       sizes: { ...DEFAULTS.sizes, ...(parsed.sizes ?? {}) },
       tourCompleted: !!parsed.tourCompleted,
-      pendingReindex: !!parsed.pendingReindex,
+      // Migrate the retired forced-reindex intent without running it once more.
+      pendingReindex: false,
       pendingReinstall: !!parsed.pendingReinstall,
       lastUpdateCheck:
         typeof parsed.lastUpdateCheck === "string" ? parsed.lastUpdateCheck : "",

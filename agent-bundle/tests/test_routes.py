@@ -62,6 +62,20 @@ def test_capabilities(client):
     assert isinstance(r.json(), dict)
 
 
+def test_updates_are_detection_only(client):
+    """A live agent may expose version status, never mutation endpoints.
+
+    This prevents a regression to the former background/in-place patch flow,
+    which could replace code and restart while users were actively working.
+    """
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/update/status" in paths
+    assert set(paths["/update/status"]) == {"get"}
+    assert "/update/apply" not in paths
+    assert "/update/config" not in paths
+    assert "/update/progress" not in paths
+
+
 def test_settings_roundtrip(client, tmp_install):
     # Save a couple of settings, then read them back.
     r = client.post("/settings", json={"values": {"org": "acme-corp"}})

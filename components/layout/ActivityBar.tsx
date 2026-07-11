@@ -72,11 +72,11 @@ export function ActivityBar() {
   } = useAppState();
 
   const { theme, toggleTheme } = useTheme();
-  const { apply: applyUpdate, busy: updateBusy } = useAppUpdate(pushLog);
+  const { check: checkForUpdate, busy: updateBusy } = useAppUpdate(pushLog);
 
   async function onUpdateClick() {
     setLogVisible(true);
-    await applyUpdate();
+    await checkForUpdate();
   }
 
   async function openLogFolder() {

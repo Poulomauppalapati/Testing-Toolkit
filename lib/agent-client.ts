@@ -1748,71 +1748,12 @@ export const agent = {
     }
   },
 
-  async applyUpdate(): Promise<UpdateApplyResult> {
-    try {
-      return await agentFetch<UpdateApplyResult>("/update/apply", {
-        method: "POST",
-      });
-    } catch (e) {
-      if (isAgent404(e)) return NOT_CONFIGURED_RESULT;
-      throw e;
-    }
-  },
-
-  /**
-   * Live progress of an in-flight apply, for the "Update in progress" screen.
-   * Cheap to poll. Returns null on older agents that lack the /update/progress
-   * route (so callers can fall back to an indeterminate bar).
-   */
-  async updateProgress(): Promise<UpdateProgress | null> {
-    try {
-      return await agentFetch<UpdateProgress>("/update/progress");
-    } catch (e) {
-      if (isAgent404(e)) return null;
-      throw e;
-    }
-  },
-
-  /**
-   * Hand the local agent a read-only update token so a token-less install can
-   * start self-updating without a reinstall. Returns the refreshed update
-   * status (now `configured:true`), or null when this agent build predates the
-   * /update/config route (404) so callers can no-op gracefully.
-   */
-  async configureUpdate(cfg: AgentUpdateConfig): Promise<UpdateStatus | null> {
-    try {
-      return await agentFetch<UpdateStatus>("/update/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cfg),
-      });
-    } catch (e) {
-      if (isAgent404(e)) return null;
-      throw e;
-    }
-  },
 };
-
-export interface AgentUpdateConfig {
-  token: string;
-  repo?: string;
-  ref?: string;
-  manifest_url?: string;
-}
 
 /** True when an agent request failed because the route does not exist (404). */
 function isAgent404(e: unknown): boolean {
   return !!(e as Error)?.message?.includes("Agent 404");
 }
-
-/** Synthetic result used when the agent has no update/reinstall routes. */
-const NOT_CONFIGURED_RESULT: UpdateApplyResult = {
-  applied: false,
-  status: "not_configured",
-  current: "unknown",
-  latest: null,
-  restarting: false,
-};
 
 export interface ModelInfo {
   id: string;
@@ -1833,45 +1774,6 @@ export interface UpdateStatus {
   configured: boolean;
   reachable: boolean;
   install_dir: string;
-}
-
-export interface UpdateApplyResult {
-  applied: boolean;
-  status:
-    | "applied"
-    | "started"
-    | "up_to_date"
-    | "failed"
-    | "not_configured"
-    | "unreachable";
-  current: string;
-  latest: string | null;
-  restarting: boolean;
-  detail?: string;
-}
-
-export type UpdatePhase =
-  | "idle"
-  | "starting"
-  | "downloading"
-  | "installing_deps"
-  | "staging"
-  | "restarting"
-  | "done"
-  | "up_to_date"
-  | "failed";
-
-export interface UpdateProgress {
-  active: boolean;
-  phase: UpdatePhase;
-  message: string;
-  current: number;
-  total: number;
-  percent: number;
-  version: string;
-  status: string;
-  detail: string;
-  updated_at: number;
 }
 
 export interface SystemPrompt {

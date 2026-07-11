@@ -1,39 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { AlertTriangle, RotateCcw, RefreshCw } from "lucide-react";
+import { AlertTriangle, Download } from "lucide-react";
 import type { UpdateStatus } from "@/lib/agent-client";
 import { requestReinstall } from "@/lib/reinstall";
 
-/**
- * Full-screen, non-dismissable gate shown when an agent update is available but
- * the app could NOT apply it silently (the install isn't configured for
- * auto-update, or the silent apply failed). It deliberately makes the app
- * unusable until the user reinstalls, because the running agent is out of date
- * with the shipped patch. "Try update again" is offered only when auto-update
- * is configured (e.g. a transient network failure); otherwise reinstall is the
- * only way forward.
- */
-export function AgentUpdateRequired({
-  status,
-  onRetry,
-}: {
-  status: UpdateStatus;
-  onRetry?: () => Promise<boolean>;
-}) {
-  const [retrying, setRetrying] = useState(false);
-
-  const retry = async () => {
-    if (!onRetry) return;
-    setRetrying(true);
-    try {
-      // On success apply() reloads the page; if it returns we stay blocked.
-      await onRetry();
-    } finally {
-      setRetrying(false);
-    }
-  };
-
+/** Non-dismissable compatibility gate with one supported upgrade action. */
+export function AgentUpdateRequired({ status }: { status: UpdateStatus }) {
   return (
     <div
       role="alertdialog"
@@ -51,18 +23,11 @@ export function AgentUpdateRequired({
               id="agent-update-title"
               className="text-balance text-lg font-bold tracking-tight text-foreground"
             >
-              Agent changes have been made
+              Agent reinstall required
             </h1>
             <p className="mt-1 text-pretty text-sm leading-relaxed text-muted-foreground">
-              A new version of the Testing Toolkit agent
-              {status.latest ? (
-                <>
-                  {" "}
-                  (<span className="font-mono">v{status.latest}</span>)
-                </>
-              ) : null}{" "}
-              is available. Please update the app to use the latest version.
-              The app is paused until you do.
+              A newer Testing Toolkit agent is available. Reinstall the agent to
+              continue with the compatible version of the app.
             </p>
           </div>
         </div>
@@ -75,42 +40,28 @@ export function AgentUpdateRequired({
             </span>
           </div>
           <div className="flex items-center justify-between gap-3">
-            <span className="text-muted-foreground">Latest version</span>
+            <span className="text-muted-foreground">Required version</span>
             <span className="font-mono text-foreground">
-              {status.latest ?? "unknown"}
+              {status.latest ?? "latest"}
             </span>
           </div>
         </div>
 
-        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
-          {onRetry && (
-            <button
-              className="tt-btn-ghost flex items-center justify-center gap-2"
-              onClick={retry}
-              disabled={retrying}
-            >
-              <RefreshCw
-                className={`h-3.5 w-3.5 ${retrying ? "animate-spin" : ""}`}
-                strokeWidth={2}
-              />
-              {retrying ? "Trying..." : "Try update again"}
-            </button>
-          )}
+        <div className="mt-6 flex justify-end">
           <button
             className="tt-btn-primary flex items-center justify-center gap-2"
             onClick={requestReinstall}
-            disabled={retrying}
           >
-            <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
-            Update the app
+            <Download className="h-4 w-4" strokeWidth={2} />
+            Reinstall
           </button>
         </div>
 
-        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-          Updating installs the latest agent and takes you through onboarding
-          again. Your settings, fetched models, preferences and generated
-          artifacts are kept; knowledge bases are re-indexed automatically once
-          the updated agent reconnects.
+        <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
+          Your settings, credentials, preferences, selected project and board,
+          generated artifacts, and completed onboarding are preserved. After
+          reconnecting, only stale or incompatible knowledge-base indexes are
+          rebuilt.
         </p>
       </div>
     </div>

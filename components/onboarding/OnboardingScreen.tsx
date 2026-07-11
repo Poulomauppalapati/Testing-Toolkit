@@ -24,11 +24,11 @@ const INSTALLER_MAP = {
  * Two modes:
  *  - first run (default): shown while the agent is offline.
  *  - reinstall (`reinstall` prop): forced on top of a connected agent so the
- *    user re-downloads and re-runs the installer. A reinstall keeps settings,
- *    fetched models, preferences and generated artifacts; it clears transient
- *    caches and the KBs are re-indexed afterwards. We detect completion by
- *    watching the agent drop (installer stops it) and reconnect, and also offer
- *    a manual "Continue" once the agent is reachable again.
+ *    user re-downloads and re-runs the installer. Settings, preferences,
+ *    artifacts, KB documents, vectors, project context and tour completion are
+ *    retained; only disposable runtime caches are refreshed. We detect
+ *    completion by watching the agent drop (installer stops it) and reconnect,
+ *    and also offer a manual "Continue" once the agent is reachable again.
  */
 export function OnboardingScreen({
   reinstall = false,
@@ -139,12 +139,14 @@ export function OnboardingScreen({
                 .
               </li>
               <li>
-                Transient <b className="text-foreground">caches are cleared</b>{" "}
-                and your knowledge bases are{" "}
-                <b className="text-foreground">re-indexed automatically</b> after
-                the agent restarts.
+                Your <b className="text-foreground">project knowledge base</b>,
+                vector index and project context are preserved. Only documents
+                you add, replace or remove are indexed afterward.
               </li>
-              <li>You&apos;ll run through the quick tour again.</li>
+              <li>
+                The installer refreshes agent code and disposable runtime caches;
+                it does not reset your completed tour.
+              </li>
             </ul>
           </div>
         )}
@@ -159,7 +161,7 @@ export function OnboardingScreen({
           >
             <p className="text-sm text-muted-foreground">
               {reinstall
-                ? "Download the installer to perform a clean reinstall."
+                ? "Download the installer to refresh the local agent while preserving project data."
                 : "To get started, install the local compute agent on your machine."}
             </p>
             <button
