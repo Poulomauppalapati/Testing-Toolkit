@@ -220,7 +220,7 @@ export function OnboardingScreen({
                   {reinstall ? "complete the reinstall" : "complete setup"}
                 </p>
                 <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-                  Usually 5–10 min
+                  Usually 10–20 min
                 </span>
               </div>
             </div>

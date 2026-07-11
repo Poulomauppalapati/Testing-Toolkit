@@ -315,7 +315,7 @@ try {
     }
   }
 
-  Write-Step "Downloading agent bundle" "2–6 min"
+  Write-Step "Downloading agent bundle" "4–8 min"
 
   # The download worker. Returns a structured result object (never throws) so
   # the main thread can log rich per-part diagnostics in real time.
@@ -615,7 +615,7 @@ try {
   $installCmd = Join-Path $dest 'install.cmd'
   if (-not (Test-Path $installCmd)) { throw ('install.cmd not found in extracted bundle at ' + $dest) }
 
-  Write-Step "Installing and verifying the agent" "3–7 min"
+  Write-Step "Installing and verifying the agent" "5–10 min"
   Trace 'INFO' 'offline installation started'
   # Hand the auto-update settings to install.py so the agent can fetch future
   # patches on its own. These are read by write_update_config() in install.py.
