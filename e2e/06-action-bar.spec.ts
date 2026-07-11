@@ -2,11 +2,11 @@ import { test, expect } from "@playwright/test";
 import { guardAdoWrites, enterApp, selectFirstProject, mockAgent } from "./helpers";
 
 /**
- * Action bar: button states, dialog open/close for Package, Upload, Defect,
- * Retrieval, Chat, Credentials, Run E2E.
+ * Action bar and navigator: button states and dialog open/close for Package,
+ * Upload, Defect, Chat, Credentials, and Run E2E.
  *
  * Key invariants:
- *  - All action buttons are visible in the action bar.
+ *  - Action-bar and navigator controls are visible in their intended regions.
  *  - Buttons that require a project are disabled until one is selected.
  *  - After selection, clicking each button opens the correct dialog; clicking
  *    Cancel (or equivalent) closes it without crashing.
@@ -29,15 +29,19 @@ test.describe("Action bar button states (no project selected)", () => {
     for (const label of [
       "Upload to ADO",
       "Defect Upload",
-      "Retrieval Preview",
       "Custom Generate",
-      "Credentials",
       "Run E2E",
     ]) {
       const btn = page.getByRole("button", { name: label });
       await expect(btn).toBeVisible();
       await expect(btn).toBeDisabled();
     }
+
+    const credentials = page.getByRole("button", {
+      name: /encrypted test-environment credentials/i,
+    });
+    await expect(credentials).toBeVisible();
+    await expect(credentials).toBeDisabled();
   });
 
   test("Package PDFs button is always enabled (opens packager with no items)", async ({ page }) => {
@@ -83,14 +87,6 @@ test.describe("Action bar dialogs (with project selected)", () => {
     }
   });
 
-  test("Retrieval Preview dialog opens and closes", async ({ page }) => {
-    await page.getByRole("button", { name: "Retrieval Preview" }).click();
-    // Retrieval dialog title
-    await expect(page.getByText(/retrieval/i).first()).toBeVisible({ timeout: 5_000 });
-    const close = page.getByRole("button", { name: "Close" }).last();
-    if (await close.isVisible().catch(() => false)) await close.click();
-  });
-
   test("Custom Generate (Chat) dialog opens and closes", async ({ page }) => {
     await page.getByRole("button", { name: "Custom Generate" }).click();
     await expect(page.getByText(/chat|custom generate/i).first()).toBeVisible({ timeout: 5_000 });
@@ -99,7 +95,9 @@ test.describe("Action bar dialogs (with project selected)", () => {
   });
 
   test("Credentials dialog opens and closes", async ({ page }) => {
-    await page.getByRole("button", { name: "Credentials" }).click();
+    await page.getByRole("button", {
+      name: /encrypted test-environment credentials/i,
+    }).click();
     await expect(page.getByText(/credential/i).first()).toBeVisible({ timeout: 5_000 });
     const close = page.getByRole("button", { name: "Close" }).last();
     if (await close.isVisible().catch(() => false)) await close.click();

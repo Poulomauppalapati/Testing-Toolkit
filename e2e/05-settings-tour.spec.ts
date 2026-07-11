@@ -28,14 +28,17 @@ test.describe("Settings save flow", () => {
     });
   });
 
-  test("Settings dialog Test Connection button is accessible", async ({ page }) => {
+  test("Settings source connection buttons are accessible", async ({ page }) => {
     await page.getByTitle("Settings").click();
-    const testBtn = page.getByRole("button", { name: "Test Connection" });
-    await expect(testBtn).toBeVisible();
-    await expect(testBtn).toBeEnabled();
+    const testAdo = page.getByRole("button", { name: "Test ADO" });
+    const testJira = page.getByRole("button", { name: "Test Jira" });
+    await expect(testAdo).toBeVisible();
+    await expect(testAdo).toBeEnabled();
+    await expect(testJira).toBeVisible();
+    await expect(testJira).toBeEnabled();
 
-    // Click it; mock /settings (POST) + /ado/verify respond OK.
-    await testBtn.click();
+    // Test ADO verifies both the saved source settings and central AI service.
+    await testAdo.click();
     // Should NOT navigate away or throw — status text updates.
     await expect(page.getByText("Testing Toolkit - Settings")).toBeVisible();
 
@@ -119,11 +122,10 @@ test.describe("Navigator collapse / expand", () => {
     await enterApp(page);
   });
 
-  test("Hide navigator collapses to activity bar; Show navigator restores it", async ({ page }) => {
-    // The NavPanel renders when navVisible=true. It has a "Hide navigator" button.
-    const hideNav = page.getByRole("button", { name: "Hide navigator" });
-    await expect(hideNav).toBeVisible();
-    await hideNav.click();
+  test("Collapse navigator reveals activity bar; Show navigator restores it", async ({ page }) => {
+    const collapseNav = page.getByRole("button", { name: "Collapse navigator" });
+    await expect(collapseNav).toBeVisible();
+    await collapseNav.click();
 
     // NavPanel gone; activity bar appears (has "Show navigator" / ChevronRight).
     const showNav = page.getByRole("button", { name: "Show navigator" });
@@ -131,7 +133,7 @@ test.describe("Navigator collapse / expand", () => {
 
     // Restore.
     await showNav.click();
-    await expect(hideNav).toBeVisible();
+    await expect(collapseNav).toBeVisible();
     await expect(page.getByText("Projects", { exact: true })).toBeVisible();
   });
 

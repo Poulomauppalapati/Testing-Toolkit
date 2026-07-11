@@ -4,7 +4,7 @@ import { guardAdoWrites, enterApp, selectFirstProject, mockAgent } from "./helpe
 /**
  * GENERATE flow WITHOUT pushing to ADO.
  *
- * Generation (`/generate/start` + `/generate/dump`) produces test cases locally
+ * Generation (`/generate/start`) produces reviewed test-case artifacts locally
  * and is safe. The "Push to ADO" button (`/generate/push`) is NEVER clicked and
  * is additionally blocked by the network guard. The test asserts that zero
  * ADO-write requests were made.
@@ -29,7 +29,7 @@ test.describe("Generate test cases (no ADO push)", () => {
     const firstCheck = page.getByRole("checkbox").first();
     test.skip(!(await firstCheck.isVisible().catch(() => false)), "no work items to select");
     await firstCheck.check();
-    await expect(page.getByText(/work item\(s\) selected/)).toBeVisible();
+    await expect(page.getByText("1 selected").first()).toBeVisible();
 
     // Open the Implementation generate dialog from the action strip.
     await page.getByRole("button", { name: "Implementation", exact: true }).click();
