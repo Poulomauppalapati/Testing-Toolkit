@@ -293,24 +293,48 @@ def purge_stale_packages() -> None:
 # --------------------------------------------------------------------------
 # Platform detection
 # --------------------------------------------------------------------------
-def detect_platform() -> tuple[str, str]:
-    """Return (os_name, arch) using the same vocabulary as runtime/ folders."""
-    sysname = platform.system().lower()
-    if sysname.startswith("win"):
-        os_name = "windows"
-    elif sysname == "darwin":
-        os_name = "macos"
-    else:
-        os_name = "linux"
+def normalize_os(sysname: str) -> str:
+    """Normalize supported OS aliases; reject unknown systems explicitly."""
+    value = sysname.strip().lower()
+    if value.startswith(("win", "msys", "mingw", "cygwin")):
+        return "windows"
+    if value in {"darwin", "mac", "macos", "osx"}:
+        return "macos"
+    if value == "linux":
+        return "linux"
+    raise RuntimeError(f"Unsupported operating system: {sysname or '<empty>'}")
 
-    machine = platform.machine().lower()
-    if machine in ("x86_64", "amd64", "x64"):
-        arch = "amd64"
-    elif machine in ("arm64", "aarch64"):
-        arch = "arm64"
-    else:
-        arch = machine or "amd64"
-    return os_name, arch
+
+def normalize_arch(machine: str) -> str:
+    """Normalize common CPU aliases without silently guessing an architecture."""
+    value = machine.strip().lower().replace("-", "_")
+    aliases = {
+        "x86_64": "amd64",
+        "amd64": "amd64",
+        "x64": "amd64",
+        "i386": "x86",
+        "i486": "x86",
+        "i586": "x86",
+        "i686": "x86",
+        "x86": "x86",
+        "arm64": "arm64",
+        "aarch64": "arm64",
+        "armv8": "arm64",
+        "armv8l": "arm64",
+        "armv7": "armv7",
+        "armv7l": "armv7",
+        "ppc64le": "ppc64le",
+        "s390x": "s390x",
+        "riscv64": "riscv64",
+    }
+    if value in aliases:
+        return aliases[value]
+    raise RuntimeError(f"Unsupported CPU architecture: {machine or '<empty>'}")
+
+
+def detect_platform() -> tuple[str, str]:
+    """Return canonical (os_name, arch) for runtime and wheel selection."""
+    return normalize_os(platform.system()), normalize_arch(platform.machine())
 
 
 # --------------------------------------------------------------------------
@@ -772,34 +796,63 @@ def _kill_pid(pid: int) -> None:
         pass
 
 
-def _port_owner_pids(port: int) -> set[int]:
-    """Return listener PIDs using OS-native tools; empty means no known owner."""
-    if os.name != "nt":
-        return set()
-    result = _run(["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True)
-    pids: set[int] = set()
-    for line in (result.stdout or "").splitlines():
-        fields = line.split()
-        if len(fields) >= 5 and fields[1].endswith(f":{port}") and fields[3] == "LISTENING":
-            try:
-                pids.add(int(fields[4]))
-            except ValueError:
-                continue
-    return pids
+def _port_owner_pids(port: int, os_name: str | None = None) -> set[int]:
+    """Return listener PIDs using native tools on Windows, Linux, and macOS."""
+    system = os_name or detect_platform()[0]
+    if system == "windows":
+        result = _run(["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True)
+        pids: set[int] = set()
+        for line in (result.stdout or "").splitlines():
+            fields = line.split()
+            if len(fields) >= 5 and fields[1].endswith(f":{port}") and fields[3] == "LISTENING":
+                try:
+                    pids.add(int(fields[4]))
+                except ValueError:
+                    continue
+        return pids
+
+    for command in (
+        ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+        ["fuser", f"{port}/tcp"],
+    ):
+        if not shutil.which(command[0]):
+            continue
+        result = _run(command, capture_output=True, text=True)
+        values = (result.stdout or "").replace("/tcp:", " ").split()
+        pids = {int(value) for value in values if value.isdigit()}
+        if pids:
+            return pids
+    return set()
 
 
-def _windows_process_is_agent(pid: int) -> bool:
-    """Only authorize termination when the command line identifies our agent."""
-    script = (
-        f"$p=Get-CimInstance Win32_Process -Filter 'ProcessId={pid}';"
-        "if($p){$p.Name; $p.CommandLine}"
-    )
-    result = _run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-        capture_output=True,
-        text=True,
-    )
-    identity = (result.stdout or "").lower()
+def _process_identity(pid: int, os_name: str | None = None) -> str:
+    """Read process executable and command line without third-party packages."""
+    system = os_name or detect_platform()[0]
+    if system == "windows":
+        script = (
+            f"$p=Get-CimInstance Win32_Process -Filter 'ProcessId={pid}';"
+            "if($p){$p.Name; $p.CommandLine}"
+        )
+        result = _run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout or ""
+    if system == "linux":
+        try:
+            command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ")
+            executable = os.readlink(f"/proc/{pid}/exe").encode()
+            return (executable + b" " + command).decode(errors="replace")
+        except (OSError, ValueError):
+            pass
+    result = _run(["ps", "-p", str(pid), "-o", "comm=", "-o", "args="], capture_output=True, text=True)
+    return result.stdout or ""
+
+
+def _process_is_agent(pid: int, os_name: str | None = None) -> bool:
+    """Authorize termination only when both Python and agent identity match."""
+    identity = _process_identity(pid, os_name).lower()
     return "python" in identity and (
         "-m agent" in identity
         or "testingtoolkitweb" in identity
@@ -811,12 +864,11 @@ def _release_agent_port(port: int, timeout: float = 10.0) -> bool:
     """Terminate only recognized stale agent owners and wait for release."""
     if _port_free(port):
         return True
-    if os.name != "nt":
-        return False
-    owners = _port_owner_pids(port)
+    os_name = detect_platform()[0]
+    owners = _port_owner_pids(port, os_name)
     if not owners:
         return False
-    unknown = [pid for pid in owners if not _windows_process_is_agent(pid)]
+    unknown = [pid for pid in owners if not _process_is_agent(pid, os_name)]
     if unknown:
         error(f"Port {port} is owned by an unrecognized process (PID {unknown[0]}).")
         return False
@@ -1627,16 +1679,14 @@ def _mcp_bundle_src() -> Path:
     return here / "mcp_servers"  # may not exist -- callers check
 
 
-def _platform_key() -> str:
-    """Return the node-bins.json platform key for the current OS/arch."""
-    import platform as _plat
-    system = _plat.system().lower()
-    machine = _plat.machine().lower()
-    if system == "windows":
-        return "win32-x64"
-    if system == "darwin":
-        return "darwin-arm64" if ("arm" in machine or "aarch" in machine) else "darwin-x64"
-    return "linux-x64"
+def _platform_key(os_name: str | None = None, arch: str | None = None) -> str:
+    """Return the Node distribution key without defaulting unknown CPUs to x64."""
+    system, machine = (os_name, arch) if os_name and arch else detect_platform()
+    os_keys = {"windows": "win32", "macos": "darwin", "linux": "linux"}
+    arch_keys = {"amd64": "x64", "arm64": "arm64"}
+    if system not in os_keys or machine not in arch_keys:
+        raise RuntimeError(f"No bundled Node runtime mapping for {system}-{machine}")
+    return f"{os_keys[system]}-{arch_keys[machine]}"
 
 
 def _find_node() -> str | None:
@@ -1682,6 +1732,19 @@ def _reassemble_parts(parts: list[str], src: Path, dest: Path) -> bool:
     except Exception as exc:
         warn(f"  Part reassembly failed: {exc}")
         return False
+
+
+def _safe_extract_tar(archive, destination: Path) -> None:
+    """Extract a trusted bundle safely on Python 3.9 through 3.14+."""
+    try:
+        archive.extractall(destination, filter="data")
+    except TypeError:
+        root = destination.resolve()
+        for member in archive.getmembers():
+            target = (destination / member.name).resolve()
+            if root != target and root not in target.parents:
+                raise RuntimeError(f"Unsafe archive member: {member.name}")
+        archive.extractall(destination)
 
 
 def _extract_node_from_bundle() -> bool:
@@ -1748,7 +1811,7 @@ def _extract_node_from_bundle() -> bool:
                 zf.extractall(extract_dir)
         else:
             with _tarfile.open(archive_path, "r:gz") as tf:
-                tf.extractall(extract_dir)
+                _safe_extract_tar(tf, extract_dir)
 
         _NODE_INSTALL_DIR.mkdir(parents=True, exist_ok=True)
         extracted_root = next(extract_dir.iterdir())
@@ -1850,7 +1913,7 @@ def _install_mcp_servers() -> None:
                 archive = tmp_dir / "node_modules.tar.gz"
                 if _reassemble_parts(nm_parts, src, archive):
                     with _tarfile.open(archive, "r:gz") as tf:
-                        tf.extractall(MCP_SERVERS_DIR)
+                        _safe_extract_tar(tf, MCP_SERVERS_DIR)
                     if bundled_nm_version:
                         try:
                             sentinel.write_text(bundled_nm_version)

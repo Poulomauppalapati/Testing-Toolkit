@@ -110,7 +110,51 @@ def test_find_system_python_none_when_no_candidates(monkeypatch):
 def test_detect_platform_returns_known_vocab():
     osn, arch = inst.detect_platform()
     assert osn in {"windows", "macos", "linux"}
-    assert arch in {"amd64", "arm64"} or arch  # any non-empty machine tag
+    assert arch in {"amd64", "arm64", "x86", "armv7", "ppc64le", "s390x", "riscv64"}
+
+
+def test_os_alias_matrix():
+    expected = {
+        "Windows": "windows",
+        "MINGW64_NT": "windows",
+        "Darwin": "macos",
+        "macOS": "macos",
+        "Linux": "linux",
+    }
+    assert {value: inst.normalize_os(value) for value in expected} == expected
+
+
+def test_arch_alias_matrix():
+    expected = {
+        "x86_64": "amd64",
+        "AMD64": "amd64",
+        "aarch64": "arm64",
+        "ARM64": "arm64",
+        "i686": "x86",
+        "armv7l": "armv7",
+        "ppc64le": "ppc64le",
+        "s390x": "s390x",
+        "riscv64": "riscv64",
+    }
+    assert {value: inst.normalize_arch(value) for value in expected} == expected
+
+
+def test_unknown_platform_values_fail_closed():
+    import pytest
+
+    with pytest.raises(RuntimeError, match="Unsupported operating system"):
+        inst.normalize_os("plan9")
+    with pytest.raises(RuntimeError, match="Unsupported CPU architecture"):
+        inst.normalize_arch("mystery-cpu")
+
+
+def test_node_platform_key_matrix():
+    assert inst._platform_key("windows", "amd64") == "win32-x64"
+    assert inst._platform_key("windows", "arm64") == "win32-arm64"
+    assert inst._platform_key("linux", "amd64") == "linux-x64"
+    assert inst._platform_key("linux", "arm64") == "linux-arm64"
+    assert inst._platform_key("macos", "amd64") == "darwin-x64"
+    assert inst._platform_key("macos", "arm64") == "darwin-arm64"
 
 
 # --- launched-agent identity ----------------------------------------------
@@ -175,28 +219,47 @@ def test_port_owner_pids_reads_windows_listener(monkeypatch):
     class Result:
         stdout = "  TCP  127.0.0.1:7842  0.0.0.0:0  LISTENING  10912\n"
 
-    monkeypatch.setattr(inst.os, "name", "nt")
     monkeypatch.setattr(inst, "_run", lambda *_args, **_kwargs: Result())
-    assert inst._port_owner_pids(7842) == {10912}
+    assert inst._port_owner_pids(7842, "windows") == {10912}
+
+
+def test_port_owner_pids_reads_posix_lsof(monkeypatch):
+    class Result:
+        stdout = "10912\n10913\n"
+
+    monkeypatch.setattr(inst.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(inst, "_run", lambda *_args, **_kwargs: Result())
+    assert inst._port_owner_pids(7842, "linux") == {10912, 10913}
+    assert inst._port_owner_pids(7842, "macos") == {10912, 10913}
+
+
+def test_process_identity_reads_linux_proc(monkeypatch):
+    class FakePath:
+        def read_bytes(self):
+            return b"python3\0-m\0agent\0"
+
+    monkeypatch.setattr(inst, "Path", lambda _path: FakePath())
+    monkeypatch.setattr(inst.os, "readlink", lambda _path: "/usr/bin/python3")
+    assert "-m agent" in inst._process_identity(10912, "linux")
 
 
 def test_release_agent_port_kills_recognized_orphan(monkeypatch):
     states = iter([False, True])
     killed = []
-    monkeypatch.setattr(inst.os, "name", "nt")
+    monkeypatch.setattr(inst, "detect_platform", lambda: ("macos", "arm64"))
     monkeypatch.setattr(inst, "_port_free", lambda _port: next(states))
-    monkeypatch.setattr(inst, "_port_owner_pids", lambda _port: {10912})
-    monkeypatch.setattr(inst, "_windows_process_is_agent", lambda _pid: True)
+    monkeypatch.setattr(inst, "_port_owner_pids", lambda _port, _os: {10912})
+    monkeypatch.setattr(inst, "_process_is_agent", lambda _pid, _os: True)
     monkeypatch.setattr(inst, "_kill_pid", killed.append)
     assert inst._release_agent_port(7842)
     assert killed == [10912]
 
 
 def test_release_agent_port_refuses_unknown_owner(monkeypatch):
-    monkeypatch.setattr(inst.os, "name", "nt")
+    monkeypatch.setattr(inst, "detect_platform", lambda: ("linux", "amd64"))
     monkeypatch.setattr(inst, "_port_free", lambda _port: False)
-    monkeypatch.setattr(inst, "_port_owner_pids", lambda _port: {777})
-    monkeypatch.setattr(inst, "_windows_process_is_agent", lambda _pid: False)
+    monkeypatch.setattr(inst, "_port_owner_pids", lambda _port, _os: {777})
+    monkeypatch.setattr(inst, "_process_is_agent", lambda _pid, _os: False)
     monkeypatch.setattr(inst, "error", lambda _message: None)
     monkeypatch.setattr(inst, "_kill_pid", lambda _pid: (_ for _ in ()).throw(AssertionError()))
     assert not inst._release_agent_port(7842)
