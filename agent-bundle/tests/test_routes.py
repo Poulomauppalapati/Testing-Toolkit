@@ -114,6 +114,29 @@ def test_kb_status_no_500(client):
     assert r.status_code != 500, r.text
 
 
+def test_context_worker_can_start_without_asyncio_loop(monkeypatch):
+    """The index runs in a worker thread, so its context child cannot require
+    a running asyncio event loop (the previous create_task call crashed)."""
+    import threading
+
+    from agent.jobs import JOBS
+    from agent.routes import kb
+
+    ran = threading.Event()
+
+    def fake_runner(job, project, force=False, client=None, model=""):
+        del project, force, client, model
+        job.finish({"status": "complete"})
+        ran.set()
+
+    monkeypatch.setattr(kb, "_run_context_job", fake_runner)
+    job_id = kb._start_context_job("ThreadLaunchRegression", force=True)
+    assert ran.wait(2), "context worker did not start"
+    job = JOBS.get(job_id)
+    assert job is not None
+    assert job.state == "done"
+
+
 # --------------------------------------------------------------------------
 # Full contract sweep: no route may return 500.
 # --------------------------------------------------------------------------
