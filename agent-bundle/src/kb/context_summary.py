@@ -249,17 +249,36 @@ async def build_context_incremental_async(
                 await report_progress(source)
                 return
         log(f"[INFO] Context map queued {position}/{len(wanted)}: {source}")
-        try:
-            async with semaphore:
-                window_maps = [await _extract_window(client, model, source, window) for window in _windows(text)]
-            mapped = merge_context_maps(window_maps, signature)
-            mapped.mapped_documents = 1
-            mapped.total_documents = 1
-            _atomic_json(path, mapped.to_dict())
-            completed[signature] = mapped
-        except Exception as exc:  # noqa: BLE001
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                async with semaphore:
+                    window_maps = [
+                        await _extract_window(client, model, source, window)
+                        for window in _windows(text)
+                    ]
+                mapped = merge_context_maps(window_maps, signature)
+                mapped.mapped_documents = 1
+                mapped.total_documents = 1
+                _atomic_json(path, mapped.to_dict())
+                completed[signature] = mapped
+                last_error = None
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt < 3:
+                    delay = float(2 ** (attempt - 1))
+                    log(
+                        f"[WARN] Context map retry {attempt}/3 for {source} "
+                        f"in {delay:.0f}s: {type(exc).__name__}: {exc}"
+                    )
+                    await asyncio.sleep(delay)
+        if last_error is not None:
             failures.append(source)
-            log(f"[WARN] Context map failed for {source}: {type(exc).__name__}: {exc}")
+            log(
+                f"[WARN] Context map unavailable after 3 attempts for {source}: "
+                f"{type(last_error).__name__}: {last_error}"
+            )
         await report_progress(source)
 
     await asyncio.gather(*(

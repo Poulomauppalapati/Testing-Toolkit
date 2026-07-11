@@ -149,6 +149,9 @@ function DocumentsSection({
   const [indexing, setIndexing] = useState(false);
   const [indexProgress, setIndexProgress] = useState("");
   const [indexPct, setIndexPct] = useState<number | null>(null);
+  const [contextRunning, setContextRunning] = useState(false);
+  const [contextProgress, setContextProgress] = useState("");
+  const [contextPct, setContextPct] = useState<number | null>(null);
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -168,6 +171,40 @@ function DocumentsSection({
   };
 
   useEffect(refresh, [project]);
+
+  useEffect(() => {
+    if (!project || !contextRunning) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const active = await agent.activeContextJob(project);
+        if (cancelled) return;
+        const progress = active.progress;
+        const current = Number(progress?.current ?? 0);
+        const total = Number(progress?.total ?? 0);
+        if (active.job_id) {
+          setContextProgress(
+            total > 0
+              ? `${current}/${total} (${Math.round((100 * current) / total)}%)`
+              : "Preparing document maps..."
+          );
+          setContextPct(total > 0 ? current / total : null);
+        } else if (!indexing) {
+          setContextRunning(false);
+          setContextProgress("");
+          setContextPct(null);
+        }
+      } catch {
+        if (!cancelled && !indexing) setContextRunning(false);
+      }
+    };
+    void poll();
+    const timer = window.setInterval(poll, 500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [project, contextRunning, indexing]);
 
   const docs = status?.documents ?? [];
 
@@ -265,6 +302,9 @@ function DocumentsSection({
     setIndexing(true);
     setIndexProgress("Starting...");
     setIndexPct(null);
+    setContextRunning(true);
+    setContextProgress("Starting alongside indexing...");
+    setContextPct(null);
     pushLog("INFO", "Rebuilding KB index...");
     const start = Date.now();
     const fmt = (s: number) => {
@@ -440,17 +480,30 @@ function DocumentsSection({
         </div>
       )}
 
-      {indexing && (
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between font-mono text-xs text-[var(--tt-warn-alt)]">
-            <span>Rebuilding index</span>
-            <span>{indexProgress}</span>
-          </div>
-          <ProgressBar value={indexPct} color="var(--tt-warn-alt)" />
+      {(indexing || contextRunning) && (
+        <div className="flex flex-col gap-3 rounded-lg border border-[var(--tt-outline)] bg-[var(--tt-surface-base)] p-3">
+          {indexing && (
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between font-mono text-xs text-[var(--tt-warn-alt)]">
+                <span>KB index</span>
+                <span>{indexProgress}</span>
+              </div>
+              <ProgressBar value={indexPct} color="var(--tt-warn-alt)" />
+            </div>
+          )}
+          {contextRunning && (
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between font-mono text-xs text-[var(--tt-primary)]">
+                <span>Project context</span>
+                <span>{contextProgress}</span>
+              </div>
+              <ProgressBar value={contextPct} color="var(--tt-primary)" />
+            </div>
+          )}
         </div>
       )}
 
-      {status && !indexing && (
+      {status && !indexing && !contextRunning && (
         <p className="text-xs leading-relaxed text-[var(--tt-success)]">
           {status.indexed
             ? `Indexing ${status.n_documents ?? status.documents.length} document(s), ${

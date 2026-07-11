@@ -327,15 +327,24 @@ def _maybe_extract_context(
         maps_dir=p.context_maps_dir, kb_fingerprint=fingerprint,
         on_log=on_log, on_progress=on_sub_progress, force=force,
     ))
-    # Preserve the last complete aggregate when any document map failed. The
-    # new checkpoints remain available for a resumable retry.
-    if context.status == "partial" and previous is not None and previous.status == "complete":
+    # A partial aggregate is useful and must not fail the KB lifecycle. Preserve
+    # the previous complete summary only when this run mapped nothing at all;
+    # successful per-document maps remain checkpointed for the next retry.
+    if context.mapped_documents == 0 and previous is not None and not previous.is_empty():
         if on_log:
-            on_log("[WARN] Context is partial; preserved previous complete aggregate")
+            on_log(
+                "[WARN] Context mapped 0 documents; previous summary preserved "
+                "and indexing remains usable"
+            )
         return
     if not context.is_empty() and save_context_summary(p.context_summary_path, context):
         if on_log:
-            on_log("[INFO] Project context summary saved atomically")
+            level = "WARN" if context.status == "partial" else "INFO"
+            on_log(
+                f"[{level}] Project context {context.status} summary saved "
+                f"atomically ({context.mapped_documents}/"
+                f"{context.total_documents} documents)"
+            )
 
 
 def _build_hybrid_from_index(

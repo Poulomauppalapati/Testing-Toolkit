@@ -164,6 +164,15 @@ def _run_kb_index(job: "Job", project: str, force: bool = False) -> None:
     try:
         if force:
             job.log("[INFO] Full rebuild requested; ignoring cached index.")
+        context_job_id = None
+        if ctx_client is not None:
+            context_job_id = _start_context_job(
+                project, force=force, client=ctx_client, model=ctx_model,
+            )
+            job.log(
+                f"[INFO] Project context pipeline started alongside indexing "
+                f"as job {context_job_id}."
+            )
         job.log(f"[INFO] KB indexing started for '{project}'.")
         result = ps.index_project_resumable(
             project,
@@ -188,15 +197,6 @@ def _run_kb_index(job: "Job", project: str, force: bool = False) -> None:
             has_dense = bool(hybrid_has_dense(ps.ensure_project(project).hybrid_dir))
         except Exception:
             has_dense = False
-        context_job_id = None
-        if chunks > 0 and ctx_client is not None:
-            context_job_id = _start_context_job(
-                project, force=force, client=ctx_client, model=ctx_model,
-            )
-            job.log(
-                f"[INFO] Project context mapping started concurrently as job "
-                f"{context_job_id}."
-            )
         job.finish({
             "n_documents": docs,
             "n_chunks": chunks,
@@ -241,26 +241,56 @@ def _run_context_job(
             from core.settings_store import build_anthropic_client, model_pair
             client = build_anthropic_client()
             _, model = model_pair()
-        index = ps.get_index(project)
-        if not getattr(index, "chunks", None):
-            raise RuntimeError("KB index has no chunks")
+        import time
+        from agent.jobs import JOBS
+
         job.log(f"[INFO] Project context mapping started for '{project}'.")
+        # Map the last complete index immediately while extraction works on file
+        # deltas. Then wait for indexing to atomically publish its final index and
+        # run once more; unchanged document maps are cache hits.
+        try:
+            initial = ps.get_index(project)
+        except Exception:
+            initial = None
+        if initial is not None and getattr(initial, "chunks", None):
+            ps.extract_project_context(
+                project, initial, client, model,
+                on_log=_log, on_progress=_progress, force=False,
+            )
+
+        while JOBS.find_active("kb_index", project) is not None:
+            if job.stopped:
+                job.fail("Project context mapping stopped")
+                return
+            time.sleep(0.25)
+
+        final_index = ps.get_index(project)
+        if not getattr(final_index, "chunks", None):
+            job.finish({
+                "mapped_documents": 0,
+                "total_documents": 0,
+                "status": "unavailable",
+            })
+            job.log("[INFO] Project context skipped: KB has no indexable content.")
+            return
         ps.extract_project_context(
-            project, index, client, model,
+            project, final_index, client, model,
             on_log=_log, on_progress=_progress, force=force,
         )
         context = ps.read_context_summary(project)
-        if context is None or context.status != "complete":
-            status = getattr(context, "status", "unavailable")
-            raise RuntimeError(f"project context ended with status '{status}'")
+        if context is None:
+            raise RuntimeError("project context summary is unavailable")
         job.finish({
             "mapped_documents": context.mapped_documents,
             "total_documents": context.total_documents,
+            "failed_documents": context.failed_documents,
             "status": context.status,
         })
+        level = "WARN" if context.status == "partial" else "SUCCESS"
         job.log(
-            f"[SUCCESS] Project context ready: {context.mapped_documents}/"
-            f"{context.total_documents} document(s)."
+            f"[{level}] Project context {context.status}: "
+            f"{context.mapped_documents}/{context.total_documents} document(s), "
+            f"{len(context.failed_documents)} unavailable."
         )
     except Exception as exc:  # noqa: BLE001
         job.fail(f"{type(exc).__name__}: {exc}")
@@ -279,9 +309,16 @@ def _start_context_job(
         return existing.id
     context_job = JOBS.create("kb_context", project=project)
     context_job.log("[INFO] Starting project context mapping...")
-    asyncio.create_task(asyncio.to_thread(
-        _run_context_job, context_job, project, force, client, model,
-    ))
+    # This helper is called from the index worker thread as well as async route
+    # handlers, so it cannot depend on a running asyncio event loop.
+    import threading
+
+    threading.Thread(
+        target=_run_context_job,
+        args=(context_job, project, force, client, model),
+        name=f"kb-context-{context_job.id}",
+        daemon=True,
+    ).start()
     return context_job.id
 
 
@@ -398,9 +435,6 @@ async def delete_document(project: str, name: str) -> dict:
     """Delete a single document from the project's kb/ folder and invalidate
     the stored index so the next rebuild reflects the change. Mirrors the
     desktop project KB dialog's "Remove selected" action."""
-    import shutil
-    from core.project_store import ProjectPaths
-
     project_dir = PROJECTS_DIR / project
     kb_dir = (project_dir / "kb").resolve()
     target = (kb_dir / name).resolve()
@@ -411,32 +445,11 @@ async def delete_document(project: str, name: str) -> dict:
         raise HTTPException(404, f"Document not found: {name}")
     target.unlink()
 
-    # Removing a document must also remove it from the index — not just the
-    # file. Drop the cached chunk index AND the built hybrid index (BM25 +
-    # dense vectors + chunks). Otherwise deleting the last document would leave
-    # stale vectors on disk that retrieval still treats as "ready" and could
-    # serve content from the deleted file. A follow-up reindex rebuilds these
-    # from the remaining documents; if none remain, the KB is correctly empty.
-    paths = ProjectPaths.for_name(project)
-    try:
-        if paths.index_path.exists():
-            paths.index_path.unlink()
-    except OSError:
-        pass
-    # Drop the content-hash cache that sits beside the index so it can't carry
-    # stale digests into the next build.
-    try:
-        from kb.file_sig import hash_cache_path
-
-        hash_cache_path(paths.index_path).unlink(missing_ok=True)
-    except Exception:
-        pass
-    try:
-        if paths.hybrid_dir.exists():
-            shutil.rmtree(paths.hybrid_dir, ignore_errors=True)
-    except OSError:
-        pass
-    return {"ok": True}
+    # Keep the last complete index until the incremental follow-up succeeds.
+    # The next index pass compares source name + SHA, removes this document's
+    # chunks/maps, and preserves every unchanged document. This avoids a window
+    # where a failed rebuild destroys the last usable KB.
+    return {"ok": True, "changed": name}
 
 
 # ---------------------------------------------------------------------
@@ -596,6 +609,18 @@ def _context_payload(project: str) -> dict:
     }
 
 
+@router.get("/context/active/{project}")
+async def active_context_job(project: str) -> dict:
+    """Return live context progress so the UI can track it independently."""
+    from agent.jobs import JOBS
+
+    job = JOBS.find_active("kb_context", project)
+    if job is None:
+        return {"job_id": None, "progress": None}
+    snapshot = job.snapshot()
+    return {"job_id": job.id, "progress": snapshot.get("progress")}
+
+
 @router.get("/context/{project}")
 async def get_context(project: str) -> dict:
     """Return the auto-extracted project context summary (actors, entities,
@@ -652,12 +677,28 @@ async def regenerate_context(project: str) -> dict:
         kb_fingerprint=fingerprint,
         force=True,
     )
-    if ctx.status == "partial":
-        raise HTTPException(
-            502,
-            f"Context mapping failed for {len(ctx.failed_documents)} document(s); previous complete summary preserved.",
-        )
+    previous = await asyncio.to_thread(ps.read_context_summary, project)
+    if ctx.mapped_documents == 0 and previous is not None and not previous.is_empty():
+        return {
+            **_context_payload(project),
+            "status": "preserved",
+            "failed_documents": ctx.failed_documents,
+            "warning": (
+                f"No documents mapped after retries; preserved the previous "
+                f"summary. {len(ctx.failed_documents)} document(s) unavailable."
+            ),
+        }
     if not ctx.is_empty():
         await asyncio.to_thread(ps.write_context_summary, project, ctx)
 
-    return _context_payload(project)
+    return {
+        **_context_payload(project),
+        "status": ctx.status,
+        "failed_documents": ctx.failed_documents,
+        "warning": (
+            f"Context is partial: {ctx.mapped_documents}/{ctx.total_documents} "
+            "documents mapped."
+            if ctx.status == "partial"
+            else ""
+        ),
+    }

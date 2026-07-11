@@ -200,6 +200,78 @@ def test_approx_tokens():
 
 
 # --------------------------------------------------------------------------
+# resumable file-delta indexing
+# --------------------------------------------------------------------------
+def test_index_refresh_only_processes_changed_file(tmp_path, monkeypatch):
+    from kb import indexer
+
+    kb_dir = tmp_path / "kb"
+    kb_dir.mkdir()
+    (kb_dir / "a.txt").write_text("alpha original", encoding="utf-8")
+    (kb_dir / "b.txt").write_text("beta unchanged", encoding="utf-8")
+    index_path = tmp_path / "kb_index.json"
+    first = indexer.build_index_resumable(kb_dir, index_path)
+    assert len(first.sources) == 2
+
+    processed: list[str] = []
+    original = indexer._process_one_file
+
+    def tracked(path, *args, **kwargs):
+        processed.append(path.name)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(indexer, "_process_one_file", tracked)
+    (kb_dir / "a.txt").write_text("alpha updated", encoding="utf-8")
+    second = indexer.build_index_resumable(kb_dir, index_path)
+
+    assert processed == ["a.txt"]
+    assert {source.name for source in second.sources} == {"a.txt", "b.txt"}
+    assert any(chunk.doc == "b.txt" for chunk in second.chunks)
+
+
+# --------------------------------------------------------------------------
+# incremental project context
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_context_partial_is_returned_after_retries(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from kb import context_summary
+
+    attempts: dict[str, int] = {}
+
+    async def fake_extract(client, model, source, text):
+        del client, model, text
+        attempts[source] = attempts.get(source, 0) + 1
+        if source == "bad.txt":
+            raise TimeoutError("gateway unavailable")
+        return context_summary.ProjectContext(
+            actors=[context_summary.ContextItem("Buyer", "Purchases items", [source])]
+        )
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(context_summary, "_extract_window", fake_extract)
+    monkeypatch.setattr(context_summary.asyncio, "sleep", no_sleep)
+    index = SimpleNamespace(chunks=[
+        SimpleNamespace(doc="good.txt", title="Good", context="", text="good"),
+        SimpleNamespace(doc="bad.txt", title="Bad", context="", text="bad"),
+    ])
+
+    result = await context_summary.build_context_incremental_async(
+        index, object(), "model", tmp_path, "fingerprint"
+    )
+
+    assert result.status == "partial"
+    assert result.mapped_documents == 1
+    assert result.total_documents == 2
+    assert result.failed_documents == ["bad.txt"]
+    assert attempts["bad.txt"] == 3
+    assert (tmp_path / next(path.name for path in tmp_path.glob("*.json"))).exists()
+
+
+# --------------------------------------------------------------------------
 # HybridRetriever availability on an empty project
 # --------------------------------------------------------------------------
 def test_retriever_unavailable_when_no_index(tmp_path):

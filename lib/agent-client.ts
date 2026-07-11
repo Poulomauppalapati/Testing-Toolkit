@@ -1322,10 +1322,19 @@ export const agent = {
   },
 
   // -- Project context summary (desktop KB dialog "Project Context") --
+  async activeContextJob(project: string): Promise<{
+  job_id: string | null;
+  progress: { stage?: string; current?: number; total?: number } | null;
+  }> {
+  return agentFetch(
+  `/kb/context/active/${encodeURIComponent(project)}`
+  );
+  },
+
   async projectContext(project: string): Promise<ProjectContextSummary> {
-    return agentFetch<ProjectContextSummary>(
-      `/kb/context/${encodeURIComponent(project)}`
-    );
+  return agentFetch<ProjectContextSummary>(
+  `/kb/context/${encodeURIComponent(project)}`
+  );
   },
 
   async regenerateContext(project: string): Promise<ProjectContextSummary> {

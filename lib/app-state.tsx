@@ -440,54 +440,45 @@ export function AppStateProvider({
       setKbMessage("Generating project context...");
       setKbProgress(null);
 
-      const MAX_ATTEMPTS = 3;
-      const BASE_DELAY_MS = 5000;
-
-      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        if (ctl.signal.aborted) return;
-        try {
+      try {
+        // The agent starts context alongside indexing. Attach to that job rather
+        // than issuing a second forced regeneration after indexing completes.
+        for (;;) {
+          if (ctl.signal.aborted) return;
+          const active = await agent.activeContextJob(project);
+          if (!active.job_id) break;
+          const current = Number(active.progress?.current ?? 0);
+          const total = Number(active.progress?.total ?? 0);
           setKbMessage(
-            attempt > 1
-              ? `Generating project context (retry ${attempt}/${MAX_ATTEMPTS})...`
+            total > 0
+              ? `Project context ${current}/${total}`
               : "Generating project context..."
           );
-          const ctx = await agent.regenerateContext(project);
-          if (ctl.signal.aborted) return;
-          if (ctx.has) {
-            pushLog("SUCCESS", `Project context extracted: ${ctx.n_items} item(s).`);
-          } else {
-            pushLog("INFO", "Context generation completed (no items extracted).");
-          }
-          setKbState("ready");
-          setKbMessage(
-            ctx.has
-              ? `KB ready | Context: ${ctx.n_items} items`
-              : "KB ready (context empty)"
-          );
-          setKbProgress(null);
-          return;
-        } catch (e) {
-          if (ctl.signal.aborted) return;
-          const msg = (e as Error).message || "unknown error";
-          pushLog(
-            "WARN",
-            `Context generation attempt ${attempt}/${MAX_ATTEMPTS} failed: ${msg}`
-          );
-          if (attempt < MAX_ATTEMPTS) {
-            const delay = BASE_DELAY_MS * attempt;
-            setKbMessage(
-              `Context gen failed, retrying in ${Math.round(delay / 1000)}s...`
-            );
-            await new Promise((r) => setTimeout(r, delay));
-          }
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
-      }
-      // All retries exhausted — still mark KB ready (context is optional).
-      if (!ctl.signal.aborted) {
-        pushLog("ERROR", "Context generation failed after all retries. KB is still usable for retrieval.");
+        const ctx = await agent.projectContext(project);
+        if (ctl.signal.aborted) return;
+        const status = ctx.status === "partial" ? "partial" : "complete";
+        pushLog(
+          status === "partial" ? "WARN" : "SUCCESS",
+          `Project context ${status}: ${ctx.n_items} item(s).`
+        );
         setKbState("ready");
-        setKbMessage("KB ready (context generation failed)");
-        setKbProgress(null);
+        setKbMessage(
+          ctx.has
+            ? `KB ready | Context: ${ctx.n_items} items${status === "partial" ? " (partial)" : ""}`
+            : "KB ready (context empty)"
+        );
+      } catch (e) {
+        if (ctl.signal.aborted) return;
+        pushLog(
+          "WARN",
+          `Project context status unavailable: ${(e as Error).message}. KB retrieval remains ready.`
+        );
+        setKbState("ready");
+        setKbMessage("KB ready (context status unavailable)");
+      } finally {
+        if (!ctl.signal.aborted) setKbProgress(null);
       }
     },
     [pushLog]

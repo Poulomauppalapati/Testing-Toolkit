@@ -392,10 +392,33 @@ def build_index_resumable(
         target_sigs.append(_sig(n, sha))
     target_set = set(target_sigs)
 
-    # Resume from a valid checkpoint: keep only chunks whose source file is
-    # still present and unchanged.
+    # Seed from the last complete index so routine add/update/delete operations
+    # only process changed files. A source is reusable only when both its name
+    # and content SHA still match; removed and replaced files disappear here.
     done_sigs: set[str] = set()
     chunks: list[KbChunk] = []
+    if not force and index_path.exists():
+        try:
+            existing = _load_index(index_path)
+            reusable = {
+                _sig(source.name, source.sha): source.name
+                for source in existing.sources
+                if _sig(source.name, source.sha) in target_set
+            }
+            reusable_names = frozenset(reusable.values())
+            done_sigs = set(reusable)
+            chunks = [chunk for chunk in existing.chunks if chunk.doc in reusable_names]
+            if done_sigs:
+                _log(
+                    f"[INFO] Incremental KB update: reusing {len(done_sigs)}/"
+                    f"{total} unchanged file(s)."
+                )
+        except (OSError, json.JSONDecodeError, ValueError):
+            done_sigs = set()
+            chunks = []
+
+    # A valid per-file checkpoint is newer than the complete index and takes
+    # precedence, allowing an interrupted delta build to resume safely.
     data = _load_partial(partial)
     if data is not None:
         saved_done = {str(x) for x in (data.get("done_sigs") or [])}
@@ -405,8 +428,7 @@ def build_index_resumable(
             _log(f"[INFO] Resuming KB index from checkpoint: "
                  f"{len(done_sigs)}/{total} file(s) already done.")
         else:
-            _log("[INFO] Checkpoint no longer matches the KB; rebuilding "
-                 "from scratch.")
+            _log("[INFO] Checkpoint no longer matches the KB; ignoring it.")
 
     start = time.monotonic()
     done = len(done_sigs)

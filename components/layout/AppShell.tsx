@@ -1,18 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAgent } from "@/lib/agent-context";
 import { useAppState } from "@/lib/app-state";
-import {
-  AGENT_UPDATE_REQUIRED_EVENT,
-  useAppUpdate,
-} from "@/lib/use-app-update";
+import { AGENT_UPDATE_REQUIRED_EVENT } from "@/lib/use-app-update";
 import { useWebFreshness } from "@/lib/use-web-freshness";
 import { isAgentOutdated, REQUIRED_AGENT_VERSION } from "@/lib/agent-version";
-import {
-  isFirstLaunchToday,
-  markUpdateCheckedToday,
-} from "@/lib/preferences";
 import type { UpdateStatus } from "@/lib/agent-client";
 import { AgentUpdateRequired } from "@/components/onboarding/AgentUpdateRequired";
 import { ActivityBar } from "./ActivityBar";
@@ -26,11 +19,8 @@ import { DialogHost } from "@/components/dialogs/DialogHost";
 
 export function AppShell() {
   const { status, health } = useAgent();
-  const { navVisible, logVisible, settings, reloadProjects, pushLog } =
-    useAppState();
-  const { check } = useAppUpdate(pushLog);
+  const { navVisible, logVisible, settings, reloadProjects } = useAppState();
   const bootstrapped = useRef(false);
-  const updateChecked = useRef(false);
   // Agent updates are detection-only. When one is found, block the app with
   // AgentUpdateRequired until the user refreshes the agent via the installer.
   const [updateBlocked, setUpdateBlocked] = useState<UpdateStatus | null>(null);
@@ -81,14 +71,6 @@ export function AppShell() {
     }
   }, [status, agentVersion]);
 
-  // Detection only: a newer manifest version pauses the app and offers a
-  // reinstall. No update configuration, patch download, apply, or restart API
-  // is called from the web app.
-  const runUpdateCheck = useCallback(async () => {
-    const next = await check();
-    if (next?.update_available) setUpdateBlocked(next);
-  }, [check]);
-
   // Manual checks in the nav, rail, or Settings use separate hook instances.
   // Their detection result is announced through this browser-only event so the
   // single shell-owned blocking gate opens consistently from every entry point.
@@ -100,40 +82,6 @@ export function AppShell() {
     return () =>
       window.removeEventListener(AGENT_UPDATE_REQUIRED_EVENT, onRequired);
   }, []);
-
-  // Configured sessions run a detection-only manifest check on every refresh.
-  // The first connected launch of each day checks even before source setup so
-  // shipped agent changes are surfaced without mutating a live installation.
-  useEffect(() => {
-    if (status !== "connected" || updateChecked.current) return;
-    if (!settings?.configured && !isFirstLaunchToday()) return;
-    updateChecked.current = true;
-    markUpdateCheckedToday();
-    void runUpdateCheck();
-  }, [status, settings?.configured, runUpdateCheck]);
-
-  // (C) Harden detection for long-open sessions: re-check on tab focus, when the
-  // network returns, and on a periodic interval — not just at launch. These are
-  // no-ops while offline or already up to date.
-  useEffect(() => {
-    if (status !== "connected") return;
-    const recheck = () => {
-      if (settings?.configured || isFirstLaunchToday()) {
-        markUpdateCheckedToday();
-        void runUpdateCheck();
-      }
-    };
-    const onFocus = () => recheck();
-    const onOnline = () => recheck();
-    const interval = setInterval(recheck, 30 * 60 * 1000); // every 30 min
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("online", onOnline);
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("online", onOnline);
-    };
-  }, [status, settings?.configured, runUpdateCheck]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
