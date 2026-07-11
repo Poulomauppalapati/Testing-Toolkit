@@ -10,8 +10,37 @@ import type { WorkItemRow } from "../agent-client";
 import { coveredWorkItemIds, userStoryIds } from "../board-utils";
 import { humanSize } from "../../components/ui/download-links";
 import { ErrorBoundary } from "../../components/ui/error-boundary";
+import { toPayload } from "../../components/dialogs/ConnectionFields";
 import { buildWindowsInstaller } from "../installer-template";
 import { REQUIRED_AGENT_VERSION } from "../agent-version";
+
+describe("centrally managed AI configuration", () => {
+  it("never forwards AI secrets, endpoints, or model IDs from browser state", () => {
+    const payload = toPayload({
+      pat: "ado-pat",
+      organization: "org",
+      project_prefix: "",
+      tls_mode: "system",
+      jira_url: "",
+      jira_user: "",
+      jira_pat: "",
+      jira_project_prefix: "",
+      // Simulate stale or malicious browser state from an older client.
+      api_key: "must-not-leave-browser",
+      base_url: "https://wrong.example",
+      model: "wrong-primary",
+      fast_model: "wrong-fast",
+      fallback_model: "wrong-fallback",
+    } as Parameters<typeof toPayload>[0] & Record<string, string>);
+
+    expect(payload).toMatchObject({ organization: "org", pat: "ado-pat" });
+    expect(payload).not.toHaveProperty("api_key");
+    expect(payload).not.toHaveProperty("base_url");
+    expect(payload).not.toHaveProperty("model");
+    expect(payload).not.toHaveProperty("fast_model");
+    expect(payload).not.toHaveProperty("fallback_model");
+  });
+});
 
 describe("Windows installer console contract", () => {
   const payload = buildWindowsInstaller("owner/repo", "parts", "token", true);

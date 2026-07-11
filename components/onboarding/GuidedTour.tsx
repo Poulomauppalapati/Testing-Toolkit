@@ -47,7 +47,7 @@ const STEPS: TourStep[] = [
   {
     icon: Settings,
     title: "Settings & sections",
-    body: "Tune models and credentials in Settings. Every navigator section is collapsible, and your layout is remembered the next time you open the app.",
+    body: "Manage work-item source credentials in Settings. AI credentials and model routing are configured centrally by the backend. Every navigator section is collapsible, and your layout is remembered.",
   },
 ];
 

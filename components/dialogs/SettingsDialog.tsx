@@ -15,14 +15,9 @@ import {
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const { settings, setSettings, reloadProjects, pushLog } = useAppState();
   const { values, setValues } = useConnectionFields({
-    base_url: settings?.base_url ? "************" : "",
-    model: settings?.model ?? "",
-    fast_model: settings?.fast_model ?? "",
-    fallback_model: settings?.fallback_model ?? "",
     organization: settings?.organization ?? "",
     project_prefix: settings?.project_prefix ?? "",
     tls_mode: settings?.tls_mode ?? "system",
-    api_key: settings?.has_api_key ? "************" : "",
     pat: settings?.has_pat ? "************" : "",
     jira_url: settings?.jira_url ?? "",
     jira_user: settings?.jira_user ?? "",

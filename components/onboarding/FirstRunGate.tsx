@@ -17,7 +17,7 @@ import {
  * upstream (OnboardingScreen, shown while the agent is offline). Once the agent
  * is online this gate runs the remaining stages on top of the always-rendered
  * app shell:
- *   Stage 2 — Setup (SetupWizard): credentials + read-only model defaults.
+ *   Stage 2 — Setup (SetupWizard): optional work-item source credentials.
  *   Stage 3 — Quick tour (GuidedTour): a short walkthrough of the app.
  *   Stage 4 — Full app usage: nothing overlaid; the shell is fully usable.
  * Tour completion is persisted so returning users land straight in stage 4.
@@ -69,9 +69,9 @@ function SetupWizard({
   onConnected: (s: Awaited<ReturnType<typeof agent.getSettings>>) => void;
   onSkip: () => void;
 }) {
-  // The first-run form starts every field empty so the
-  // Base URL shows its placeholder and is directly editable (the backend
-  // supplies the default endpoint when none is submitted on save).
+  // AI credentials and model selection are deliberately absent: the installed
+  // agent reads the centrally managed secrets and routes each task through its
+  // backend model router. This form only collects optional source credentials.
   const { values, setValues } = useConnectionFields();
   const [busy, setBusy] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
@@ -144,11 +144,13 @@ function SetupWizard({
           Set up your connection
         </h2>
         <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-          Optionally enter your LLM API and Azure DevOps details. On{" "}
-          <b className="text-[var(--tt-text-secondary)]">Save &amp; Connect</b> the app stores
-          credentials, verifies Azure DevOps (when provided), and loads your
-          projects. Azure DevOps is optional — you can connect JIRA later from
-          Settings, or proceed in Manual Mode.
+          AI access and task-specific model selection are managed centrally by
+          the installed agent and its model router. Optionally enter Azure
+          DevOps details below. On{" "}
+          <b className="text-[var(--tt-text-secondary)]">Save &amp; Connect</b>, the app stores
+          those source credentials, verifies Azure DevOps, and loads your
+          projects. You can also connect JIRA later from Settings or proceed in
+          Manual Mode.
         </p>
 
         <div className="mt-5">

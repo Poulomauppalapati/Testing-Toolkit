@@ -9,18 +9,19 @@ test.describe("Onboarding / first-run gate", () => {
     guardAdoWrites(page);
   });
 
-  test("first-run form shows an editable Base URL placeholder (not masked dots)", async ({
+  test("first-run form never exposes centrally managed AI configuration", async ({
     page,
   }) => {
     await page.goto("/");
 
-    // Base URL must render as an editable text field with its placeholder
-    // (no value seeded, no mask). Waiting for it to be visible also serves as
-    // the readiness wait (the app polls health, so networkidle never fires).
-    const baseUrl = page.getByPlaceholder("https://your-llm-api-endpoint.com");
-    await expect(baseUrl).toBeVisible();
-    await expect(baseUrl).toBeEditable();
-    await expect(baseUrl).toHaveValue("");
+    await expect(page.getByText("Set up your connection")).toBeVisible();
+    await expect(page.getByText("Azure DevOps (optional)")).toBeVisible();
+    await expect(page.getByLabel("API Key:")).toHaveCount(0);
+    await expect(
+      page.getByPlaceholder("https://your-llm-api-endpoint.com"),
+    ).toHaveCount(0);
+    await expect(page.getByText("Fast model", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Fallback model", { exact: true })).toHaveCount(0);
   });
 
   test("Skip (manual mode) enters the app shell with an empty board", async ({ page }) => {
@@ -29,13 +30,14 @@ test.describe("Onboarding / first-run gate", () => {
     const skip = page.getByRole("button", { name: "Skip (manual mode)" });
     await expect(skip).toBeVisible();
     await skip.click();
+    await page.getByRole("button", { name: "Skip tour" }).click();
 
     // The main window is always shown; Skip lands us in the shell, not back on
     // the setup form.
     await expect(page.getByText("Projects", { exact: true })).toBeVisible();
     await expect(page.getByText("Boards", { exact: true })).toBeVisible();
     await expect(
-      page.getByText("No projects. Configure ADO in Settings, then Refresh."),
+      page.getByText("No projects. Configure ADO in Settings."),
     ).toBeVisible();
     // We are no longer on the setup form.
     await expect(

@@ -9,18 +9,20 @@ test.describe("Shell dialogs", () => {
     await enterApp(page);
   });
 
-  test("Settings dialog shows all fields and masks Base URL when stored", async ({
+  test("Settings exposes source credentials but never AI secrets or model controls", async ({
     page,
   }) => {
     await page.getByTitle("Settings").click();
 
     await expect(page.getByText("Testing Toolkit - Settings")).toBeVisible();
-    // Section labels
-    for (const label of ["API Key", "Base URL", "Model", "Organization"]) {
-      await expect(page.getByText(label, { exact: false }).first()).toBeVisible();
-    }
+    await expect(page.getByText("Azure DevOps (optional)")).toBeVisible();
+    await expect(page.getByText("JIRA (optional)")).toBeVisible();
+    await expect(page.getByLabel("API Key:")).toHaveCount(0);
+    await expect(page.getByText("Fast model", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Fallback model", { exact: true })).toHaveCount(0);
     // Footer actions
-    await expect(page.getByRole("button", { name: "Test Connection" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Test ADO" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Test Jira" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Save" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
 
@@ -36,16 +38,14 @@ test.describe("Shell dialogs", () => {
     await expect(page.getByText("About")).toBeVisible();
 
     await page.getByText("About").click();
-    await expect(page.getByText("Version 2.0.0")).toBeVisible();
+    await expect(page.getByText(/^Version \d+\.\d+\.\d+$/)).toBeVisible();
     await page.getByRole("button", { name: "OK" }).click();
-    await expect(page.getByText("Version 2.0.0")).toHaveCount(0);
+    await expect(page.getByText(/^Version \d+\.\d+\.\d+$/)).toHaveCount(0);
   });
 
   test("log panel toggles open and closed", async ({ page }) => {
-    // The action-strip toggle uses exact "Show"/"Hide" text (the navigator's
-    // collapse button is "Hide navigator", so we match exactly to avoid it).
-    const show = page.getByRole("button", { name: "Show", exact: true });
-    const hide = page.getByRole("button", { name: "Hide", exact: true });
+    const show = page.getByRole("button", { name: "Show log", exact: true });
+    const hide = page.getByRole("button", { name: "Hide log", exact: true });
     await show.click();
     await expect(hide).toBeVisible();
     await hide.click();
