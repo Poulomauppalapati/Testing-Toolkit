@@ -31,7 +31,9 @@ ASCII-only; fully type-hinted; logging via [INFO]/[WARN]/[SUCCESS].
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -65,6 +67,34 @@ _SCHEMA: Final[int] = 2
 _CHUNKS_FILE: Final[str] = "chunks.jsonl"
 _BM25_FILE: Final[str] = "bm25.json"
 _MANIFEST_FILE: Final[str] = "manifest.json"
+_CURRENT_FILE: Final[str] = "current.json"
+_GENERATIONS_DIR: Final[str] = ".generations"
+
+
+def _active_index_dir(index_dir: Path | str) -> Path:
+    """Resolve the atomically published generation, with legacy fallback."""
+    root = Path(index_dir)
+    pointer = root / _CURRENT_FILE
+    try:
+        data = json.loads(pointer.read_text(encoding="utf-8"))
+        generation = str(data.get("generation", ""))
+        candidate = root / _GENERATIONS_DIR / generation
+        if generation and candidate.is_dir():
+            return candidate
+    except (OSError, ValueError, TypeError):
+        pass
+    return root
+
+
+def _publish_generation(root: Path, generation: str) -> None:
+    """Publish a complete immutable generation with one atomic pointer swap."""
+    root.mkdir(parents=True, exist_ok=True)
+    temp = root / f".{_CURRENT_FILE}.tmp-{os.getpid()}"
+    temp.write_text(
+        json.dumps({"schema": 1, "generation": generation}, ensure_ascii=True),
+        encoding="utf-8",
+    )
+    os.replace(temp, root / _CURRENT_FILE)
 
 
 def _log(on_log: LogFn | None, msg: str) -> None:
@@ -174,10 +204,17 @@ def build_hybrid_index(
     are built incrementally and saved in batches so a crash resumes the
     embedding step (the vector store already on disk is reused; only missing
     chunk ids are embedded). Returns True on success."""
-    index_dir = Path(index_dir)
+    root_dir = Path(index_dir)
+    root_dir.mkdir(parents=True, exist_ok=True)
+    ids = [str(c.get("chunk_id", "")) for c in chunks]
+    generation_hash = hashlib.sha256()
+    for chunk_id, chunk in zip(ids, chunks):
+        generation_hash.update(chunk_id.encode("utf-8", errors="replace"))
+        generation_hash.update(str(chunk.get("text", "")).encode("utf-8", errors="replace"))
+    generation = generation_hash.hexdigest()[:20]
+    index_dir = root_dir / _GENERATIONS_DIR / generation
     index_dir.mkdir(parents=True, exist_ok=True)
 
-    ids = [str(c.get("chunk_id", "")) for c in chunks]
     # Text used for BM25 and embedding includes the contextual prefix.
     def _ctx_text(c: dict[str, Any]) -> str:
         ctx = str(c.get("context", "") or "").strip()
@@ -264,7 +301,7 @@ def build_hybrid_index(
         from kb.kb_crypto import write_encrypted_text
         from kb.retrieval_config import load_retrieval_config
 
-        config_fingerprint = load_retrieval_config(index_dir.parent).fingerprint()
+        config_fingerprint = load_retrieval_config(root_dir.parent).fingerprint()
         write_encrypted_text(index_dir / _MANIFEST_FILE, json.dumps({
             "schema": _SCHEMA,
             "config_fingerprint": config_fingerprint,
@@ -274,8 +311,13 @@ def build_hybrid_index(
             "model": model_name,
             "built_at": time.time(),
         }, ensure_ascii=True))
-    except OSError:
-        pass
+        _publish_generation(root_dir, generation)
+        _log(on_log, f"[SUCCESS] Published KB generation {generation} atomically.")
+    except OSError as exc:
+        _log(on_log, f"[ERROR] Could not publish KB generation: {exc!r}")
+        return False
+    # ponytail: immutable generations are retained; add bounded GC only if disk
+    # usage proves material, because deleting one can break an in-flight reader.
     return True
 
 
@@ -287,10 +329,11 @@ class HybridRetriever:
     rerank stages activate only if their backends are importable."""
 
     def __init__(self, index_dir: Path | str) -> None:
-        self.dir = Path(index_dir)
+        self.root_dir = Path(index_dir)
+        self.dir = _active_index_dir(self.root_dir)
         from kb.retrieval_config import load_retrieval_config
 
-        self.config = load_retrieval_config(self.dir.parent)
+        self.config = load_retrieval_config(self.root_dir.parent)
         self._bm25: BM25Index | None = BM25Index.load(self.dir / _BM25_FILE)
         self._chunks: dict[str, RetrievedChunk] = {}
         self._load_chunks()
@@ -685,7 +728,7 @@ def hybrid_has_dense(index_dir: Path | str) -> bool:
     index."""
     try:
         from kb.kb_crypto import read_decrypted_text
-        p = Path(index_dir) / _MANIFEST_FILE
+        p = _active_index_dir(index_dir) / _MANIFEST_FILE
         if not p.exists():
             return False
         text = read_decrypted_text(p)
@@ -715,7 +758,7 @@ def hybrid_index_is_current(
     vectors of the wrong dimension would silently mismatch query vectors."""
     try:
         from kb.kb_crypto import read_decrypted_text
-        p = Path(index_dir) / _MANIFEST_FILE
+        p = _active_index_dir(index_dir) / _MANIFEST_FILE
         if not p.exists():
             return False
         text = read_decrypted_text(p)

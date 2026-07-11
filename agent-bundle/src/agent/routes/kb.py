@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -307,7 +308,10 @@ def _start_context_job(
     existing = JOBS.find_active("kb_context", project)
     if existing is not None and not force:
         return existing.id
-    context_job = JOBS.create("kb_context", project=project)
+    context_job = JOBS.create(
+        "kb_context", project=project, resumable=True,
+        recovery={"project": project, "force": force},
+    )
     context_job.log("[INFO] Starting project context mapping...")
     # This helper is called from the index worker thread as well as async route
     # handlers, so it cannot depend on a running asyncio event loop.
@@ -345,12 +349,49 @@ async def index_project(req: IndexRequest) -> dict:
     if existing is not None and not req.force:
         return {"job_id": existing.id, "reused": True}
 
-    job = JOBS.create("kb_index", project=req.project)
+    job = JOBS.create(
+        "kb_index", project=req.project, resumable=True,
+        recovery={"project": req.project, "force": req.force},
+    )
     job.log("[INFO] Starting KB indexing...")
     asyncio.create_task(
         asyncio.to_thread(_run_kb_index, job, req.project, req.force)
     )
     return {"job_id": job.id}
+
+
+def recover_interrupted_kb_jobs() -> int:
+    """Resume safe project-scoped KB work after an agent restart."""
+    from agent.jobs import JOBS
+
+    resumed = 0
+    for job in JOBS.recovering():
+        project = str(job.recovery.get("project") or job.project).strip()
+        force = bool(job.recovery.get("force", False))
+        if not project:
+            job.fail("Recovery metadata is missing the project name.")
+            continue
+        JOBS.mark_running(job)
+        job.log("[INFO] Resuming project preparation from persisted checkpoints.")
+        if job.kind == "kb_index":
+            threading.Thread(
+                target=_run_kb_index,
+                args=(job, project, force),
+                name=f"kb-index-recovery-{job.id}",
+                daemon=True,
+            ).start()
+            resumed += 1
+        elif job.kind == "kb_context":
+            threading.Thread(
+                target=_run_context_job,
+                args=(job, project, force, None, ""),
+                name=f"kb-context-recovery-{job.id}",
+                daemon=True,
+            ).start()
+            resumed += 1
+        else:
+            job.fail(f"Unsupported recovery job kind: {job.kind}")
+    return resumed
 
 
 @router.get("/index/active/{project}")

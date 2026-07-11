@@ -71,6 +71,14 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     threading.Thread(target=_bg_preload, daemon=True, name="preload").start()
 
+    try:
+        from agent.routes.kb import recover_interrupted_kb_jobs
+        resumed = recover_interrupted_kb_jobs()
+        if resumed:
+            print(f"[agent] resumed {resumed} interrupted KB job(s)", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[agent] KB recovery skipped (non-fatal): {exc}", flush=True)
+
     # Updates are intentionally detection-only. The browser checks the manifest
     # through GET /update/status and directs users to the installer when a newer
     # version exists; a running agent never patches or restarts itself.

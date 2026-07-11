@@ -103,3 +103,36 @@ async def test_hard_step_error_stops_remaining_steps(monkeypatch, tmp_path):
     )
     assert calls == ["click"]
     assert results[0].overall_status == "error"
+
+
+@pytest.mark.asyncio
+async def test_stop_discards_incomplete_test_case(monkeypatch, tmp_path):
+    import automation.e2e_runner as runner
+
+    @asynccontextmanager
+    async def fake_session(**_kwargs):
+        yield object(), _Page()
+
+    stopped = False
+
+    async def fake_step(_page, step, _username, _password, _directory, step_num, **_kwargs):
+        nonlocal stopped
+        stopped = True
+        return runner.StepResult(
+            step_num=step_num,
+            action=str(step["action"]),
+            expected="",
+            actual="executed before stop arrived",
+            status="pass",
+        )
+
+    monkeypatch.setattr(runner, "browser_session", fake_session)
+    monkeypatch.setattr(runner, "_execute_step", fake_step)
+    results = await runner.run_e2e_tests(
+        [{"id": "partial", "title": "Partial", "steps": [
+            {"action": "click", "target": "Go"},
+        ]}],
+        "https://example.test", "user", "password", tmp_path,
+        stop_fn=lambda: stopped,
+    )
+    assert results == []

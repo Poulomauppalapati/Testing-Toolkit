@@ -484,6 +484,8 @@ def _build_hybrid_from_index(
         p.hybrid_dir, chunks, embedder=embedder, on_log=on_log,
         should_stop=should_stop, enforce_dense=(enable_dense and enforced),
     )
+    if not ok and not (should_stop and should_stop()):
+        raise RuntimeError("Hybrid KB generation could not be published")
     # When enforced, confirm dense vectors actually landed in the manifest;
     # otherwise raise so the failure is loud rather than a lexical-only index.
     if ok and enable_dense and enforced and not (should_stop and should_stop()):

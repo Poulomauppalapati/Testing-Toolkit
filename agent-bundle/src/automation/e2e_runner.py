@@ -600,16 +600,13 @@ async def run_e2e_tests(
                         await page.goto(login_url, wait_until="domcontentloaded", timeout=NAVIGATE_TIMEOUT_MS)
                     for step_num, step in enumerate(steps, 1):
                         if stop_fn and stop_fn():
-                            step_results.append(StepResult(
-                                step_num=step_num, action=str(step.get("action", "")),
-                                expected=str(step.get("expected", "")),
-                                actual="Stopped by user", status="skip",
-                            ))
                             break
                         step_result = await _execute_step(
                             page, step, username, password, collector.screenshot_dir,
                             step_num, stop_fn=stop_fn,
                         )
+                        if stop_fn and stop_fn():
+                            break
                         step_results.append(step_result)
                         if step_result.screenshot_path and on_screenshot:
                             on_screenshot(step_result.screenshot_path, step_num, step_result.status)
@@ -619,6 +616,13 @@ async def run_e2e_tests(
                         )
                         if step_result.status in ("error", "fail") and step_result.action not in _SOFT_ACTIONS:
                             break
+
+                # A stopped test case is incomplete, not a pass/fail result.
+                # Keep artifacts from fully completed cases only; the caller can
+                # resume by starting a new run without a misleading partial row.
+                if stop_fn and stop_fn():
+                    _log(f"[WARN] Stopped during {tc_id}; partial result discarded.")
+                    break
 
                 statuses = {item.status for item in step_results}
                 executed = sum(item.status in ("pass", "fail", "error") for item in step_results)

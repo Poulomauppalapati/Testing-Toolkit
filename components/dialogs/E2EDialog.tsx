@@ -69,6 +69,7 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
   const [lastRun, setLastRun] = useState<E2ELastRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [result, setResult] = useState<E2ERunResult | null>(null);
@@ -147,6 +148,7 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
   const run = async (indices: number[]) => {
     if (!currentProject || !selectedEnv) return;
     setRunning(true);
+    setStopping(false);
     setError("");
     setLogs([]);
     setProgress(null);
@@ -190,19 +192,36 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
       const lr = await agent.e2eLastRun(currentProject);
       setLastRun(lr);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "E2E run failed");
+      const message = err instanceof Error ? err.message : "E2E run failed";
+      if (stopping || /run stopped/i.test(message)) {
+        pushLog("WARN", "E2E run stopped by user.");
+        setError("");
+        setRowStatus((prev) =>
+          Object.fromEntries(
+            Object.entries(prev).map(([key, value]) => [
+              key,
+              value === "running" ? "pending" : value,
+            ])
+          )
+        );
+      } else {
+        setError(message);
+      }
     } finally {
       setRunning(false);
+      setStopping(false);
     }
   };
 
   const stop = async () => {
-    if (jobIdRef.current) {
-      try {
-        await agent.stopJob?.(jobIdRef.current);
-      } catch {
-        /* best-effort */
-      }
+    if (!jobIdRef.current || stopping) return;
+    setStopping(true);
+    pushLog("WARN", "Stop requested; waiting for the current browser action to finish...");
+    try {
+      await agent.stopJob(jobIdRef.current);
+    } catch (err) {
+      setStopping(false);
+      setError(err instanceof Error ? err.message : "Could not stop E2E run");
     }
   };
 
@@ -288,12 +307,16 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
       </button>
       <button
         className="tt-btn-ghost inline-flex items-center gap-1.5"
-        disabled={!running}
+        disabled={!running || stopping}
         onClick={stop}
-        title="Stop after the current test case finishes"
+        title="Stop after the current browser action finishes"
       >
-        <Square className="h-4 w-4" strokeWidth={2} />
-        Stop
+        {stopping ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Square className="h-4 w-4" strokeWidth={2} />
+        )}
+        {stopping ? "Stopping..." : "Stop"}
       </button>
       <button className="tt-btn-ghost" onClick={onClose} disabled={running}>
         Close

@@ -36,6 +36,25 @@ def test_rrf_fuse_stable_ties():
     assert rrf_fuse([["p", "q", "r"]]) == ["p", "q", "r"]
 
 
+def test_hybrid_generations_publish_atomically(tmp_path: Path) -> None:
+    from kb.retrieval import HybridRetriever, build_hybrid_index
+
+    root = tmp_path / "hybrid_index"
+    first_chunks = [{"chunk_id": "old", "doc": "old.md", "title": "Old", "text": "legacy alpha"}]
+    next_chunks = [{"chunk_id": "new", "doc": "new.md", "title": "New", "text": "current beta"}]
+
+    assert build_hybrid_index(root, first_chunks)
+    pinned_reader = HybridRetriever(root)
+    first_dir = pinned_reader.dir
+    assert build_hybrid_index(root, next_chunks)
+    current_reader = HybridRetriever(root)
+
+    assert pinned_reader.dir == first_dir
+    assert current_reader.dir != first_dir
+    assert pinned_reader.retrieve("alpha", 1)[0].chunk_id == "old"
+    assert current_reader.retrieve("beta", 1)[0].chunk_id == "new"
+
+
 # --------------------------------------------------------------------------
 # BM25
 # --------------------------------------------------------------------------

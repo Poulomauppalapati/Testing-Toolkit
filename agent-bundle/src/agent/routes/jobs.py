@@ -26,5 +26,5 @@ async def stop_job(job_id: str) -> dict:
     job = JOBS.get(job_id)
     if job is None:
         raise HTTPException(404, "Job not found")
-    job.stop_event.set()
+    job.request_stop()
     return {"ok": True, "state": job.state}

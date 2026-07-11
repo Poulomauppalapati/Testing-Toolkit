@@ -264,6 +264,10 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
         plan_cache = ensure_project(req.project).cache_dir / "e2e_plans"
         compiled: list[dict[str, Any]] = []
         for position, tc in enumerate(picked, 1):
+            if job.stopped:
+                job.state = "stopped"
+                job.log("[WARN] E2E run stopped during plan compilation.")
+                return
             stable_id = uuid.uuid5(
                 uuid.NAMESPACE_URL,
                 f"{req.project}:{tc.get('id', '')}:{tc.get('title', '')}",
@@ -285,6 +289,10 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
                 message = str(exc)[:500]
                 job.log(f"[ERROR] Plan rejected for '{tc.get('title', 'Untitled')}': {message}")
                 compiled.append({**candidate, "steps": [], "plan_error": message})
+            if job.stopped:
+                job.state = "stopped"
+                job.log("[WARN] E2E run stopped during plan compilation.")
+                return
             job.set_progress("compiling", position, len(picked))
 
         job.set_progress("running", 0, len(compiled))
