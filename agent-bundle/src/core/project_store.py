@@ -359,14 +359,17 @@ def _build_hybrid_from_index(
 
     coarse = [
         {"chunk_id": c.chunk_id, "doc": c.doc, "title": c.title,
-         "text": c.contextualized_text}
+         "text": c.contextualized_text, "source_path": c.source_path,
+         "section_path": c.section_path,
+         "document_role": c.document_role,
+         "source_priority": c.source_priority}
         for c in index.chunks
     ]
     if not coarse:
         return
     # Densify: split the coarse RLM chunks into fine retrieval windows so
     # lexical/dense retrieval is precise.
-    chunks = densify_chunks(coarse)
+    chunks = densify_chunks(coarse, paths.root)
     # Dense indexing is ENFORCED by default (TT_ENFORCE_DENSE): we must build
     # dense vectors with the bundled local model and must NOT silently fall back
     # to lexical-only. Enforcement overrides any caller request to disable dense.

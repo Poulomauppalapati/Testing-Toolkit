@@ -140,6 +140,14 @@ class NumpyVectorStore:
         idx = idx[np.argsort(sims[idx])[::-1]]
         return [(self._ids[int(i)], float(sims[int(i)])) for i in idx]
 
+    def vectors_for(self, ids: list[str]) -> dict[str, np.ndarray]:
+        self._flush_pending()
+        positions = {chunk_id: index for index, chunk_id in enumerate(self._ids)}
+        return {
+            chunk_id: self._mat[positions[chunk_id]]
+            for chunk_id in ids if chunk_id in positions
+        }
+
     def save(self) -> None:
         self._flush_pending()
         try:
@@ -208,6 +216,19 @@ class LanceVectorStore:
             # cosine distance is in [0, 2]; clamp similarity to [0, 1]
             out.append((rid, max(0.0, 1.0 - dist)))
         return out
+
+    def vectors_for(self, ids: list[str]) -> dict[str, np.ndarray]:
+        if self._table is None or not ids:
+            return {}
+        wanted = frozenset(ids)
+        try:
+            rows = self._table.to_arrow().to_pylist()
+        except Exception:
+            return {}
+        return {
+            str(row.get("id", "")): np.asarray(row.get("vector", []), dtype=np.float32)
+            for row in rows if str(row.get("id", "")) in wanted
+        }
 
     def delete(self, ids: list[str]) -> int:
         """Remove vectors by ID. Returns count actually removed."""

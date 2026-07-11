@@ -155,7 +155,10 @@ def _format_eta(seconds: float) -> str:
 def _chunks_to_dicts(chunks: list[KbChunk]) -> list[dict[str, Any]]:
     return [
         {"chunk_id": c.chunk_id, "doc": c.doc, "title": c.title,
-         "text": c.text, "n_chars": c.n_chars, "context": c.context}
+         "text": c.text, "n_chars": c.n_chars, "context": c.context,
+         "source_path": c.source_path, "section_path": c.section_path,
+         "document_role": c.document_role,
+         "source_priority": c.source_priority}
         for c in chunks
     ]
 
@@ -169,6 +172,10 @@ def _dicts_to_chunks(items: list[dict[str, Any]]) -> list[KbChunk]:
             text=str(d.get("text", "")),
             n_chars=int(d.get("n_chars", 0) or 0),
             context=str(d.get("context", "") or ""),
+            source_path=str(d.get("source_path", d.get("doc", ""))),
+            section_path=str(d.get("section_path", "")),
+            document_role=str(d.get("document_role", "unknown")),
+            source_priority=float(d.get("source_priority", 0.5) or 0.5),
         )
         for d in items
     ]
@@ -181,6 +188,7 @@ def _process_one_file(
     on_sub_progress: SubProgressFn | None,
     llm_client: "Any | None",
     llm_model: str,
+    retrieval_config: "Any | None" = None,
 ) -> list[KbChunk]:
     """Extract + chunk (+ contextualize) a single document.
 
@@ -222,8 +230,16 @@ def _process_one_file(
                  f"text - may need OCR or is binary/encrypted.")
             return []
 
+        from kb.retrieval_config import RetrievalConfig, document_role
+
         text_kb = len(text) / 1024
-        new_chunks = chunk_document(p.name, doc_index, text)
+        cfg = retrieval_config or RetrievalConfig()
+        role = document_role(p)
+        new_chunks = chunk_document(
+            p.name, doc_index, text, config=cfg,
+            source_path=p.name, document_role=role,
+            source_priority=cfg.priority_for(p.name, role),
+        )
         if llm_client is not None and llm_model and new_chunks:
             try:
                 from kb.contextual import contextualize_document
@@ -284,6 +300,9 @@ def build_index_resumable(
     kb_dir = Path(kb_dir)
     index_path = Path(index_path)
     partial = partial_path_for(index_path)
+    from kb.retrieval_config import load_retrieval_config
+
+    retrieval_config = load_retrieval_config(index_path.parent)
 
     # Content-hash cache (path -> mtime/size/sha) shared with the currency
     # check, so files are hashed at most once per change and signatures are
@@ -496,7 +515,8 @@ def build_index_resumable(
                 return KbIndex(chunks=list(chunks), sources=[], built_at=0.0)
             file_start = time.monotonic()
             new_chunks = _process_one_file(
-                p, doc_index, on_log, on_sub_progress, llm_client, llm_model
+                p, doc_index, on_log, on_sub_progress, llm_client, llm_model,
+                retrieval_config,
             )
             _handle_result(doc_index, p, sig, new_chunks,
                            time.monotonic() - file_start)
@@ -512,7 +532,7 @@ def build_index_resumable(
             doc_index, p, sig = item
             fut = ex.submit(
                 _process_one_file, p, doc_index, on_log, on_sub_progress,
-                llm_client, llm_model,
+                llm_client, llm_model, retrieval_config,
             )
             starts[fut] = (doc_index, p, sig, time.monotonic())
             return fut

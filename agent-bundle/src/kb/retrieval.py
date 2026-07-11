@@ -60,7 +60,7 @@ def _compute_embed_batch() -> int:
     return 32
 
 _EMBED_BATCH: Final[int] = _compute_embed_batch()
-_SCHEMA: Final[int] = 1
+_SCHEMA: Final[int] = 2
 
 _CHUNKS_FILE: Final[str] = "chunks.jsonl"
 _BM25_FILE: Final[str] = "bm25.json"
@@ -82,6 +82,14 @@ class RetrievedChunk:
     title: str
     text: str
     score: float = 0.0
+    semantic_score: float = 0.0
+    lexical_score: float = 0.0
+    reranker_score: float = 0.0
+    source_priority: float = 0.5
+    section_path: str = ""
+    document_role: str = "unknown"
+    tier: str = "low"
+    duplicate_cluster: str = ""
 
 
 def rrf_fuse(
@@ -188,6 +196,10 @@ def build_hybrid_index(
                 "title": str(c.get("title", "")),
                 "text": str(c.get("text", "")),
                 "context": str(c.get("context", "") or ""),
+                "source_path": str(c.get("source_path", c.get("doc", ""))),
+                "section_path": str(c.get("section_path", "")),
+                "document_role": str(c.get("document_role", "unknown")),
+                "source_priority": float(c.get("source_priority", 0.5) or 0.5),
             }, ensure_ascii=True) for c in chunks
         )
         write_encrypted_text(index_dir / _CHUNKS_FILE, chunks_text)
@@ -250,8 +262,12 @@ def build_hybrid_index(
     # 4) manifest (encrypted at rest)
     try:
         from kb.kb_crypto import write_encrypted_text
+        from kb.retrieval_config import load_retrieval_config
+
+        config_fingerprint = load_retrieval_config(index_dir.parent).fingerprint()
         write_encrypted_text(index_dir / _MANIFEST_FILE, json.dumps({
             "schema": _SCHEMA,
+            "config_fingerprint": config_fingerprint,
             "n_chunks": len(ids),
             "dense": bool(dim),
             "dim": int(dim),
@@ -272,6 +288,9 @@ class HybridRetriever:
 
     def __init__(self, index_dir: Path | str) -> None:
         self.dir = Path(index_dir)
+        from kb.retrieval_config import load_retrieval_config
+
+        self.config = load_retrieval_config(self.dir.parent)
         self._bm25: BM25Index | None = BM25Index.load(self.dir / _BM25_FILE)
         self._chunks: dict[str, RetrievedChunk] = {}
         self._load_chunks()
@@ -314,6 +333,9 @@ class HybridRetriever:
                     chunk_id=cid, doc=str(d.get("doc", "")),
                     title=str(d.get("title", "")),
                     text=str(d.get("text", "")),
+                    source_priority=float(d.get("source_priority", 0.5) or 0.5),
+                    section_path=str(d.get("section_path", "")),
+                    document_role=str(d.get("document_role", "unknown")),
                 )
         except (OSError, json.JSONDecodeError, ValueError):
             self._chunks = {}
@@ -418,74 +440,117 @@ class HybridRetriever:
         candidate_k: int = _DEFAULT_CANDIDATES,
         use_reranker: bool = True,
     ) -> list[RetrievedChunk]:
-        """Return up to top_k chunks most relevant to query, best-first."""
+        """Return quality-gated, authority-aware, diverse chunks."""
         if not self.is_available() or not (query or "").strip():
             return []
-        rankings: list[list[str]] = []
+        cfg = self.config
+        final_k = max(1, min(top_k, cfg.final_k))
+        fetch_k = max(final_k, candidate_k, cfg.fetch_k)
+        bm25_hits = self._bm25.top_n(query, fetch_k) if self._bm25 else []
+        lexical_max = max((float(score) for _cid, score in bm25_hits), default=0.0)
+        lexical = {
+            cid: (float(score) / lexical_max if lexical_max > 0 else 0.0)
+            for cid, score in bm25_hits
+        }
 
-        bm25_hits = self._bm25.top_n(query, candidate_k) if self._bm25 else []
-        if bm25_hits:
-            rankings.append([cid for cid, _s in bm25_hits])
-
+        dense: dict[str, float] = {}
         embedder = self._ensure_embedder()
         if embedder is not None and self._store is not None:
             try:
-                qv = _embed_texts(embedder, [query])[0]
-                dense_hits = self._store.search(qv, candidate_k)
-                if dense_hits:
-                    rankings.append([cid for cid, _s in dense_hits])
+                query_vector = _embed_texts(embedder, [query])[0]
+                dense = {
+                    cid: max(0.0, min(1.0, float(score)))
+                    for cid, score in self._store.search(query_vector, fetch_k)
+                }
             except Exception:
-                pass
-
-        if not rankings:
+                dense = {}
+        candidate_ids = list(dict.fromkeys([*dense, *lexical]))
+        if not candidate_ids:
             return []
-        fused_ids = rrf_fuse(rankings, top_n=candidate_k)
 
-        # Optional cross-encoder rerank over the fused candidate texts.
-        ordered_ids = fused_ids
+        reranked: dict[str, float] = {}
         if use_reranker:
             reranker = self._ensure_reranker()
             if reranker is not None:
-                cand = [(cid, self._chunks[cid].text)
-                        for cid in fused_ids if cid in self._chunks]
+                candidates = [
+                    (cid, self._chunks[cid].text)
+                    for cid in candidate_ids if cid in self._chunks
+                ]
                 try:
-                    reranked = reranker.rerank(query, cand, top_k)
-                    if reranked:
-                        ordered_ids = [cid for cid, _s in reranked]
+                    reranked = dict(reranker.rerank(query, candidates, fetch_k))
                 except Exception:
-                    pass
+                    reranked = {}
 
-        # Build the final list, skipping near-duplicate passages so the
-        # top_k are DISTINCT. KBs often carry DRAFT / OLD DRAFT / final copies
-        # of the same requirements; without this, several near-identical
-        # chunks would consume the budget. Signature = normalized (collapsed
-        # whitespace, lowercased) prefix; first (best-ranked) copy wins.
-        out: list[RetrievedChunk] = []
-        seen_sigs: set[str] = set()
-        missing_count = 0
-        for cid in ordered_ids:
-            if len(out) >= top_k:
-                break
-            ch = self._chunks.get(cid)
-            if ch is None:
-                missing_count += 1
+        scored: list[RetrievedChunk] = []
+        for cid in candidate_ids:
+            chunk = self._chunks.get(cid)
+            if chunk is None:
                 continue
-            sig = " ".join((ch.text or "").split()).lower()[:512]
-            if sig and sig in seen_sigs:
+            semantic = dense.get(cid, lexical.get(cid, 0.0))
+            if semantic < cfg.min_semantic_score:
                 continue
-            seen_sigs.add(sig)
-            out.append(RetrievedChunk(
-                chunk_id=ch.chunk_id, doc=ch.doc, title=ch.title,
-                text=ch.text, score=1.0 / (1 + len(out)),
-            ))
-        if missing_count > 0 and missing_count > len(ordered_ids) * 0.1:
-            import warnings
-            warnings.warn(
-                f"[KB] {missing_count}/{len(ordered_ids)} candidate chunk IDs "
-                f"missing from store - index may need rebuild",
-                stacklevel=2,
+            rerank_score = max(0.0, min(1.0, float(reranked.get(cid, 0.0))))
+            score = (
+                cfg.semantic_weight * semantic
+                + cfg.lexical_weight * lexical.get(cid, 0.0)
+                + cfg.reranker_weight * rerank_score
+                + cfg.source_priority_weight * chunk.source_priority
             )
-        return out
+            scored.append(RetrievedChunk(
+                chunk_id=chunk.chunk_id, doc=chunk.doc, title=chunk.title,
+                text=chunk.text, score=score, semantic_score=semantic,
+                lexical_score=lexical.get(cid, 0.0),
+                reranker_score=rerank_score,
+                source_priority=chunk.source_priority,
+                section_path=chunk.section_path,
+                document_role=chunk.document_role,
+                tier="high" if score >= 0.7 else "medium" if score >= 0.45 else "low",
+            ))
+        scored.sort(key=lambda item: (-item.score, item.chunk_id))
+        if not scored:
+            return []
+
+        vectors = self._store.vectors_for([item.chunk_id for item in scored]) \
+            if self._store is not None else {}
+        representatives: list[RetrievedChunk] = []
+        representative_vectors: list[Any] = []
+        for item in scored:
+            vector = vectors.get(item.chunk_id)
+            cluster = ""
+            if vector is not None:
+                for index, existing in enumerate(representative_vectors):
+                    if existing is not None and float(vector @ existing) >= cfg.duplicate_cosine_threshold:
+                        cluster = representatives[index].duplicate_cluster
+                        break
+            if cluster:
+                continue
+            item.duplicate_cluster = f"cluster-{len(representatives) + 1}"
+            representatives.append(item)
+            representative_vectors.append(vector)
+
+        selected: list[RetrievedChunk] = []
+        source_counts: dict[str, int] = {}
+        remaining = list(representatives)
+        while remaining and len(selected) < final_k:
+            eligible = [
+                item for item in remaining
+                if source_counts.get(item.doc, 0) < cfg.per_source_cap
+            ] or remaining
+            def mmr(item: RetrievedChunk) -> tuple[float, str]:
+                vector = vectors.get(item.chunk_id)
+                similarity = 0.0
+                if vector is not None and selected:
+                    similarity = max(
+                        float(vector @ vectors[chosen.chunk_id])
+                        for chosen in selected if chosen.chunk_id in vectors
+                    ) if any(chosen.chunk_id in vectors for chosen in selected) else 0.0
+                value = cfg.mmr_lambda * item.score - (1.0 - cfg.mmr_lambda) * similarity
+                return value, item.chunk_id
+            chosen = max(eligible, key=mmr)
+            selected.append(chosen)
+            source_counts[chosen.doc] = source_counts.get(chosen.doc, 0) + 1
+            remaining.remove(chosen)
+        return selected
 
 
     def multi_query_retrieve(
@@ -642,6 +707,13 @@ def hybrid_index_is_current(
         if text is None:
             return False
         man = json.loads(text)
+        from kb.retrieval_config import load_retrieval_config
+
+        expected_fingerprint = load_retrieval_config(Path(index_dir).parent).fingerprint()
+        if int(man.get("schema", 0)) != _SCHEMA:
+            return False
+        if str(man.get("config_fingerprint", "")) != expected_fingerprint:
+            return False
         if want_dense and not bool(man.get("dense", False)):
             return False
         # Embedding identity guard: a changed model or dim invalidates vectors.
@@ -666,36 +738,34 @@ def hybrid_index_is_current(
 # The RLM map step used very large chunks (~6000 tokens); for retrieval we
 # re-split that text into ~550-token windows with overlap so context is dense
 # and precise. Splitting reuses already-extracted text (no re-extraction).
-_DENSE_TARGET_CHARS: Final[int] = 2200      # ~550 tokens
-_DENSE_OVERLAP_CHARS: Final[int] = 280      # ~70 tokens of overlap
-_DENSE_MIN_CHARS: Final[int] = 160
-
 _PARA_SPLIT_RE: Final[re.Pattern[str]] = re.compile(r"\n\s*\n")
 _SENT_SPLIT_RE: Final[re.Pattern[str]] = re.compile(r"(?<=[.!?])\s+")
 
 
-def _split_text_dense(text: str) -> list[str]:
-    """Split one passage into ~_DENSE_TARGET_CHARS windows with overlap,
+def _split_text_dense(
+    text: str, target_chars: int = 2800, overlap_chars: int = 400,
+) -> list[str]:
+    """Split one passage into ~target_chars windows with overlap,
     respecting paragraph then sentence boundaries; hard-splits only when a
     single unit exceeds the target."""
     text = (text or "").strip()
-    if len(text) <= _DENSE_TARGET_CHARS:
+    if len(text) <= target_chars:
         return [text] if text else []
     units: list[str] = []
     for para in _PARA_SPLIT_RE.split(text):
         para = para.strip()
         if not para:
             continue
-        if len(para) <= _DENSE_TARGET_CHARS:
+        if len(para) <= target_chars:
             units.append(para)
             continue
         for sent in _SENT_SPLIT_RE.split(para):
             sent = sent.strip()
             if not sent:
                 continue
-            while len(sent) > _DENSE_TARGET_CHARS:
-                units.append(sent[:_DENSE_TARGET_CHARS])
-                sent = sent[_DENSE_TARGET_CHARS:]
+            while len(sent) > target_chars:
+                units.append(sent[:target_chars])
+                sent = sent[target_chars:]
             if sent:
                 units.append(sent)
     windows: list[str] = []
@@ -703,9 +773,9 @@ def _split_text_dense(text: str) -> list[str]:
     cur_len = 0
     for u in units:
         add = len(u) + (2 if cur else 0)
-        if cur_len + add > _DENSE_TARGET_CHARS and cur:
+        if cur_len + add > target_chars and cur:
             windows.append("\n\n".join(cur))
-            tail = windows[-1][-_DENSE_OVERLAP_CHARS:]
+            tail = windows[-1][-overlap_chars:]
             cur = [tail, u] if tail else [u]
             cur_len = (len(tail) + 2 + len(u)) if tail else len(u)
         else:
@@ -713,29 +783,31 @@ def _split_text_dense(text: str) -> list[str]:
             cur_len += add
     if cur:
         windows.append("\n\n".join(cur))
-    return [w for w in windows if len(w.strip()) >= _DENSE_MIN_CHARS] or \
-        [text[:_DENSE_TARGET_CHARS]]
+    minimum_chars = min(160, max(1, target_chars // 4))
+    return [w for w in windows if len(w.strip()) >= minimum_chars] or \
+        [text[:target_chars]]
 
 
-def densify_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Re-split coarse chunk dicts into fine, overlapping retrieval chunks.
-    Each input chunk (chunk_id/doc/title/text) becomes one or more chunks
-    with deterministic ids '<parent>#<n>', stable across rebuilds."""
+def densify_chunks(
+    chunks: list[dict[str, Any]], project_root: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Re-split oversized chunks while preserving every metadata field."""
+    from kb.retrieval_config import load_retrieval_config
+
+    config = load_retrieval_config(project_root)
+    target = config.target_chunk_tokens * 4
+    overlap = config.overlap_tokens * 4
     out: list[dict[str, Any]] = []
-    for c in chunks:
-        pieces = _split_text_dense(str(c.get("text", "") or ""))
-        if not pieces:
-            continue
-        parent = str(c.get("chunk_id", ""))
-        doc = str(c.get("doc", ""))
-        title = str(c.get("title", ""))
-        if len(pieces) == 1:
-            out.append({"chunk_id": parent, "doc": doc, "title": title,
-                        "text": pieces[0]})
-        else:
-            for n, piece in enumerate(pieces):
-                out.append({"chunk_id": f"{parent}#{n}", "doc": doc,
-                            "title": title, "text": piece})
+    for chunk in chunks:
+        pieces = _split_text_dense(
+            str(chunk.get("text", "") or ""), target, overlap,
+        )
+        parent = str(chunk.get("chunk_id", ""))
+        for index, piece in enumerate(pieces):
+            item = dict(chunk)
+            item["chunk_id"] = parent if len(pieces) == 1 else f"{parent}#{index}"
+            item["text"] = piece
+            out.append(item)
     return out
 
 

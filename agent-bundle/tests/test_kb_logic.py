@@ -73,6 +73,40 @@ def test_bm25_tokenize():
 
 
 # --------------------------------------------------------------------------
+# Retrieval-ready chunking and tunable authority metadata
+# --------------------------------------------------------------------------
+def test_structural_chunks_keep_heading_path_and_metadata():
+    from kb.retrieval_config import RetrievalConfig
+    from kb.store import chunk_document
+
+    text = "# Product\n## Authentication\n" + ("Users sign in securely. " * 180)
+    chunks = chunk_document(
+        "guide.md", 0, text,
+        config=RetrievalConfig(target_chunk_tokens=128, max_chunk_tokens=160, overlap_tokens=16),
+        document_role="md", source_priority=0.9,
+    )
+    assert len(chunks) > 1
+    assert all(chunk.section_path == "Product > Authentication" for chunk in chunks)
+    assert all(chunk.text.startswith("Document: guide.md\nSection: Product > Authentication") for chunk in chunks)
+    assert all(chunk.source_priority == 0.9 for chunk in chunks)
+
+
+def test_retrieval_config_is_neutral_and_project_tunable(tmp_path):
+    import json
+    from kb.retrieval_config import load_retrieval_config
+
+    assert load_retrieval_config(tmp_path).priority_for("unknown.bin", "unknown") == 0.5
+    (tmp_path / "kb_retrieval.json").write_text(json.dumps({
+        "source_priorities": {"approved/*": 0.95},
+        "fetch_k": 120,
+        "final_k": 6,
+    }), encoding="utf-8")
+    config = load_retrieval_config(tmp_path)
+    assert config.priority_for("approved/spec.md", "md") == 0.95
+    assert config.fetch_k == 120 and config.final_k == 6
+
+
+# --------------------------------------------------------------------------
 # kb_crypto round-trip
 # --------------------------------------------------------------------------
 def test_kb_crypto_roundtrip():

@@ -60,7 +60,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Final
 
-from core.app_config import RLM_MAP_CHUNK_TOKENS
+from kb.retrieval_config import RetrievalConfig
 
 # ~4 characters per token is the standard rough estimate.
 _CHARS_PER_TOKEN: Final[int] = 4
@@ -71,7 +71,7 @@ _CHARS_PER_TOKEN: Final[int] = 4
 # binary-garbage guard. v3 added Visio .vsdx diagram extraction.
 # v4 added multimedia (image OCR, audio STT, video transcription).
 # v5 added legacy document formats (.doc, .ppt, .odt, .eml, .epub, etc.)
-EXTRACTOR_VERSION: Final[int] = 5
+EXTRACTOR_VERSION: Final[int] = 6
 
 _TEXT_EXT: Final[frozenset[str]] = frozenset({
     ".md", ".markdown", ".txt", ".csv", ".tsv", ".json", ".jsonl",
@@ -379,6 +379,10 @@ class KbChunk:
     text: str
     n_chars: int = 0
     context: str = ""
+    source_path: str = ""
+    section_path: str = ""
+    document_role: str = "unknown"
+    source_priority: float = 0.5
 
     def __post_init__(self) -> None:
         if not self.n_chars:
@@ -403,67 +407,88 @@ def _section_title(raw_title: str, body: str) -> str:
 
 
 def _split_sections(text: str) -> list[tuple[str, str]]:
-    """Split on Markdown headings. Returns (title, body) pairs in order."""
+    """Split on heading boundaries while retaining the full heading path."""
     sections: list[tuple[str, str]] = []
-    cur_title = ""
+    headings: list[str] = []
+    cur_path = ""
     cur_lines: list[str] = []
     for line in text.split("\n"):
-        m = _HEADING_RE.match(line)
-        if m:
-            if cur_lines or cur_title:
-                sections.append((cur_title, "\n".join(cur_lines).strip()))
-            cur_title = m.group(2).strip()
+        match = _HEADING_RE.match(line)
+        if match:
+            if cur_lines or cur_path:
+                sections.append((cur_path, "\n".join(cur_lines).strip()))
+            level = len(match.group(1))
+            headings = headings[:level - 1]
+            headings.append(match.group(2).strip())
+            cur_path = " > ".join(headings)
             cur_lines = []
         else:
             cur_lines.append(line)
-    if cur_lines or cur_title:
-        sections.append((cur_title, "\n".join(cur_lines).strip()))
+    if cur_lines or cur_path:
+        sections.append((cur_path, "\n".join(cur_lines).strip()))
     return sections or [("", text.strip())]
 
 
-def _split_by_budget(body: str, budget_chars: int) -> list[str]:
-    """Accumulate paragraphs into chunks under budget_chars. Splits an
-    oversized single paragraph on sentence-ish boundaries as a fallback."""
-    if len(body) <= budget_chars:
-        return [body] if body.strip() else []
-    paras = [p for p in _MULTI_BLANK_RE.sub("\n\n", body).split("\n\n")]
+def _split_by_budget(body: str, budget_chars: int, overlap_chars: int) -> list[str]:
+    """Pack structural paragraphs with bounded overlap between chunks."""
+    paragraphs = [p.strip() for p in _MULTI_BLANK_RE.sub("\n\n", body).split("\n\n") if p.strip()]
     out: list[str] = []
-    cur: list[str] = []
-    cur_len = 0
-    for para in paras:
-        plen = len(para) + 2
-        if plen > budget_chars and not cur:
-            # Hard-split a giant paragraph.
-            for i in range(0, len(para), budget_chars):
-                out.append(para[i:i + budget_chars])
-            continue
-        if cur_len + plen > budget_chars and cur:
-            out.append("\n\n".join(cur).strip())
-            cur = [para]
-            cur_len = plen
-        else:
-            cur.append(para)
-            cur_len += plen
-    if cur:
-        out.append("\n\n".join(cur).strip())
-    return [c for c in out if c.strip()]
+    current: list[str] = []
+    current_len = 0
+    for paragraph in paragraphs:
+        atomic = [paragraph]
+        if len(paragraph) > budget_chars:
+            # ponytail: sentence-aware hard ceiling; tokenizer segmentation is
+            # the upgrade path if exact model token accounting becomes material.
+            atomic = re.split(r"(?<=[.!?])\s+", paragraph)
+        for part in atomic:
+            if len(part) > budget_chars:
+                part = part[:budget_chars]
+            if current and current_len + len(part) + 2 > budget_chars:
+                rendered = "\n\n".join(current).strip()
+                out.append(rendered)
+                tail = rendered[-overlap_chars:].lstrip() if overlap_chars else ""
+                current = [tail, part] if tail else [part]
+                current_len = sum(len(item) + 2 for item in current)
+            else:
+                current.append(part)
+                current_len += len(part) + 2
+    if current:
+        out.append("\n\n".join(current).strip())
+    return [item for item in out if item]
 
 
-def chunk_document(doc_name: str, doc_index: int, text: str) -> list[KbChunk]:
-    budget = RLM_MAP_CHUNK_TOKENS * _CHARS_PER_TOKEN
+def chunk_document(
+    doc_name: str,
+    doc_index: int,
+    text: str,
+    config: RetrievalConfig | None = None,
+    source_path: str = "",
+    document_role: str = "unknown",
+    source_priority: float = 0.5,
+) -> list[KbChunk]:
+    cfg = config or RetrievalConfig()
+    budget = cfg.target_chunk_tokens * _CHARS_PER_TOKEN
+    overlap = cfg.overlap_tokens * _CHARS_PER_TOKEN
     chunks: list[KbChunk] = []
     seq = 0
-    for raw_title, body in _split_sections(text):
-        pieces = _split_by_budget(body, budget)
-        if not pieces and raw_title:
-            pieces = [""]  # heading with no body still indexed
+    for section_path, body in _split_sections(text):
+        pieces = _split_by_budget(body, budget, overlap)
+        if not pieces and section_path:
+            pieces = [""]
         for piece in pieces:
-            title = _section_title(raw_title, piece)
+            title = _section_title(section_path, piece)
             chunk_id = f"d{doc_index:03d}c{seq:04d}"
-            full = (f"{raw_title}\n{piece}".strip()
-                    if raw_title else piece.strip())
+            prefix = f"Document: {doc_name}"
+            if section_path:
+                prefix += f"\nSection: {section_path}"
+            full = f"{prefix}\n\n{piece}".strip()
             chunks.append(KbChunk(
                 chunk_id=chunk_id, doc=doc_name, title=title, text=full,
+                source_path=source_path or doc_name,
+                section_path=section_path,
+                document_role=document_role,
+                source_priority=source_priority,
             ))
             seq += 1
     return chunks
@@ -706,6 +731,10 @@ def _load_index(index_path: Path) -> KbIndex:
             text=str(c.get("text", "")),
             n_chars=int(c.get("n_chars", 0) or 0),
             context=str(c.get("context", "") or ""),
+            source_path=str(c.get("source_path", c.get("doc", ""))),
+            section_path=str(c.get("section_path", "")),
+            document_role=str(c.get("document_role", "unknown")),
+            source_priority=float(c.get("source_priority", 0.5) or 0.5),
         )
         for c in data.get("chunks", [])
     ]
