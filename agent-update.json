@@ -1,7 +1,7 @@
 {
-  "version": "2.12.7",
+  "version": "2.12.8",
   "ref": "main",
-  "generatedAt": "2026-07-11T15:49:02.835Z",
+  "generatedAt": "2026-07-11T16:00:56.598Z",
   "files": [
     {
       "path": ".env.enc",
@@ -156,7 +156,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "a6912145a333b2f22e6061071c67c7d21cc51d66c0c09a840267b40495349be0"
+      "hash": "72a088aed8be1418cd7069f14cf0720a233711a9922b1e5393901166efd48bfe"
     },
     {
       "path": "automation/__init__.py",
