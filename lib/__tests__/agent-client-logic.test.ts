@@ -10,6 +10,35 @@ import type { WorkItemRow } from "../agent-client";
 import { userStoryIds } from "../board-utils";
 import { humanSize } from "../../components/ui/download-links";
 import { ErrorBoundary } from "../../components/ui/error-boundary";
+import { buildWindowsInstaller } from "../installer-template";
+import { REQUIRED_AGENT_VERSION } from "../agent-version";
+
+describe("Windows installer console contract", () => {
+  const payload = buildWindowsInstaller("owner/repo", "parts", "token", true);
+
+  it("prints no zero-percent bars for atomic milestones", () => {
+    expect(payload).not.toContain("Show-StepBar 0");
+    expect(payload).toContain('Show-StepBar 100 "Agent verified"');
+  });
+
+  it("redirects nested installer output unless verbose mode is enabled", () => {
+    expect(payload).toContain("*> $pythonLog");
+    expect(payload).toContain("if ($Verbose)");
+    expect(payload).toContain('Detailed log: " + $pythonLog');
+  });
+
+  it("fails closed when staged source and manifest versions differ", () => {
+    expect(payload).toContain("overlay version mismatch: manifest=");
+    expect(payload).toContain("latest agent code could not be staged safely");
+    expect(payload).not.toContain("coherent bundled version retained");
+  });
+});
+
+describe("release version contract", () => {
+  it("requires a non-legacy agent release", () => {
+    expect(REQUIRED_AGENT_VERSION).not.toBe("1.0.0");
+  });
+});
 
 describe("userStoryIds (SIT/UAT auto-select parity)", () => {
   const row = (wi_id: number | string, wi_type: string): WorkItemRow =>

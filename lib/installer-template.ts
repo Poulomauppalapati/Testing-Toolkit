@@ -2,9 +2,9 @@
  * Builds the tiny self-contained Windows installer - a battle-tested .cmd that
  * runs a PowerShell worker VISIBLY in the console.
  *
- * Why a visible .cmd: we deliberately show the terminal so the user sees real,
- * trustworthy progress (download bar, step-by-step offline install, final
- * "Done") instead of a hidden process and a web spinner. Double-clicking a .cmd
+ * Why a visible .cmd: the PowerShell worker owns a compact milestone UI while
+ * the nested Python installer writes verbose diagnostics only to durable logs.
+ * Double-clicking a .cmd
  * opens one console; the cmd extracts the embedded PowerShell worker and runs it
  * IN THE SAME window (no hidden relaunch, no VBScript, no install beacon). The
  * web app simply waits for the agent to come online once the install finishes.
@@ -99,9 +99,9 @@ if not "%_TT_EXTRACT%"=="0" goto :extract_failed
 if not exist "%_TT_PS1%" goto :extract_failed
 call :tslog "payload extracted OK"
 
-rem Run the worker VISIBLY in THIS console so the user sees real progress (the
-rem download bar, the offline install steps, and the final result). No hidden
-rem relaunch, no VBScript, no beacon - the terminal IS the progress UI. We
+  rem Run the PowerShell worker VISIBLY in THIS console so the user sees compact
+  rem milestone progress and the final result. Nested installer detail is logged,
+  rem not streamed. No hidden relaunch, no VBScript, no beacon. We
 rem forward TT_LOG_DIR / TT_CACHE_DIR so the worker logs into the SAME folder.
 call :tslog "running PowerShell worker (visible)"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%_TT_PS1%"
@@ -298,7 +298,6 @@ try {
   Write-Dbg ("parts cache: " + $partsDir)
 
   Write-Step "Reading bundle manifest"
-  Show-StepBar 0 "Reading release metadata"
   $manifestUrl = $ApiBase + 'manifest.json?ref=' + $Ref
   Write-Dbg ("GET " + $manifestUrl)
   $manifest = Invoke-RestMethod -Uri $manifestUrl -Headers $headers -UseBasicParsing
@@ -520,7 +519,6 @@ try {
   }
 
   Write-Step "Reassembling bundle"
-  Show-StepBar 0 "Joining downloaded parts"
   $zip = Join-Path $work $manifest.archive
   $out = [IO.File]::Create($zip)
   foreach ($p in ($parts | Sort-Object name)) {
@@ -535,7 +533,6 @@ try {
   Trace 'INFO' 'archive verified'
   Show-StepBar 100 "Bundle verified"
   Write-Step "Extracting"
-  Show-StepBar 0 "Extracting bundle files"
   $dest = Join-Path $scriptDir $manifest.extractTo
   if (Test-Path $dest) { Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction SilentlyContinue }
   Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
@@ -548,7 +545,6 @@ try {
   # every code fix, pull the current source from the repo and lay it over the
   # extracted files. Best-effort: if it fails we fall back to bundled code.
   Write-Step "Applying latest agent code"
-  Show-StepBar 0 "Staging latest agent release"
   try {
     function Get-OverlayFile($uri, $outFile) {
       $last = $null
@@ -589,6 +585,18 @@ try {
       Get-OverlayFile $w.url (Join-Path (Join-Path $stage 'wheelhouse') $w.name)
     }
 
+    # The release version is a hard coherence boundary. A manifest that omits
+    # version.py, or a stale source ref, must never install or launch.
+    $stageVersionFile = Join-Path $stage 'src\agent\version.py'
+    if (-not (Test-Path $stageVersionFile)) { throw 'overlay is missing src/agent/version.py' }
+    $versionText = [IO.File]::ReadAllText($stageVersionFile)
+    $versionMatch = [regex]::Match($versionText, 'AGENT_VERSION\s*=\s*["'']([^"'']+)["'']')
+    if (-not $versionMatch.Success) { throw 'overlay version.py has no AGENT_VERSION' }
+    $stageVersion = $versionMatch.Groups[1].Value
+    if ($stageVersion -ne [string]$um.version) {
+      throw ('overlay version mismatch: manifest=' + $um.version + ' source=' + $stageVersion)
+    }
+
     # Commit only after every source, requirement and wheel has downloaded and
     # validated. A transient GitHub failure therefore leaves the coherent base
     # bundle untouched instead of mixing new requirements with old wheels.
@@ -602,8 +610,8 @@ try {
     }
     Trace 'INFO' (("latest agent version staged ({0} files)" -f @($um.files).Count))
   } catch {
-    Trace 'WARN' ("atomic overlay skipped; coherent bundled version retained: " + $_.Exception.Message)
-    Trace 'INFO' 'using coherent bundled agent version'
+    Trace 'ERROR' ("atomic overlay failed: " + $_.Exception.Message)
+    throw ('latest agent code could not be staged safely: ' + $_.Exception.Message)
   }
   Show-StepBar 100 "Agent release staged"
 
@@ -611,25 +619,30 @@ try {
   if (-not (Test-Path $installCmd)) { throw ('install.cmd not found in extracted bundle at ' + $dest) }
 
   Write-Step "Installing and verifying the agent"
-  Show-StepBar 0 "Running offline installer"
   Trace 'INFO' 'offline installation started'
   # Hand the auto-update settings to install.py so the agent can fetch future
   # patches on its own. These are read by write_update_config() in install.py.
   $env:TT_UPDATE_TOKEN = $Token
   $env:TT_UPDATE_REPO  = $Repo
   $env:TT_UPDATE_REF   = $Ref
+  $pythonLog = Join-Path $LogDir ('agent-install-' + $stamp + '.log')
   Push-Location $dest
-  & cmd /c ('"' + $installCmd + '"')
+  if ($Verbose) {
+    & cmd /c ('"' + $installCmd + '"')
+  } else {
+    & cmd /c ('"' + $installCmd + '"') *> $pythonLog
+  }
   $code = $LASTEXITCODE
   Pop-Location
+  Trace 'INFO' ('offline installer detail log: ' + $pythonLog)
 
-  Write-Host ""
   if ($code -eq 0) {
     Show-StepBar 100 "Agent verified"
     Write-Host "  Done. Testing Toolkit is installed." -ForegroundColor Green
     Trace 'INFO' 'offline installer finished successfully (exit 0)'
   } else {
-    Write-Host ("  Installer exited with code " + $code) -ForegroundColor Yellow
+    Write-Host ("  Installer exited with code " + $code + ".") -ForegroundColor Red
+    Write-Host ("  Detailed log: " + $pythonLog) -ForegroundColor Yellow
     Trace 'WARN' ('offline installer exited with code ' + $code)
   }
 } catch {
