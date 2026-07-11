@@ -1,7 +1,7 @@
 {
-  "version": "2.16.1",
+  "version": "2.16.2",
   "ref": "main",
-  "generatedAt": "2026-07-11T21:12:08.194Z",
+  "generatedAt": "2026-07-11T21:55:26.586Z",
   "files": [
     {
       "path": ".env.enc",
@@ -156,7 +156,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "46290a42e1c5e22bb5ea59e264ef693948388a2fc53d24ae481392f090558489"
+      "hash": "6fbd7b081361bd89a63ea2af2833fed0c03acac40af432a7bd7e13ff6bfae4e4"
     },
     {
       "path": "automation/__init__.py",
@@ -586,6 +586,98 @@
     {
       "name": "python_multipart-0.0.32-py3-none-any.whl",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/extra-wheels/python_multipart-0.0.32-py3-none-any.whl?ref=main"
+    }
+  ],
+  "mcpFiles": [
+    {
+      "name": "node-bins.json",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins.json?ref=main",
+      "hash": "ca2c6a75176076d669b38ad20c472ebdcdbc1bfe0fa5b5baf8fc48313f9399f5"
+    },
+    {
+      "name": "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.000",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/darwin-arm64/node-darwin-arm64.tar.gz.000?ref=main",
+      "hash": "9aa3484331a3c3fb39b28f370a0811dd9d30ef6bda5e5d16ffbd2bc36666a360"
+    },
+    {
+      "name": "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.001",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/darwin-arm64/node-darwin-arm64.tar.gz.001?ref=main",
+      "hash": "42b3c38529cce35b7407d6507860047de5e4c72849446797a6ed0cb6ccaf031d"
+    },
+    {
+      "name": "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.002",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/darwin-arm64/node-darwin-arm64.tar.gz.002?ref=main",
+      "hash": "a66f47d0467325885942018e24062e026408b1d8496fb0e02b062eaa499ddf0f"
+    },
+    {
+      "name": "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.003",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/darwin-arm64/node-darwin-arm64.tar.gz.003?ref=main",
+      "hash": "3a99ff8920eb62afa4877cac8f075750d26ee35c9bdbfa43c28e4a4a9d4850cd"
+    },
+    {
+      "name": "node-bins/darwin-arm64/node-darwin-arm64.tar.gz.004",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/darwin-arm64/node-darwin-arm64.tar.gz.004?ref=main",
+      "hash": "d947548a54e43e737092ab09cc37219ed85aee07585329dff047ca8f073f3479"
+    },
+    {
+      "name": "node-bins/linux-x64/node-linux-x64.tar.gz.000",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/linux-x64/node-linux-x64.tar.gz.000?ref=main",
+      "hash": "baee0e850afb34d931b9e0e36a3a02cccc674209810386a5997a04b5fb825721"
+    },
+    {
+      "name": "node-bins/linux-x64/node-linux-x64.tar.gz.001",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/linux-x64/node-linux-x64.tar.gz.001?ref=main",
+      "hash": "f73c27b22d464afc61ef17b2ea75c4edf7d5d2e71b08fbeafc20bf093d30506e"
+    },
+    {
+      "name": "node-bins/linux-x64/node-linux-x64.tar.gz.002",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/linux-x64/node-linux-x64.tar.gz.002?ref=main",
+      "hash": "493681d7988730b7ed0bb65f0165ecffca404d76d912016094d92e9903cf0bb8"
+    },
+    {
+      "name": "node-bins/linux-x64/node-linux-x64.tar.gz.003",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/linux-x64/node-linux-x64.tar.gz.003?ref=main",
+      "hash": "1cf7bf5ea374d2c2957119aa58b9bf618eacee29eb1114a5c3257538591b6904"
+    },
+    {
+      "name": "node-bins/linux-x64/node-linux-x64.tar.gz.004",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/linux-x64/node-linux-x64.tar.gz.004?ref=main",
+      "hash": "64a7fe1d0911b21f8fda89bcbcb75e250437781552817728595265a89da00bb9"
+    },
+    {
+      "name": "node-bins/win-x64/node-win-x64.zip.000",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/win-x64/node-win-x64.zip.000?ref=main",
+      "hash": "bb9c229eb10201e4d643853acc35d79b582734674c13f5494a185f1cd0b927ce"
+    },
+    {
+      "name": "node-bins/win-x64/node-win-x64.zip.001",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/win-x64/node-win-x64.zip.001?ref=main",
+      "hash": "96a05b652b39f63530ba9076f5deef2a2ff964ad54e7cac08203934d45b6ed82"
+    },
+    {
+      "name": "node-bins/win-x64/node-win-x64.zip.002",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node-bins/win-x64/node-win-x64.zip.002?ref=main",
+      "hash": "bf4410d8d2eb0d76738d27ff183d3afac3eec7de1cf015ee0658bc49709144ac"
+    },
+    {
+      "name": "node_modules_bundle/node_modules.tar.gz.000",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node_modules_bundle/node_modules.tar.gz.000?ref=main",
+      "hash": "2a3a56f05a151f3c38db467e284c178588d61e0ec5fd6b0fd78113bf025eca0a"
+    },
+    {
+      "name": "node_modules_bundle/node_modules.tar.gz.001",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/node_modules_bundle/node_modules.tar.gz.001?ref=main",
+      "hash": "708d17f805cb655213e03633613bd9ccb1d47507d281e80fd0335c34bef59efe"
+    },
+    {
+      "name": "package-lock.json",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/package-lock.json?ref=main",
+      "hash": "09c4996203607cf7dffa4450053df3314d118c6496346657e9ea6983d32ee47e"
+    },
+    {
+      "name": "package.json",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/mcp_servers/package.json?ref=main",
+      "hash": "98973445d319f15bfcf0623d93dd7cda8de111ac135dbaac2f39d3d93b4bb3e0"
     }
   ]
 }
