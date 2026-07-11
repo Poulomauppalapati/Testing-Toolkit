@@ -32,17 +32,15 @@ export function AppShell() {
   // The agent version reported by /health, used for the (A) handshake below.
   const agentVersion = health?.version ?? null;
 
-  // Bootstrap: once connected & configured, load the project list.
+  // Bootstrap whenever the agent connects. The source route safely returns an
+  // empty list when neither ADO nor JIRA is configured, so source setup never
+  // blocks entry to the application.
   useEffect(() => {
-    if (
-      status === "connected" &&
-      settings?.configured &&
-      !bootstrapped.current
-    ) {
+    if (status === "connected" && !bootstrapped.current) {
       bootstrapped.current = true;
       reloadProjects();
     }
-  }, [status, settings?.configured, reloadProjects]);
+  }, [status, reloadProjects]);
 
   // (A) Minimum-version handshake — the hard guarantee. The web app knows the
   // lowest agent version it works with (REQUIRED_AGENT_VERSION). The moment a

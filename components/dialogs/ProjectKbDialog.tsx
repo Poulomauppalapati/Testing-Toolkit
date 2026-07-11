@@ -647,7 +647,7 @@ function TemplatesSection({
 }
 
 const PROMPT_SCOPES: { value: string; label: string }[] = [
-  { value: "", label: "General (manual mode / default)" },
+  { value: "", label: "General (default)" },
   { value: "implementation", label: "Implementation phase" },
   { value: "sit", label: "SIT phase" },
   { value: "uat", label: "UAT phase" },

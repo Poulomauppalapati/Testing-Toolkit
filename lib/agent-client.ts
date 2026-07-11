@@ -135,20 +135,15 @@ export interface MetricsResponse {
 }
 
 export interface SettingsResponse {
-  configured: boolean;
-  has_api_key: boolean;
+  ado_configured: boolean;
+  jira_configured: boolean;
   has_pat: boolean;
   organization: string;
-  model: string;
-  fast_model: string;
-  fallback_model: string;
-  base_url: string;
   project_prefix: string;
   tls_mode?: string;
   /** Server-persisted: true once the first-run guided tour is done/skipped. */
   tour_completed?: boolean;
   // -- JIRA source (secondary work-item source) --
-  jira_configured?: boolean;
   has_jira_pat?: boolean;
   jira_url?: string;
   jira_user?: string;
@@ -157,12 +152,7 @@ export interface SettingsResponse {
 
 export interface SaveSettingsPayload {
   organization?: string;
-  base_url?: string;
-  model?: string;
-  fast_model?: string;
-  fallback_model?: string;
   project_prefix?: string;
-  api_key?: string;
   pat?: string;
   tls_mode?: string;
   // -- JIRA source --
@@ -1381,10 +1371,8 @@ export const agent = {
       wi_ids: WiId[];
       tc_type: TcType | "";
       board?: string;
-      manual_payload?: Record<string, unknown> | null;
       regen_feedback?: string;
       base_payload?: Record<string, unknown> | null;
-      fast_model?: boolean;
       test_data?: boolean;
     },
     handlers: JobHandlers = {}
@@ -1398,10 +1386,8 @@ export const agent = {
         wi_keys: keys,
         tc_type: payload.tc_type,
         board: payload.board ?? "",
-        manual_payload: payload.manual_payload ?? null,
         regen_feedback: payload.regen_feedback ?? "",
         base_payload: payload.base_payload ?? null,
-        fast_model: payload.fast_model ?? false,
         test_data: payload.test_data ?? true,
       }),
     });
@@ -1518,24 +1504,6 @@ export const agent = {
       throw new Error(snap.error || `E2E run ${snap.state}`);
     }
     return snap.result as unknown as E2ERunResult;
-  },
-
-  /** Build the manual-mode work-item dump + system prompt (ADO or JIRA). */
-  async buildDump(
-    project: string,
-    wiIds: WiId[],
-    tcType: TcType | ""
-  ): Promise<{ dump: string; system_prompt: string; n_items: number }> {
-    const { ids, keys } = splitWiIds(wiIds);
-    return agentFetch("/generate/dump", {
-      method: "POST",
-      body: JSON.stringify({
-        project,
-        wi_ids: ids,
-        wi_keys: keys,
-        tc_type: tcType,
-      }),
-    });
   },
 
   /** Push a reviewed payload (in-memory JSON) to ADO. */

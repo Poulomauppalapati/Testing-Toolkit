@@ -50,7 +50,7 @@ export function NavPanel() {
 
   const sourceOpts = {
     jiraConfigured: settings?.jira_configured,
-    adoConfigured: settings?.configured,
+    adoConfigured: settings?.ado_configured,
   };
 
   async function onUpdateClick() {
@@ -90,7 +90,7 @@ export function NavPanel() {
           <div className="min-h-[60px] flex-1 overflow-auto rounded-[8px] border border-[var(--tt-outline-soft)] bg-[var(--tt-surface-base)] p-1">
             {projects.length === 0 ? (
               <p className="px-2 py-2 text-xs text-muted-foreground">
-                No projects. Configure ADO in Settings.
+                No projects. Connect Azure DevOps or JIRA in Settings.
               </p>
             ) : (
               projects.map((full) => {

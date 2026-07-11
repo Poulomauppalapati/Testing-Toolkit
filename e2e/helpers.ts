@@ -41,21 +41,11 @@ export function guardAdoWrites(page: Page): { blocked: () => string[] } {
   return { blocked: () => blocked };
 }
 
-/**
- * Get past the first-run gate. If the agent is configured we land directly in
- * the shell; otherwise we click "Skip (manual mode)" to enter manual mode.
- */
+/** Enter the shell. Source configuration never blocks startup. */
 export async function enterApp(page: Page): Promise<void> {
   await page.goto("/");
-  // NOTE: never wait for "networkidle" here -- the app polls the agent health
-  // endpoint on an interval, so the network is never idle. Wait for concrete
-  // UI instead. The shell renders under the wizard, so the Projects rail is
-  // visible even before we dismiss the wizard.
+  // Never wait for networkidle: agent health polling keeps the network active.
   await expect(page.getByText("Projects", { exact: true })).toBeVisible();
-  const skip = page.getByRole("button", { name: "Skip (manual mode)" });
-  if (await skip.isVisible().catch(() => false)) {
-    await skip.click();
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -113,17 +103,12 @@ export async function mockAgent(
     tls_mode: "system",
   };
   const settings = {
-    configured,
-    has_api_key: configured,
+    ado_configured: configured,
+    jira_configured: false,
     has_pat: configured,
     organization: configured ? "demo-org" : "",
-    model: "claude-sonnet-4",
-    fast_model: "claude-haiku-4",
-    fallback_model: "claude-sonnet-4",
-    base_url: configured ? "https://api.anthropic.com" : "",
     project_prefix: "",
     tour_completed: tourCompleted,
-    jira_configured: false,
   };
   const workItemRow = {
     wi_id: 101,

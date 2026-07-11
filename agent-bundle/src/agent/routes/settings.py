@@ -3,24 +3,19 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 router = APIRouter()
 
 
 class SettingsResponse(BaseModel):
-    configured: bool
-    has_api_key: bool
+    ado_configured: bool
+    jira_configured: bool
     has_pat: bool
     organization: str
-    model: str
-    fast_model: str
-    fallback_model: str
-    base_url: str
     project_prefix: str
     tour_completed: bool
     # -- JIRA source (secondary work-item source) --
-    jira_configured: bool = False
     has_jira_pat: bool = False
     jira_url: str = ""
     jira_user: str = ""
@@ -28,13 +23,10 @@ class SettingsResponse(BaseModel):
 
 
 class SaveSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     organization: str | None = None
-    base_url: str | None = None
-    model: str | None = None
-    fast_model: str | None = None
-    fallback_model: str | None = None
     project_prefix: str | None = None
-    api_key: str | None = None
     pat: str | None = None
     # -- JIRA source --
     jira_url: str | None = None
@@ -48,15 +40,10 @@ async def get_settings() -> SettingsResponse:
     from core.settings_store import (
         get_setting,
         get_tour_completed,
-        has_api_key,
-        is_any_source_configured,
+        is_configured,
         is_jira_configured,
         load_jira_pat,
         load_pat_value,
-        KEY_BASE_URL,
-        KEY_FALLBACK_MODEL,
-        KEY_FAST_MODEL,
-        KEY_MODEL,
         KEY_ORG,
         KEY_PREFIX,
         KEY_JIRA_URL,
@@ -64,19 +51,12 @@ async def get_settings() -> SettingsResponse:
         KEY_JIRA_PREFIX,
     )
     return SettingsResponse(
-        # App-level gate: ADO is optional, so setup is done once EITHER source
-        # (Azure DevOps or JIRA) is configured.
-        configured=is_any_source_configured(),
-        has_api_key=has_api_key(),
+        ado_configured=is_configured(),
+        jira_configured=is_jira_configured(),
         has_pat=bool(load_pat_value()),
         organization=get_setting(KEY_ORG),
-        model=get_setting(KEY_MODEL),
-        fast_model=get_setting(KEY_FAST_MODEL),
-        fallback_model=get_setting(KEY_FALLBACK_MODEL),
-        base_url=get_setting(KEY_BASE_URL),
         project_prefix=get_setting(KEY_PREFIX),
         tour_completed=get_tour_completed(),
-        jira_configured=is_jira_configured(),
         has_jira_pat=bool(load_jira_pat()),
         jira_url=get_setting(KEY_JIRA_URL),
         jira_user=get_setting(KEY_JIRA_USER),
@@ -87,14 +67,9 @@ async def get_settings() -> SettingsResponse:
 @router.post("")
 async def save_settings(req: SaveSettingsRequest) -> dict:
     from core.settings_store import (
-        save_api_key,
         save_pat_value,
         save_jira_pat,
         save_settings as save_plain,
-        KEY_BASE_URL,
-        KEY_FALLBACK_MODEL,
-        KEY_FAST_MODEL,
-        KEY_MODEL,
         KEY_ORG,
         KEY_PREFIX,
         KEY_JIRA_URL,
@@ -105,14 +80,6 @@ async def save_settings(req: SaveSettingsRequest) -> dict:
     plain: dict[str, str] = {}
     if req.organization is not None:
         plain[KEY_ORG] = req.organization
-    if req.base_url is not None:
-        plain[KEY_BASE_URL] = req.base_url
-    if req.model is not None:
-        plain[KEY_MODEL] = req.model
-    if req.fast_model is not None:
-        plain[KEY_FAST_MODEL] = req.fast_model
-    if req.fallback_model is not None:
-        plain[KEY_FALLBACK_MODEL] = req.fallback_model
     if req.project_prefix is not None:
         plain[KEY_PREFIX] = req.project_prefix
     if req.jira_url is not None:
@@ -124,10 +91,6 @@ async def save_settings(req: SaveSettingsRequest) -> dict:
 
     if plain:
         save_plain(plain)
-
-    if req.api_key:
-        if not save_api_key(req.api_key):
-            raise HTTPException(500, "Failed to save API key")
 
     if req.pat:
         if not save_pat_value(req.pat):

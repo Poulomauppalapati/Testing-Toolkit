@@ -36,17 +36,12 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
     currentProject,
     displayName,
     generateCtx,
-    settings,
     pushLog,
   } = useAppState();
-  const [mode, setMode] = useState<"auto" | "manual">(
-    settings?.has_api_key ? "auto" : "manual"
-  );
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [iteration, setIteration] = useState(0);
   const [result, setResult] = useState<GenerationResult | null>(null);
-  const [manualJson, setManualJson] = useState("");
   const [status, setStatus] = useState("");
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [pushed, setPushed] = useState<string>("");
@@ -100,7 +95,6 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
     const path = generateCtx.loadArtifactPath;
     if (!path) return;
     let cancelled = false;
-    setMode("auto");
     setLoadingArtifact(true);
     setStatus("Loading artifact...");
     agent
@@ -204,33 +198,6 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const runManual = async (payload: Record<string, unknown>) => {
-    if (!currentProject) return;
-    setBusy(true);
-    setPushed("");
-    setStatus("Validating pasted JSON...");
-    try {
-      const res = await agent.generate(
-        {
-          project: currentProject,
-          wi_ids: ids,
-          tc_type: tcType,
-          board: currentBoard?.label ?? "",
-          manual_payload: payload,
-        },
-        handlers
-      );
-      setResult(res);
-      setStatus(`Loaded ${res.n_test_cases} test case(s). Review, then push.`);
-      pushLog("SUCCESS", `Manual payload accepted: ${res.n_test_cases} TC(s).`);
-    } catch (e) {
-      setStatus(`Validation failed: ${(e as Error).message}`);
-      pushLog("ERROR", `Manual payload failed: ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const push = async () => {
     if (!currentProject || !result) return;
     setBusy(true);
@@ -281,26 +248,16 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
               {status}
             </span>
           )}
-          {mode === "auto" && (
-            <button
-              className="tt-btn-success"
-              onClick={() => run(false)}
-              disabled={busy || loadingArtifact || !ids.length}
-            >
-              {busy
-                ? "Generating..."
-                : loadingArtifact
-                  ? "Loading..."
-                  : "AI Generate"}
-            </button>
-          )}
           <button
-            className="tt-btn-ghost"
-            data-active={mode === "manual"}
-            onClick={() => setMode((m) => (m === "manual" ? "auto" : "manual"))}
-            disabled={busy}
+            className="tt-btn-success"
+            onClick={() => run(false)}
+            disabled={busy || loadingArtifact || !ids.length}
           >
-            Manual mode
+            {busy
+              ? "Generating..."
+              : loadingArtifact
+                ? "Loading..."
+                : "AI Generate"}
           </button>
           <label
             className="flex items-center gap-1.5 px-1 text-xs text-[var(--tt-text-secondary)]"
@@ -472,19 +429,7 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {mode === "manual" ? (
-          <ManualMode
-            project={currentProject}
-            ids={ids}
-            tcType={tcType}
-            manualJson={manualJson}
-            setManualJson={setManualJson}
-            busy={busy}
-            onValidate={runManual}
-            pushLog={pushLog}
-          />
-        ) : (
-          <>
+        <>
             {/* Generation log pane */}
             <div className="min-h-40 max-h-72 overflow-auto rounded-lg border border-[var(--tt-outline)] bg-[var(--tt-surface-deepest)] font-mono text-xs leading-relaxed">
               {runLog.length === 0 ? (
@@ -537,7 +482,6 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
               />
             )}
           </>
-        )}
       </div>
     </Modal>
   );
@@ -694,131 +638,6 @@ function RegenerateSection({
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function ManualMode({
-  project,
-  ids,
-  tcType,
-  manualJson,
-  setManualJson,
-  busy,
-  onValidate,
-  pushLog,
-}: {
-  project: string;
-  ids: WiId[];
-  tcType: TcType | "";
-  manualJson: string;
-  setManualJson: (v: string) => void;
-  busy: boolean;
-  onValidate: (payload: Record<string, unknown>) => void;
-  pushLog: (level: "INFO" | "SUCCESS" | "WARN" | "ERROR", t: string) => void;
-}) {
-  const [prompt, setPrompt] = useState("");
-  const [dump, setDump] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [jsonError, setJsonError] = useState("");
-
-  const loadContext = async () => {
-    if (!project) return;
-    setLoading(true);
-    try {
-      const res = await agent.buildDump(project, ids, tcType);
-      setPrompt(res.system_prompt || "");
-      setDump(res.dump || "");
-      pushLog("SUCCESS", `Loaded prompt + dump for ${res.n_items} item(s).`);
-    } catch (e) {
-      pushLog("WARN", `Could not load manual context: ${(e as Error).message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const validate = () => {
-    setJsonError("");
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(manualJson);
-    } catch (e) {
-      setJsonError(`Invalid JSON: ${(e as Error).message}`);
-      return;
-    }
-    onValidate(parsed);
-  };
-
-  const copy = (text: string) => navigator.clipboard?.writeText(text);
-
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-xs leading-relaxed text-[var(--tt-text-muted)]">
-        Manual mode: copy the system prompt and work-item dump into any LLM
-        session, then paste the returned JSON below and validate it. The review
-        and push steps are identical to AI Generate.
-      </p>
-
-      <button
-        className="tt-btn-ghost self-start !px-3 !py-1.5 text-xs"
-        onClick={loadContext}
-        disabled={loading || !project}
-      >
-        {loading ? "Loading..." : "Load prompt & work-item dump"}
-      </button>
-
-      {prompt && (
-        <CopyBlock label="System prompt" text={prompt} onCopy={() => copy(prompt)} />
-      )}
-      {dump && (
-        <CopyBlock label="Work-item dump" text={dump} onCopy={() => copy(dump)} />
-      )}
-
-      <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-bold text-[var(--tt-text-primary)]">
-          Paste JSON response
-        </label>
-        <textarea
-          className="tt-input min-h-28 resize-y font-mono text-xs"
-          placeholder='{"stories": [...]}'
-          value={manualJson}
-          onChange={(e) => setManualJson(e.target.value)}
-        />
-        {jsonError && <p className="text-xs text-[var(--tt-danger)]">{jsonError}</p>}
-        <div className="flex justify-end">
-          <button
-            className="tt-btn-primary !px-4 !py-1.5 text-sm"
-            onClick={validate}
-            disabled={busy || !manualJson.trim()}
-          >
-            {busy ? "Validating..." : "Validate & Load"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CopyBlock({
-  label,
-  text,
-  onCopy,
-}: {
-  label: string;
-  text: string;
-  onCopy: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-bold text-[var(--tt-text-primary)]">{label}</span>
-        <button className="tt-btn-ghost !px-2 !py-1 text-xs" onClick={onCopy}>
-          Copy
-        </button>
-      </div>
-      <pre className="max-h-40 overflow-auto rounded-lg border border-[var(--tt-outline)] bg-[var(--tt-surface-deepest)] p-2 font-mono text-xs text-[var(--tt-text-secondary)]">
-        {text}
-      </pre>
     </div>
   );
 }

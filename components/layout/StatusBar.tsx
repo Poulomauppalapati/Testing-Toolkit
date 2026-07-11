@@ -131,8 +131,7 @@ export function StatusBar() {
     setLogVisible,
   } = useAppState();
 
-  const hasOrg = !!settings?.organization;
-  const hasKey = !!settings?.has_api_key;
+  const adoConfigured = settings?.ado_configured === true;
   const connected = status === "connected";
   const working = boardLoading || projectsLoading;
   const online = useOnline();
@@ -305,15 +304,15 @@ export function StatusBar() {
         />
         <Chip
           label="AI"
-          ok={hasKey}
-          warn={!hasKey}
-          title={hasKey ? "AI API key set" : "no API key (manual mode)"}
+          ok={connected}
+          warn={!connected}
+          title={connected ? "AI is centrally managed by the agent" : "Agent offline"}
         />
         <Chip
           label="ADO"
-          ok={hasOrg && connected}
-          warn={!hasOrg || !connected}
-          title="Azure DevOps status"
+          ok={adoConfigured && connected}
+          warn={!adoConfigured || !connected}
+          title={adoConfigured ? "Azure DevOps configured" : "Azure DevOps not configured"}
         />
         <Chip
           label="KB"

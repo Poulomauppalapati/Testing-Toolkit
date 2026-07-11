@@ -193,16 +193,17 @@ const LAYERS: StackLayer[] = [
 type LayerStatus = "connected" | "partial" | "not-configured";
 
 function useLayerStatuses(settings: ReturnType<typeof useAppState>["settings"]) {
-  const hasLlm = !!(settings?.base_url && settings.has_api_key);
-  const hasModel = !!(settings?.model);
-  const hasEmbedModel = true; // always configured via the same base URL
+  // AI endpoints and model routes are centrally managed by the installed
+  // agent and are intentionally not exposed through browser settings.
+  const agentConnected = settings !== undefined;
+  const hasEmbedModel = true;
 
   const map: Record<string, LayerStatus> = {
-    llm:       hasLlm && hasModel ? "connected" : hasLlm ? "partial" : "not-configured",
-    embed:     hasLlm ? "connected" : "not-configured",
+    llm:       agentConnected ? "connected" : "not-configured",
+    embed:     agentConnected ? "connected" : "not-configured",
     vector:    "connected",   // LanceDB is always local
     extract:   "connected",   // PyMuPDF / ffmpeg always bundled
-    access:    hasLlm ? "connected" : "not-configured",
+    access:    agentConnected ? "connected" : "not-configured",
     framework: "connected",   // agent is running if we can open this dialog
     eval:      "connected",   // native, always available
   };

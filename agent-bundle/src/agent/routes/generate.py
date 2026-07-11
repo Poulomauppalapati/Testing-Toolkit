@@ -3,7 +3,6 @@
 Drives the same pipeline the desktop "Generate test cases" dialog uses, but
 as background jobs the browser polls:
 
-    POST /generate/dump     build the work-item dump + system prompt (manual)
     POST /generate/start    start an RLM generation run            -> {job_id}
     POST /generate/push     create the reviewed test cases in ADO  -> {job_id}
     GET  /generate/excel/{job_id}   download the reviewer .xlsx
@@ -146,37 +145,6 @@ def _regen_system_prompt(base_prompt: str, feedback: str, payload: dict) -> str:
 
 
 # ---------------------------------------------------------------------
-# Manual-mode dump + prompt
-# ---------------------------------------------------------------------
-class DumpRequest(BaseModel):
-    project: str
-    wi_ids: list[int] = []
-    wi_keys: list[str] = []
-    tc_type: str = ""
-
-
-@router.post("/dump")
-async def build_dump(req: DumpRequest) -> dict[str, Any]:
-    """Return the work-item text dump + the phase system prompt so the user
-    can run an LLM session manually (no API key path). Works for both ADO
-    (wi_ids) and JIRA (wi_keys) projects."""
-    import core.project_store as ps
-
-    try:
-        dump, _per, n_items = await _fetch_work_item_dump(
-            req.project, req.wi_ids, req.wi_keys,
-        )
-    except ValueError as e:  # not configured
-        raise HTTPException(400, str(e))
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"Failed to fetch work item detail: {e}")
-    if not dump:
-        raise HTTPException(404, "No work item detail could be fetched")
-    prompt = ps.read_system_prompt(req.project, req.tc_type or None)
-    return {"dump": dump, "system_prompt": prompt, "n_items": n_items}
-
-
-# ---------------------------------------------------------------------
 # Attachment text extraction (regenerate-with-feedback on web)
 # ---------------------------------------------------------------------
 # Guard rails so a huge attachment can't blow up the prompt / memory.
@@ -258,10 +226,8 @@ class StartRequest(BaseModel):
     wi_keys: list[str] = []
     tc_type: str = ""
     board: str = ""
-    manual_payload: dict[str, Any] | None = None
     regen_feedback: str = ""
     base_payload: dict[str, Any] | None = None
-    fast_model: bool = False
     # Post-processing (desktop parity): pattern-based test-data suggestions
     # appended to data-entry steps. Quality scoring + traceability coverage
     # are always logged and written to the JSON sidecar.
@@ -284,9 +250,9 @@ def _board_token(board: str) -> str:
 
 async def _run_generate(job: Job, req: StartRequest) -> None:
     import core.project_store as ps
-    from ado.testcase_creator import normalize_payload, validate_payload
     from core.app_logging import stream_agent_logs
-    from core.settings_store import build_llm_client, model_pair
+    from core.model_router import Task, route
+    from core.settings_store import build_llm_client
     from testgen.gen_cache import GenCache
     from testgen.quality_scorer import score_payload
     from testgen.rlm import (
@@ -308,26 +274,16 @@ async def _run_generate(job: Job, req: StartRequest) -> None:
         paths = ps.ProjectPaths.for_name(req.project)
         ps.ensure_project(req.project)
 
-        if req.manual_payload is not None:
-            job.log("[INFO] Using manually supplied JSON payload.")
-            payload = req.manual_payload
-            normalize_payload(payload)
-            rep = validate_payload(payload)
-            if not rep.ok:
-                raise RuntimeError(
-                    "Pasted JSON failed validation: "
-                    + "; ".join(rep.errors[:8])
-                )
-        else:
-            from core.settings_store import build_runtime_config
+        from core.settings_store import build_runtime_config
 
-            client = build_llm_client(build_runtime_config())
-            if client is None:
-                raise RuntimeError(
-                    "No API key configured. Use Manual Mode, or add a key in "
-                    "Settings."
-                )
+        client = build_llm_client(build_runtime_config())
+        if client is None:
+            raise RuntimeError(
+                "The centrally managed AI service is not configured. "
+                "Contact the Testing Toolkit administrator."
+            )
 
+        if True:  # keep the generation pipeline grouped under one guarded block
             n_expected = len(req.wi_ids) or len(req.wi_keys)
             job.log(f"[INFO] Fetching detail for {n_expected} work item(s)...")
             job.set_progress("fetch", 0, n_expected)
@@ -345,16 +301,11 @@ async def _run_generate(job: Job, req: StartRequest) -> None:
                 ps.open_project_retriever, req.project
             )
 
-            primary, fast = model_pair()
-            # Fast mode (desktop parity): use the fast model as primary and
-            # skip the decompose + verify passes for a much quicker run.
-            enable_decompose = not req.fast_model
-            enable_verify = not req.fast_model
-            if req.fast_model:
-                primary = fast
-                job.log(f"[INFO] Fast mode: {primary} (no decompose/verify)")
-            else:
-                job.log(f"[INFO] Model: {primary} (retrieval: {fast})")
+            primary = route(Task.GENERATE_TEST_CASES)
+            fast = route(Task.NAVIGATE_CHUNKS)
+            enable_decompose = True
+            enable_verify = True
+            job.log(f"[INFO] Model: {primary} (retrieval: {fast})")
             system_prompt = ps.read_system_prompt(
                 req.project, req.tc_type or None
             )
