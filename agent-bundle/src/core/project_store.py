@@ -68,9 +68,13 @@ class ProjectPaths:
 
     @property
     def context_summary_path(self) -> Path:
-        """Cached deep-project-understanding summary extracted from the KB
-        (see kb.context_summary). Lives under the KB dir alongside the index."""
+        """Cached aggregate project context."""
         return self.kb_dir / "context_summary.json"
+
+    @property
+    def context_maps_dir(self) -> Path:
+        """Atomic per-document context-map checkpoints."""
+        return self.kb_dir / ".context_maps"
 
     def prompt_path(self, tc_type: str | None) -> Path:
         """Per-phase prompt file when tc_type is given, else the legacy
@@ -251,7 +255,10 @@ def index_project_resumable(
     # indexing.
     if llm_client and getattr(index, "chunks", None):
         try:
-            _maybe_extract_context(p, index, llm_client, llm_model, on_log)
+            _maybe_extract_context(
+                p, index, llm_client, llm_model, on_log,
+                on_sub_progress=on_sub_progress, force=force,
+            )
         except Exception as exc:  # noqa: BLE001
             if on_log:
                 try:
@@ -273,44 +280,46 @@ def index_project_resumable(
 
 
 def _maybe_extract_context(
-    p: "ProjectPaths", index: "Any",
-    llm_client: "Any", llm_model: str,
-    on_log: "Any | None" = None,
+    p: "ProjectPaths", index: "Any", llm_client: "Any", llm_model: str,
+    on_log: "Any | None" = None, on_sub_progress: "Any | None" = None,
+    force: bool = False,
 ) -> None:
-    """Run project context extraction if the KB fingerprint changed. Mirrors
-    the desktop hook so the web app produces the same context_summary.json."""
+    """Map changed documents, checkpoint them, then merge the aggregate."""
     import asyncio
     import hashlib
 
-    from kb.context_summary import extract_project_context_async, save_context_summary
+    from kb.context_summary import (
+        build_context_incremental_async,
+        load_context_summary,
+        save_context_summary,
+    )
 
     h = hashlib.sha256()
-    for c in index.chunks:
-        h.update((getattr(c, "text", "") or "").encode("utf-8", errors="replace"))
-    fp = h.hexdigest()[:16]
-
-    existing_fp = context_summary_fingerprint(p.full_name)
-    if fp == existing_fp and existing_fp:
-        return  # KB unchanged, skip
-
-    # Prefer the balanced (MEDIUM) tier for structured extraction unless an
-    # explicit model was passed in.
+    for chunk in index.chunks:
+        h.update((getattr(chunk, "text", "") or "").encode("utf-8", errors="replace"))
+    fingerprint = h.hexdigest()[:16]
+    if not force and fingerprint == context_summary_fingerprint(p.full_name):
+        return
     model = llm_model
     if not model:
-        try:
-            from core.model_router import Task, route
-            model = route(Task.MAP_EXTRACT)
-        except Exception:  # noqa: BLE001
-            model = ""
+        from core.model_router import Task, route
+        model = route(Task.MAP_EXTRACT)
 
-    ctx = asyncio.run(extract_project_context_async(
+    previous = load_context_summary(p.context_summary_path)
+    context = asyncio.run(build_context_incremental_async(
         kb_index=index, client=llm_client, model=model,
-        kb_fingerprint=fp, on_log=on_log,
+        maps_dir=p.context_maps_dir, kb_fingerprint=fingerprint,
+        on_log=on_log, on_progress=on_sub_progress, force=force,
     ))
-    if not ctx.is_empty():
-        save_context_summary(p.context_summary_path, ctx)
+    # Preserve the last complete aggregate when any document map failed. The
+    # new checkpoints remain available for a resumable retry.
+    if context.status == "partial" and previous is not None and previous.status == "complete":
         if on_log:
-            on_log("[INFO] Project context summary saved")
+            on_log("[WARN] Context is partial; preserved previous complete aggregate")
+        return
+    if not context.is_empty() and save_context_summary(p.context_summary_path, context):
+        if on_log:
+            on_log("[INFO] Project context summary saved atomically")
 
 
 def _build_hybrid_from_index(

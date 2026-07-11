@@ -250,8 +250,44 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
             job.fail("No valid test cases selected.")
             return
 
-        job.set_progress("running", 0, len(picked))
-        job.log(f"[INFO] Running {len(picked)} test case(s) against '{req.env}'.")
+        job.set_progress("compiling", 0, len(picked))
+        job.log(f"[INFO] Compiling {len(picked)} test case(s) for '{req.env}'.")
+
+        # Compile human-readable generation output into the deterministic DSL.
+        from automation.e2e_plan import PlanValidationError, compile_test_case
+        from core.settings_store import build_llm_client
+        from core.model_router import Task, route
+
+        compiler_client = build_llm_client()
+        compiler_model = route(Task.MAP_EXTRACT)
+        plan_cache = ensure_project(req.project).cache_dir / "e2e_plans"
+        compiled: list[dict[str, Any]] = []
+        for position, tc in enumerate(picked, 1):
+            stable_id = uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"{req.project}:{tc.get('id', '')}:{tc.get('title', '')}",
+            ).hex[:16]
+            candidate = {**tc, "id": stable_id, "wi_id": str(tc.get("id", ""))}
+            try:
+                plan = await compile_test_case(
+                    candidate,
+                    login_url=cred.login_url,
+                    username=cred.user_id,
+                    ai_instructions=cred.ai_instructions,
+                    cache_dir=plan_cache,
+                    client=compiler_client,
+                    model=compiler_model,
+                    on_log=job.log,
+                )
+                compiled.append(plan.test_case)
+            except PlanValidationError as exc:
+                message = str(exc)[:500]
+                job.log(f"[ERROR] Plan rejected for '{tc.get('title', 'Untitled')}': {message}")
+                compiled.append({**candidate, "steps": [], "plan_error": message})
+            job.set_progress("compiling", position, len(picked))
+
+        job.set_progress("running", 0, len(compiled))
+        job.log(f"[INFO] Running {len(compiled)} validated result(s) against '{req.env}'.")
 
         # 3) Lazy import so the agent starts even without Playwright installed.
         try:
@@ -280,7 +316,7 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
             job.log(f"[SCREENSHOT] step={step_num} status={status} path={path}")
 
         results = await run_e2e_tests(
-            test_cases=picked,
+            test_cases=compiled,
             login_url=cred.login_url,
             username=cred.user_id,
             password=cred.password,

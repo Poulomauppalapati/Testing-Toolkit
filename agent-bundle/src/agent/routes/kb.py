@@ -133,6 +133,9 @@ def _run_kb_index(job: "Job", project: str, force: bool = False) -> None:
             label = f" ({name})" if name else ""
             job.log(f"[INFO] KB indexing {done}/{total}{label} | {timing}")
 
+    def _on_sub_progress(phase: str, current: int, total: int) -> None:
+        job.set_progress(phase.lower().replace(" ", "-"), int(current), int(total))
+
     def _on_log(msg: str) -> None:
         if msg:
             job.log(msg)
@@ -170,6 +173,7 @@ def _run_kb_index(job: "Job", project: str, force: bool = False) -> None:
             enable_dense=True,
             llm_client=ctx_client,
             llm_model=ctx_model,
+            on_sub_progress=_on_sub_progress,
             force=force,
         )
         docs = int(getattr(result, "n_docs", 0) or 0)
@@ -483,7 +487,11 @@ def _context_payload(project: str) -> dict:
 
     ctx = ps.read_context_summary(project)
     if ctx is None or ctx.is_empty():
-        return {"has": False, "n_items": 0, "counts": {}, "summary": ""}
+        return {
+            "has": False, "n_items": 0, "counts": {}, "summary": "",
+            "status": "unavailable", "mapped_documents": 0,
+            "total_documents": 0, "failed_documents": [],
+        }
     counts = {
         "actors": len(ctx.actors),
         "entities": len(ctx.entities),
@@ -502,6 +510,10 @@ def _context_payload(project: str) -> dict:
         "n_items": sum(counts.values()),
         "counts": counts,
         "summary": ctx.to_prompt_section(),
+        "status": ctx.status,
+        "mapped_documents": ctx.mapped_documents,
+        "total_documents": ctx.total_documents,
+        "failed_documents": ctx.failed_documents,
     }
 
 
@@ -520,7 +532,7 @@ async def regenerate_context(project: str) -> dict:
     import hashlib
 
     import core.project_store as ps
-    from kb.context_summary import extract_project_context_async
+    from kb.context_summary import build_context_incremental_async
 
     # An LLM client is required — degrade with a clear 409 when unavailable
     # (matches the desktop "No LLM" warning) rather than silently no-op.
@@ -552,12 +564,20 @@ async def regenerate_context(project: str) -> dict:
         h.update((getattr(c, "text", "") or "").encode("utf-8", errors="replace"))
     fingerprint = h.hexdigest()[:16]
 
-    ctx = await extract_project_context_async(
+    paths = ps.ensure_project(project)
+    ctx = await build_context_incremental_async(
         kb_index=index,
         client=client,
         model=primary,
+        maps_dir=paths.context_maps_dir,
         kb_fingerprint=fingerprint,
+        force=True,
     )
+    if ctx.status == "partial":
+        raise HTTPException(
+            502,
+            f"Context mapping failed for {len(ctx.failed_documents)} document(s); previous complete summary preserved.",
+        )
     if not ctx.is_empty():
         await asyncio.to_thread(ps.write_context_summary, project, ctx)
 

@@ -44,7 +44,6 @@ to disk, NEVER included in any artifact or exception message.
 from __future__ import annotations
 
 import asyncio
-import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -175,43 +174,56 @@ async def _find_element(
 
     Returns (locator, winning_strategy). Raises RuntimeError if all fail.
     """
-    # Build ordered strategy list: preferred first
-    ordered = [preferred_strategy] + [
-        s for s in _STRATEGY_ORDER if s != preferred_strategy
-    ]
+    # Only use compatible fallbacks. Arbitrary target text must never be
+    # reinterpreted as CSS or a role; that can click the wrong control.
+    compatible: dict[str, tuple[str, ...]] = {
+        "role": ("role", "label", "text"),
+        "label": ("label", "placeholder", "text"),
+        "placeholder": ("placeholder", "label"),
+        "text": ("text",),
+        "test_id": ("test_id",),
+        "css": ("css",),
+    }
+    ordered = compatible.get(preferred_strategy, (preferred_strategy,))
+    deadline = time.monotonic() + timeout_ms / 1000
 
-    # 1) Try each strategy on the main frame
-    for strategy in ordered:
+    async def _unique_visible(root: Any, strategy: str) -> Any | None:
+        remaining_ms = max(100, int((deadline - time.monotonic()) * 1000))
+        if remaining_ms <= 100:
+            return None
+        loc = _build_locator(root, target, strategy)
         try:
-            loc = _build_locator(page, target, strategy)
-            await loc.wait_for(state="visible", timeout=timeout_ms // len(ordered))
-            return loc, strategy
+            await loc.first.wait_for(state="visible", timeout=min(remaining_ms, 1500))
+            visible = [i for i in range(await loc.count()) if await loc.nth(i).is_visible()]
         except Exception:
-            continue
+            return None
+        if len(visible) > 1:
+            raise RuntimeError(
+                f"Ambiguous locator [{strategy}:{target}] matched {len(visible)} visible elements"
+            )
+        return loc.nth(visible[0]) if visible else None
 
-    # 2) Walk iframes (1 level deep)
+    for strategy in ordered:
+        loc = await _unique_visible(page, strategy)
+        if loc is not None:
+            return loc, strategy
     for frame in page.frames:
         if frame == page.main_frame:
             continue
         for strategy in ordered:
-            try:
-                loc = _build_locator(frame, target, strategy)
-                await loc.wait_for(state="visible", timeout=2_000)
+            loc = await _unique_visible(frame, strategy)
+            if loc is not None:
                 return loc, f"iframe:{strategy}"
-            except Exception:
-                continue
-
-    # 3) Shadow DOM pierce (last resort)
-    try:
-        loc = _shadow_locator(page, target)
-        await loc.wait_for(state="visible", timeout=2_000)
-        return loc, "shadow"
-    except Exception:
-        pass
-
-    raise RuntimeError(
-        f"Element not found: [{target}] — tried {ordered} + iframe + shadow"
-    )
+    if preferred_strategy == "css" and time.monotonic() < deadline:
+        try:
+            loc = _shadow_locator(page, target)
+            await loc.wait_for(state="visible", timeout=min(1000, timeout_ms))
+            if await loc.count() != 1:
+                raise RuntimeError(f"Ambiguous shadow locator [css:{target}]")
+            return loc, "shadow"
+        except PwTimeout:
+            pass
+    raise RuntimeError(f"Element not found: [{preferred_strategy}:{target}]")
 
 
 # ---------------------------------------------------------------------------
@@ -321,14 +333,14 @@ async def _execute_step(
                 el_type = await loc.evaluate(
                     "el => (el.getAttribute('type') || '').toLowerCase()"
                 )
-                is_nav = tag == "a" or el_type in ("submit", "button")
-                await loc.click(timeout=ELEMENT_TIMEOUT_MS)
-                actual = f"Clicked [{target}] via [{winning_strategy}]"
+                href = await loc.get_attribute("href")
+                is_nav = bool(step.get("wait_for_navigation")) or tag == "a" and bool(href) or el_type == "submit"
                 if is_nav:
-                    try:
-                        await page.wait_for_load_state("commit", timeout=10_000)
-                    except Exception:
-                        pass
+                    async with page.expect_navigation(wait_until="commit", timeout=10_000):
+                        await loc.click(timeout=ELEMENT_TIMEOUT_MS)
+                else:
+                    await loc.click(timeout=ELEMENT_TIMEOUT_MS)
+                actual = f"Clicked [{target}] via [{winning_strategy}]"
 
             elif action == "type":
                 # Slower keystroke-by-keystroke fill (for autocomplete/masked fields)
@@ -479,8 +491,8 @@ async def _execute_step(
                 actual = f"Cleared [{target}] via [{winning_strategy}]"
 
             else:
-                status = "skip"
-                actual = f"Unknown action: [{action}] — step skipped"
+                status = "error"
+                actual = f"Unsupported action: [{action}]"
 
             # Success: break out of retry loop
             break
@@ -511,18 +523,20 @@ async def _execute_step(
             status = "error"
             actual = f"Error: {err_msg}"
 
-    # Take screenshot after every step (failure screenshots are most valuable)
-    try:
-        raw_path = screenshot_dir / f"step_{step_num:03d}.png"
-        await page.screenshot(path=str(raw_path), full_page=False)
-        screenshot_path = annotate_screenshot(
-            screenshot_path=raw_path,
-            step_num=step_num,
-            status=status,
-            label=f"{action}: {target}"[:60],
-        )
-    except Exception:
-        pass
+    # Failure evidence is captured here. A final TC screenshot is captured by
+    # the suite orchestrator; routine successful steps do not add disk I/O.
+    if status in ("fail", "error"):
+        try:
+            raw_path = screenshot_dir / f"step_{step_num:03d}.png"
+            await page.screenshot(path=str(raw_path), full_page=False)
+            screenshot_path = annotate_screenshot(
+                screenshot_path=raw_path,
+                step_num=step_num,
+                status=status,
+                label=f"{action}: {target}"[:60],
+            )
+        except Exception:
+            pass
 
     elapsed_ms = int((time.perf_counter_ns() - t0) / 1_000_000)
     return StepResult(
@@ -541,7 +555,7 @@ async def _execute_step(
 # Main orchestrator
 # ---------------------------------------------------------------------------
 
-async def run_e2e_tests(
+async def _run_e2e_tests_legacy(
     test_cases: list[dict[str, Any]],
     login_url: str,
     username: str,
@@ -732,5 +746,124 @@ async def run_e2e_tests(
 
     if on_progress:
         on_progress(total, total)
+    _log(f"[INFO] Run complete. {len(results)}/{total} test cases executed.")
+    return results
+
+
+async def run_e2e_tests(
+    test_cases: list[dict[str, Any]], login_url: str, username: str,
+    password: str, output_dir: Path, *, profile: BrowserProfile | None = None,
+    headless: bool = False, ai_instructions: str = "",
+    stop_fn: Callable[[], bool] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+    on_log: Callable[[str], None] | None = None,
+    on_screenshot: Callable[[Path, int, str], None] | None = None,
+    on_tc_done: Callable[[str, str], None] | None = None,
+) -> list[TestCaseResult]:
+    """Execute a validated suite through one reused CDP/browser session."""
+    del headless, ai_instructions
+    results: list[TestCaseResult] = []
+    total = len(test_cases)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    video_dir = output_dir / "suite_video"
+
+    def _log(message: str) -> None:
+        if on_log:
+            on_log(message)
+
+    try:
+        async with browser_session(profile=profile, output_dir=video_dir) as (_browser, page):
+            for tc_index, tc in enumerate(test_cases):
+                if stop_fn and stop_fn():
+                    _log("[WARN] Stop signal received. Aborting remaining test cases.")
+                    break
+                tc_id = str(tc.get("id", f"TC_{tc_index + 1:03d}"))
+                title = str(tc.get("title", "Untitled"))
+                steps = tc.get("steps") if isinstance(tc.get("steps"), list) else []
+                collector = ArtifactCollector(output_dir, tc_id)
+                started = time.perf_counter_ns()
+                step_results: list[StepResult] = []
+                _log(f"[INFO] ({tc_index + 1}/{total}) Starting: {tc_id} - {title}")
+                if on_progress:
+                    on_progress(tc_index, total)
+
+                if not steps:
+                    step_results.append(StepResult(
+                        step_num=0, action="plan", expected="Executable plan",
+                        actual=str(tc.get("plan_error", "Plan has no executable steps")),
+                        status="error",
+                    ))
+                else:
+                    first_action = str(steps[0].get("action", "")).lower()
+                    if first_action != "navigate":
+                        await page.goto(login_url, wait_until="domcontentloaded", timeout=NAVIGATE_TIMEOUT_MS)
+                    for step_num, step in enumerate(steps, 1):
+                        if stop_fn and stop_fn():
+                            step_results.append(StepResult(
+                                step_num=step_num, action=str(step.get("action", "")),
+                                expected=str(step.get("expected", "")),
+                                actual="Stopped by user", status="skip",
+                            ))
+                            break
+                        step_result = await _execute_step(
+                            page, step, username, password, collector.screenshot_dir,
+                            step_num, stop_fn=stop_fn,
+                        )
+                        step_results.append(step_result)
+                        if step_result.screenshot_path and on_screenshot:
+                            on_screenshot(step_result.screenshot_path, step_num, step_result.status)
+                        _log(
+                            f"  [{step_result.status.upper()}] Step {step_num}: "
+                            f"{step_result.action} -> {step_result.actual}"
+                        )
+                        if step_result.status in ("error", "fail") and step_result.action not in _SOFT_ACTIONS:
+                            break
+
+                statuses = {item.status for item in step_results}
+                executed = sum(item.status in ("pass", "fail", "error") for item in step_results)
+                overall = (
+                    "error" if executed == 0 or "error" in statuses
+                    else "fail" if "fail" in statuses
+                    else "pass"
+                )
+                try:
+                    final_path = collector.screenshot_dir / "final.png"
+                    await page.screenshot(path=str(final_path), full_page=False)
+                    if on_screenshot:
+                        on_screenshot(final_path, len(step_results), overall)
+                except Exception:
+                    pass
+                script = generate_playwright_script(
+                    tc_id=tc_id, title=title, steps=steps,
+                    login_url=login_url, username=username,
+                )
+                result = TestCaseResult(
+                    tc_id=tc_id, title=title, steps=step_results,
+                    script_path=collector.save_script(script, tc_id),
+                    overall_status=overall,
+                    duration_ms=int((time.perf_counter_ns() - started) / 1_000_000),
+                )
+                results.append(result)
+                if on_tc_done:
+                    on_tc_done(tc_id, overall)
+                _log(f"[{overall.upper()}] {tc_id} finished in {result.duration_ms}ms")
+    except Exception as exc:
+        message = _scrub(str(exc)[:300], password)
+        _log(f"[ERROR] Browser suite setup failed: {message}")
+        if not results:
+            results.append(TestCaseResult(
+                tc_id="suite", title="Browser suite setup",
+                steps=[StepResult(0, "setup", "Browser session started", message, "error")],
+                overall_status="error",
+            ))
+
+    # Video is finalized only after the shared context closes. Reuse the suite
+    # recording path in each TC result instead of copying an in-progress file.
+    videos = sorted(video_dir.glob("*.webm"), key=lambda path: path.stat().st_mtime)
+    if videos:
+        for result in results:
+            result.video_path = videos[-1]
+    if on_progress:
+        on_progress(len(results), total)
     _log(f"[INFO] Run complete. {len(results)}/{total} test cases executed.")
     return results
