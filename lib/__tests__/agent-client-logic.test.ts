@@ -32,6 +32,15 @@ describe("Windows installer console contract", () => {
     expect(payload).toContain("latest agent code could not be staged safely");
     expect(payload).not.toContain("coherent bundled version retained");
   });
+
+  it("generates control-character-free PowerShell paths", () => {
+    const worker = payload.slice(payload.indexOf("#PSBEGIN") + 9);
+    expect(worker).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/);
+    expect(worker).toContain(
+      "Join-Path (Join-Path (Join-Path $stage 'src') 'agent') 'version.py'"
+    );
+    expect(worker).not.toContain("srcagent");
+  });
 });
 
 describe("release version contract", () => {

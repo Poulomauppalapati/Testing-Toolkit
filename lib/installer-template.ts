@@ -587,12 +587,11 @@ try {
 
     # The release version is a hard coherence boundary. A manifest that omits
     # version.py, or a stale source ref, must never install or launch.
-    $stageVersionFile = Join-Path $stage 'src\agent\version.py'
-    if (-not (Test-Path $stageVersionFile)) { throw 'overlay is missing src/agent/version.py' }
-    $versionText = [IO.File]::ReadAllText($stageVersionFile)
-    $versionMatch = [regex]::Match($versionText, 'AGENT_VERSION\s*=\s*["'']([^"'']+)["'']')
-    if (-not $versionMatch.Success) { throw 'overlay version.py has no AGENT_VERSION' }
-    $stageVersion = $versionMatch.Groups[1].Value
+    $stageVersionFile = Join-Path (Join-Path (Join-Path $stage 'src') 'agent') 'version.py'
+    if (-not (Test-Path -LiteralPath $stageVersionFile)) { throw 'overlay is missing src/agent/version.py' }
+    $versionLine = Get-Content -LiteralPath $stageVersionFile | Where-Object { $_.StartsWith('AGENT_VERSION = "') } | Select-Object -First 1
+    if (-not $versionLine) { throw 'overlay version.py has no AGENT_VERSION' }
+    $stageVersion = ($versionLine -split '"')[1]
     if ($stageVersion -ne [string]$um.version) {
       throw ('overlay version mismatch: manifest=' + $um.version + ' source=' + $stageVersion)
     }
@@ -600,7 +599,7 @@ try {
     # Commit only after every source, requirement and wheel has downloaded and
     # validated. A transient GitHub failure therefore leaves the coherent base
     # bundle untouched instead of mixing new requirements with old wheels.
-    Copy-Item -Path (Join-Path $stage 'src\*') -Destination (Join-Path $dest 'src') -Recurse -Force
+    Get-ChildItem -LiteralPath (Join-Path $stage 'src') | Copy-Item -Destination (Join-Path $dest 'src') -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $stage 'install.py') -Destination (Join-Path $dest 'install.py') -Force
     if (Test-Path (Join-Path $stage 'requirements.txt')) {
       Copy-Item -LiteralPath (Join-Path $stage 'requirements.txt') -Destination (Join-Path $dest 'requirements.txt') -Force
