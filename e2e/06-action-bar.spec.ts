@@ -120,7 +120,7 @@ test.describe("Action bar dialogs (with project selected)", () => {
     const firstCheck = page.getByRole("checkbox").first();
     if (!(await firstCheck.isVisible().catch(() => false))) return;
     await firstCheck.check();
-    await expect(page.getByText(/work item\(s\) selected/)).toBeVisible();
+    await expect(page.getByText("1 selected").first()).toBeVisible();
 
     await page.getByRole("button", { name: "SIT", exact: true }).click();
     await expect(page.getByRole("button", { name: /AI Generate|Generating\.\.\./ })).toBeVisible();
