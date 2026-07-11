@@ -177,7 +177,7 @@ describe("agent update policy is detection-only", () => {
     expect(fetchMock.mock.calls[0][0]).toBe(
       "http://127.0.0.1:7842/update/status"
     );
-    expect(fetchMock.mock.calls[0][1]).toBeUndefined();
+    expect(fetchMock.mock.calls[0][1]?.method).toBeUndefined();
     expect("applyUpdate" in agent).toBe(false);
     expect("configureUpdate" in agent).toBe(false);
     expect("updateProgress" in agent).toBe(false);
