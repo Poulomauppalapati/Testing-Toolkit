@@ -1,7 +1,7 @@
 {
-  "version": "2.18.2",
+  "version": "2.19.0",
   "ref": "main",
-  "generatedAt": "2026-07-12T17:31:22.713Z",
+  "generatedAt": "2026-07-12T18:16:53.354Z",
   "files": [
     {
       "path": ".env.enc",
@@ -21,7 +21,7 @@
     {
       "path": "ado/boards.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/ado/boards.py?ref=main",
-      "hash": "921df7cebf663330e6b22f0139bd0279d4b1981821dd35eb11729f2dfb3fa4c1"
+      "hash": "f1f954441271ad4f0e4fd4bd4c8098617732a61fb0b6549ea6a7766878528719"
     },
     {
       "path": "ado/extract.py",
@@ -151,12 +151,12 @@
     {
       "path": "agent/updater.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/updater.py?ref=main",
-      "hash": "46b1aed3352c1f912e4ee50f4d8cb94d55b9c49f460354f40229c7ea0d719b8e"
+      "hash": "aafbccd05eba8af81286ecc6ebe332caa38aa8818ddfc09cafd89110a310bef4"
     },
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "4b8040c89f7eee7a9540f596e5e1d0e939c46ae4e4feb90a8459acb7eb862143"
+      "hash": "236bb879b4d784ed97c86419c9e10e95430d99580e816538ea5ee8aa16a23d25"
     },
     {
       "path": "automation/__init__.py",
@@ -226,7 +226,7 @@
     {
       "path": "core/app_config.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/app_config.py?ref=main",
-      "hash": "202b948e470632393407161d7896d1739142437a757cf4d30554fb576aba7aae"
+      "hash": "36d3162eb745eecd5dd70b80db91cb9ccfca67817fc14266024bd58352bb19bf"
     },
     {
       "path": "core/app_logging.py",
@@ -296,7 +296,7 @@
     {
       "path": "core/pat_store.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/pat_store.py?ref=main",
-      "hash": "c0aac3fb03921bdc7473b7ac49a7e85750cdb2f6f7ef715f24bfbb1342cbb628"
+      "hash": "0988363d08cb04dadbbd46c733b4aa69e8b61685bfb7493ad048870a69b75880"
     },
     {
       "path": "core/prefs_store.py",
@@ -326,7 +326,7 @@
     {
       "path": "core/settings_store.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/settings_store.py?ref=main",
-      "hash": "aacd73a273d46baf08e792fd73cbbfd4db6c9018cf03e044af7a8a3c5fda5a68"
+      "hash": "60eba22d48426d431d4219d25bdb061ab138eacfe89c8187ea9c2460cdeb1e2c"
     },
     {
       "path": "core/source_registry.py",
