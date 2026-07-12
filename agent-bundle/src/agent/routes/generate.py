@@ -364,7 +364,7 @@ async def _run_generate(job: Job, req: StartRequest) -> None:
             f"[INFO] Quality: avg score {quality.avg_score:.0f}/100, "
             f"{quality.below_threshold} TC(s) below threshold."
         )
-        for tc, qs in zip(flat_tcs, quality.scores):
+        for tc, qs in zip(flat_tcs, quality.scores, strict=True):
             if qs.overall < 60:
                 job.log(
                     f"[WARN] Low quality: \"{tc.get('title', 'Untitled')}\" "

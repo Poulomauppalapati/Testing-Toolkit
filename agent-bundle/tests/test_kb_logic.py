@@ -55,6 +55,18 @@ def test_hybrid_generations_publish_atomically(tmp_path: Path) -> None:
     assert current_reader.retrieve("beta", 1)[0].chunk_id == "new"
 
 
+def test_project_hybrid_builder_uses_supplied_project_root() -> None:
+    """Regression: the builder referenced an undefined `paths` variable and
+    crashed every non-empty KB rebuild before retrieval indexing began."""
+    import inspect
+
+    from core.project_store import _build_hybrid_from_index
+
+    source = inspect.getsource(_build_hybrid_from_index)
+    assert "densify_chunks(coarse, p.root)" in source
+    assert "densify_chunks(coarse, paths.root)" not in source
+
+
 # --------------------------------------------------------------------------
 # BM25
 # --------------------------------------------------------------------------

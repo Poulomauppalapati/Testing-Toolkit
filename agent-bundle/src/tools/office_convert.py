@@ -521,7 +521,7 @@ def _convert_docx(src: Path, out_pdf: Path, paper: str) -> None:
 
         return images
 
-    def _image_from_rid(r_id: str):
+    def _image_from_rid(r_id: str, document=document):
         """Given a relationship ID, extract the image and return a scaled Image flowable."""
         nonlocal img_counter
         try:

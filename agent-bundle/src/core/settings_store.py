@@ -14,10 +14,13 @@ import os
 import stat
 import sys
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from core.app_config import DEFAULT_PROJECT_PREFIX, SETTINGS_PATH
 from core.pat_store import load_pat, save_pat  # reused PAT storage
+
+if TYPE_CHECKING:
+    from core.runtime_config import RuntimeConfig
 
 # ---------------------------------------------------------------------
 # Machine-locked encryption (DPAPI on Windows, derived-key elsewhere)

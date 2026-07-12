@@ -256,20 +256,20 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                 # the loop or in a worker thread.
                 queue: asyncio.Queue[Any] = asyncio.Queue()
 
-                def _on_delta(chunk: str) -> None:
-                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+                def _on_delta(chunk: str, _queue=queue) -> None:
+                    loop.call_soon_threadsafe(_queue.put_nowait, chunk)
 
-                async def _run():
+                async def _run(_queue=queue, _on_delta_cb=_on_delta):
                     try:
                         return await client.stream_message_with_tools_async(
                             model=model,
                             messages=api_messages,
                             system=system,
                             tools=tools or None,
-                            on_text_delta=_on_delta,
+                            on_text_delta=_on_delta_cb,
                         )
                     finally:
-                        loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+                        loop.call_soon_threadsafe(_queue.put_nowait, _DONE)
 
                 task = asyncio.ensure_future(_run())
                 # Forward text chunks as they arrive.
