@@ -156,10 +156,17 @@ def run_doctor() -> dict[str, Any]:
         from kb.embeddings import embedding_backend_status
 
         ok, reason = embedding_backend_status()
+        detail = ""
+        if not ok:
+            try:
+                from core.app_config import credential_protection_detail
+                detail = (credential_protection_detail() or "").strip()
+            except Exception:
+                detail = ""
         _check(
             checks, "embedding_backend", "Dense embedding backend",
             _PASS if ok else _FAIL,
-            reason,
+            reason if not detail else f"{reason} [{detail}]",
             "" if ok else (
                 "The centrally managed AI credential is missing or unreadable. "
                 "Reinstall or update the Testing Toolkit agent; if it persists, "

@@ -44,30 +44,59 @@ def _parse_env_text(text: str) -> dict[str, str]:
 
 
 _CREDENTIAL_PROTECTION_STATE = "not-loaded"
+_CREDENTIAL_PROTECTION_DETAIL = ""
 
 
 def _load_env() -> dict[str, str]:
     """Authenticate the release envelope and prefer OS-bound rewrapped data."""
-    global _CREDENTIAL_PROTECTION_STATE
+    global _CREDENTIAL_PROTECTION_STATE, _CREDENTIAL_PROTECTION_DETAIL
     mei: str = getattr(sys, "_MEIPASS", "")
     base = Path(mei) if mei else Path(__file__).resolve().parent.parent
+    envelope_path = base / ".env.enc"
     try:
         from core.credential_store import load_release_credentials
 
-        values, state = load_release_credentials(base / ".env.enc")
+        values, state = load_release_credentials(envelope_path)
         _CREDENTIAL_PROTECTION_STATE = state
+        if not values:
+            # File present but empty result: record a non-secret reason so the
+            # installer self-test and Doctor report say WHY, not just "missing".
+            _CREDENTIAL_PROTECTION_DETAIL = (
+                "envelope missing" if not envelope_path.exists()
+                else f"loaded empty credential (state={state}) on {sys.platform}"
+            )
         return values
-    except Exception:
-        # Never include an exception here: crypto errors can contain input
-        # fragments in third-party implementations. Diagnostics expose only a
-        # non-secret state label.
+    except Exception as exc:
+        # Never surface a raw crypto exception: third-party implementations can
+        # embed input fragments. We DO record a non-secret shape (exception type
+        # + our own CredentialEnvelopeError message, which is designed to be
+        # secret-free) so Windows-specific failures are diagnosable from logs.
         _CREDENTIAL_PROTECTION_STATE = "unavailable"
+        detail = type(exc).__name__
+        try:
+            from core.credential_envelope import CredentialEnvelopeError
+
+            if isinstance(exc, CredentialEnvelopeError):
+                detail = f"{detail}: {exc}"
+        except Exception:
+            pass
+        _CREDENTIAL_PROTECTION_DETAIL = f"{detail} on {sys.platform}"
         return {}
 
 
 def credential_protection_state() -> str:
     """Return a non-secret diagnostic label for credential-at-rest strength."""
     return _CREDENTIAL_PROTECTION_STATE
+
+
+def credential_protection_detail() -> str:
+    """Return a non-secret human explanation when credential loading degrades.
+
+    Empty when the credential loaded cleanly. Safe to print in installer logs
+    and the Doctor report: it only contains exception type names, our own
+    envelope error messages, and the platform label - never key material.
+    """
+    return _CREDENTIAL_PROTECTION_DETAIL
 
 
 _ENV: Final[dict[str, str]] = _load_env()

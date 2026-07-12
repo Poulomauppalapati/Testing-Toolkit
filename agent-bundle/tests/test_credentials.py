@@ -141,6 +141,115 @@ def test_doctor_reports_managed_ai_without_obsolete_settings_instructions():
     assert "credential protection" in by_id["llm_gateway"]["detail"]
 
 
+def _simulate_windows(monkeypatch):
+    """Reproduce the Windows runtime: no os.fchmod, win32 platform, DPAPI stub.
+
+    os.fchmod is Unix-only, so on Windows referencing it raises AttributeError
+    (NOT OSError). This is the exact class of defect that passes on the Linux
+    build/test host and fails only on the user's machine.
+    """
+    import core.credential_store as store
+
+    monkeypatch.setattr(store.sys, "platform", "win32")
+    monkeypatch.delattr(os, "fchmod", raising=False)
+    monkeypatch.setattr(
+        store, "_dpapi_protect",
+        lambda data: (b"DPAPI\x00" + data) if data else None,
+    )
+    monkeypatch.setattr(
+        store, "_dpapi_unprotect",
+        lambda data: data[6:] if data and data.startswith(b"DPAPI\x00") else None,
+    )
+    return store
+
+
+def test_write_private_never_raises_without_fchmod(monkeypatch, tmp_path):
+    import core.credential_store as store
+
+    monkeypatch.delattr(os, "fchmod", raising=False)
+    target = tmp_path / ".credentials" / "genai.dpapi"
+    assert store._write_private(target, b"payload") is True
+    assert target.read_bytes() == b"payload"
+
+
+def test_windows_end_to_end_decrypts_and_persists_without_fchmod(monkeypatch, tmp_path):
+    """The full Windows path must reach a working state, never invalid/unavailable."""
+    store = _simulate_windows(monkeypatch)
+    monkeypatch.setenv("TT_WORKSPACE_DIR", str(tmp_path / "ws"))
+    path = tmp_path / ".env.enc"
+    path.write_bytes(seal_credentials(VALUES))
+
+    values, state = store.load_release_credentials(path)
+    assert values == VALUES
+    assert state == "os-bound"  # DPAPI stub + fixed _write_private now succeed
+
+    # Second load reads the cached OS-bound copy back (proves persistence works).
+    values2, state2 = store.load_release_credentials(path)
+    assert values2 == VALUES and state2 == "os-bound"
+
+
+def test_windows_persistence_failure_degrades_to_release_envelope(monkeypatch, tmp_path):
+    """If OS-bound caching fails on Windows, a working key must NOT be lost."""
+    store = _simulate_windows(monkeypatch)
+    monkeypatch.setattr(store, "_load_os_bound", lambda: None)
+    monkeypatch.setattr(store, "_write_private", lambda *a, **k: False)
+    path = tmp_path / ".env.enc"
+    path.write_bytes(seal_credentials(VALUES))
+
+    values, state = store.load_release_credentials(path)
+    assert values == VALUES
+    assert state == "release-envelope"
+
+
+def test_windows_save_exception_never_downgrades_to_unavailable(monkeypatch, tmp_path):
+    """Even an unexpected save exception keeps the decrypted credential usable."""
+    store = _simulate_windows(monkeypatch)
+    monkeypatch.setattr(store, "_load_os_bound", lambda: None)
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("simulated persistence fault")
+
+    monkeypatch.setattr(store, "_save_os_bound", _boom)
+    path = tmp_path / ".env.enc"
+    path.write_bytes(seal_credentials(VALUES))
+
+    values, state = store.load_release_credentials(path)
+    assert values == VALUES
+    assert state == "release-envelope"
+
+
+def test_app_config_records_nonsecret_detail_on_failure(monkeypatch):
+    import core.app_config as cfg
+    import core.credential_store as store
+    from core.credential_envelope import CredentialEnvelopeError
+
+    def _boom(_path):
+        raise CredentialEnvelopeError("credential envelope authentication failed")
+
+    monkeypatch.setattr(store, "load_release_credentials", _boom)
+    try:
+        assert cfg._load_env() == {}
+        assert cfg.credential_protection_state() == "unavailable"
+        detail = cfg.credential_protection_detail()
+        assert "CredentialEnvelopeError" in detail
+        assert "authentication failed" in detail
+        assert VALUES["API_KEY"] not in detail  # never leaks key material
+    finally:
+        monkeypatch.undo()
+        cfg._load_env()  # restore the real shipped state for other tests
+
+
+def test_app_config_detail_empty_when_credential_loads_cleanly():
+    import importlib
+
+    import core.app_config as cfg
+
+    importlib.reload(cfg)
+    assert cfg.LLM_API_KEY
+    assert cfg.credential_protection_state() in {"os-bound", "release-envelope"}
+    assert cfg.credential_protection_detail() == ""
+
+
 def test_log_redaction_removes_configured_values_and_token(monkeypatch):
     from core.app_logging import redact_secrets
 

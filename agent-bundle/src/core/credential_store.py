@@ -76,12 +76,23 @@ def _dpapi_unprotect(data: bytes) -> bytes | None:
 
 
 def _write_private(path: Path, data: bytes) -> bool:
+    # Must never raise: a persistence failure only means the credential is not
+    # cached OS-bound, and the caller then falls back to the (still fully
+    # functional) release-envelope state. Broad except is deliberate because
+    # os.fchmod does not exist on Windows (AttributeError, not OSError).
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
         temp = Path(temp_name)
         try:
-            os.fchmod(fd, 0o600)
+            # os.fchmod is Unix-only; POSIX perms are irrelevant on Windows where
+            # the file already lives in the per-user profile and the payload is
+            # DPAPI CurrentUser-bound.
+            if hasattr(os, "fchmod"):
+                try:
+                    os.fchmod(fd, 0o600)
+                except OSError:
+                    pass
             with os.fdopen(fd, "wb") as handle:
                 handle.write(data)
                 handle.flush()
@@ -94,7 +105,7 @@ def _write_private(path: Path, data: bytes) -> bool:
             return True
         finally:
             temp.unlink(missing_ok=True)
-    except OSError:
+    except Exception:
         return False
 
 
@@ -198,6 +209,12 @@ def load_release_credentials(envelope_path: Path) -> tuple[dict[str, str], str]:
             return stored[0], "os-bound-stale-release"
         return {}, "invalid-envelope"
 
-    if _save_os_bound(current, release_id):
-        return current, "os-bound"
+    # A decrypted credential is already fully usable. OS-bound caching is a
+    # best-effort hardening step; never let a persistence problem downgrade a
+    # working credential to "unavailable".
+    try:
+        if _save_os_bound(current, release_id):
+            return current, "os-bound"
+    except Exception:
+        pass
     return current, "release-envelope"

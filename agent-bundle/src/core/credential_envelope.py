@@ -172,7 +172,11 @@ def write_envelope_atomic(path: Path, data: bytes) -> None:
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     temp = Path(temp_name)
     try:
-        os.fchmod(fd, 0o600)
+        if hasattr(os, "fchmod"):  # Unix-only; skipped on Windows.
+            try:
+                os.fchmod(fd, 0o600)
+            except OSError:
+                pass
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
             handle.flush()
