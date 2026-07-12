@@ -782,15 +782,14 @@ def copy_tree(src: Path, dst: Path) -> None:
 
 
 def protect_release_credential(path: Path) -> None:
-    """Restrict the installed ciphertext before the agent can launch.
+    """Require and restrict the installed ciphertext before agent launch.
 
-    The file remains authenticated ciphertext; these ACLs are defense in depth.
-    Failure is non-fatal because the runtime can still authenticate the envelope,
-    but it is surfaced without printing any credential-derived data.
+    The centrally managed agent is not a valid installation without this
+    authenticated envelope. Failing here prevents a misleading successful
+    install whose UI later reports every API-backed capability unavailable.
     """
     if not path.is_file():
-        warn("Authenticated AI credential envelope is missing; AI features will be unavailable.")
-        return
+        raise RuntimeError("Authenticated AI credential envelope is missing from the installed agent.")
     try:
         path.chmod(0o600)
     except OSError:
@@ -1348,6 +1347,10 @@ def _run_import_selftest(launch_python: str, env: dict, workdir: Path) -> str:
         "import importlib;"
         "importlib.import_module('agent');"
         "importlib.import_module('agent.server');"
+        "cfg=importlib.import_module('core.app_config');"
+        "assert cfg.LLM_API_KEY, 'centrally managed AI credential is missing';"
+        "assert cfg.credential_protection_state() in ('os-bound','release-envelope'), "
+        "'centrally managed AI credential is unreadable: '+cfg.credential_protection_state();"
         "print('IMPORT_OK')"
     )
     try:

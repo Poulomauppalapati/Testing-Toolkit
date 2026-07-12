@@ -71,6 +71,12 @@ describe("Windows installer console contract", () => {
     expect(payload).not.toContain("Invoke-RestMethod -Uri $uri -Headers $headers -UseBasicParsing -OutFile $outFile");
   });
 
+  it("explicitly promotes the hidden AI credential envelope", () => {
+    expect(payload).toContain("Get-ChildItem -LiteralPath (Join-Path $stage 'src') -Force");
+    expect(payload).toContain("Copy-Item -LiteralPath $stageCredential -Destination $promotedCredential -Force");
+    expect(payload).toContain("authenticated AI credential envelope was not promoted");
+  });
+
   it("selects MCP binary payloads for the native Windows architecture", () => {
     expect(payload).toContain("RuntimeInformation]::OSArchitecture");
     expect(payload).toContain("$platformKey = 'win32-' + $archKey");

@@ -654,7 +654,20 @@ try {
     # Commit only after every source, requirement and wheel has downloaded and
     # validated. A transient GitHub failure therefore leaves the coherent base
     # bundle untouched instead of mixing new requirements with old wheels.
-    Get-ChildItem -LiteralPath (Join-Path $stage 'src') | Copy-Item -Destination (Join-Path $dest 'src') -Recurse -Force
+    #
+    # IMPORTANT: .env.enc is a dotfile and can carry the Hidden attribute on
+    # Windows. Get-ChildItem without -Force silently omitted it while promoting
+    # every visible source file, producing a current agent with no AI credential.
+    $stageCredential = Join-Path (Join-Path $stage 'src') '.env.enc'
+    if (-not (Test-Path -LiteralPath $stageCredential -PathType Leaf)) {
+      throw 'overlay is missing the authenticated AI credential envelope'
+    }
+    Get-ChildItem -LiteralPath (Join-Path $stage 'src') -Force | Copy-Item -Destination (Join-Path $dest 'src') -Recurse -Force
+    $promotedCredential = Join-Path (Join-Path $dest 'src') '.env.enc'
+    Copy-Item -LiteralPath $stageCredential -Destination $promotedCredential -Force
+    if (-not (Test-Path -LiteralPath $promotedCredential -PathType Leaf)) {
+      throw 'authenticated AI credential envelope was not promoted'
+    }
     Copy-Item -LiteralPath (Join-Path $stage 'install.py') -Destination (Join-Path $dest 'install.py') -Force
     if (Test-Path (Join-Path $stage 'requirements.txt')) {
       Copy-Item -LiteralPath (Join-Path $stage 'requirements.txt') -Destination (Join-Path $dest 'requirements.txt') -Force

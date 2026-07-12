@@ -302,6 +302,15 @@ def test_linux_autostart_quotes_paths_and_metacharacters():
     assert "WorkingDirectory='/home/a user/Testing Toolkit;false'" in unit
 
 
+def test_import_selftest_requires_managed_ai_credential():
+    """A release must not report install success when the hidden credential
+    was omitted or cannot be authenticated by the installed runtime."""
+    source = _INSTALL_PY.read_text(encoding="utf-8")
+    assert "assert cfg.LLM_API_KEY" in source
+    assert "credential_protection_state() in ('os-bound','release-envelope')" in source
+    assert "Authenticated AI credential envelope is missing from the installed agent" in source
+
+
 # --- source/binary drift guard --------------------------------------------
 def test_every_hard_requirement_has_a_bundled_wheel():
     """Every HARD dep in requirements.txt must have a wheel in the wheelhouse.

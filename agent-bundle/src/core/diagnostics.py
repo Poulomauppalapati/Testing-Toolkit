@@ -298,19 +298,32 @@ def run_doctor() -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         _check(checks, "disk", "Free disk space", _WARN, f"probe failed: {e!r}")
 
-    # --- Self-update wiring -------------------------------------------------
+    # --- Update detection wiring -------------------------------------------
+    # The updater is intentionally detection-only; never imply that a newer
+    # release was applied merely because the manifest URL is configured.
     try:
-        from agent.updater import resolve_manifest_url
+        from agent.updater import check_for_update
 
-        if resolve_manifest_url():
-            _check(checks, "updates", "Auto-update", _PASS, "configured")
+        update = check_for_update()
+        if update.get("update_available"):
+            _check(
+                checks, "updates", "Agent update", _WARN,
+                f"v{update.get('current')} is running; v{update.get('latest')} is available",
+                "Download and run the current installer to apply the update.",
+            )
+        elif update.get("reachable"):
+            _check(
+                checks, "updates", "Agent update", _PASS,
+                f"v{update.get('current')} is current",
+            )
         else:
-            _check(checks, "updates", "Auto-update", _WARN,
-                   "not configured yet",
-                   "The web app heals this automatically on next launch; no "
-                   "action needed.")
+            _check(
+                checks, "updates", "Agent update", _WARN,
+                "update server is not reachable",
+                "Check the network connection, then check for updates again.",
+            )
     except Exception as e:  # noqa: BLE001
-        _check(checks, "updates", "Auto-update", _WARN, f"probe failed: {e!r}")
+        _check(checks, "updates", "Agent update", _WARN, f"probe failed: {e!r}")
 
     # Overall = worst severity.
     severity = {_PASS: 0, _WARN: 1, _FAIL: 2}
