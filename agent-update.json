@@ -1,7 +1,7 @@
 {
-  "version": "2.16.4",
+  "version": "2.16.5",
   "ref": "main",
-  "generatedAt": "2026-07-12T07:45:48.904Z",
+  "generatedAt": "2026-07-12T07:53:40.849Z",
   "files": [
     {
       "path": ".env.enc",
@@ -126,7 +126,7 @@
     {
       "path": "agent/routes/settings.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/settings.py?ref=main",
-      "hash": "1dd2f42025a763f9c661711851e39d50f2e2e45efb546d699aba295809599fc6"
+      "hash": "e4edd540374ca4f9336bf0d6acce276d0693cd44c49e05bf29de16ba767e4bc7"
     },
     {
       "path": "agent/routes/sources.py",
@@ -156,7 +156,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "eef36a11097cd9811b187b678daa46b746436858ee122ae14fce5373e5d50bc7"
+      "hash": "f7a3ea4db550df72607d8e34bbfb5885b9cd958e76e92365e4122be6730b7f7e"
     },
     {
       "path": "automation/__init__.py",
