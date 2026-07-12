@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -104,6 +105,16 @@ def test_corrupt_rotation_preserves_last_os_bound_value(monkeypatch, tmp_path):
     assert state == "os-bound-stale-release"
 
 
+def test_shipped_release_envelope_authenticates_and_configures_ai():
+    """Release gate: never publish a malformed, stale, or empty AI envelope."""
+    release = Path(__file__).resolve().parents[1] / "src" / ".env.enc"
+    values = open_credentials(release.read_bytes())
+    assert values["BASE_URL"].startswith("https://")
+    assert len(values["API_KEY"]) >= 20
+    assert values["LLM_PROVIDER_FORMAT"] in {"anthropic", "openai"}
+    assert values["API_KEY"].encode() not in release.read_bytes()
+
+
 def test_secure_store_unavailable_uses_encrypted_release_only(monkeypatch, tmp_path):
     import core.credential_store as store
 
@@ -116,6 +127,18 @@ def test_secure_store_unavailable_uses_encrypted_release_only(monkeypatch, tmp_p
     assert values == VALUES
     assert state == "release-envelope"
     assert VALUES["API_KEY"].encode() not in path.read_bytes()
+
+
+def test_doctor_reports_managed_ai_without_obsolete_settings_instructions():
+    from core.diagnostics import run_doctor
+
+    report = run_doctor()
+    by_id = {check["id"]: check for check in report["checks"]}
+    for check_id in ("embedding_backend", "reranker", "llm_gateway", "ocr", "multimedia"):
+        assert by_id[check_id]["status"] == "pass"
+    rendered = json.dumps(report)
+    assert "Add an LLM API key" not in rendered
+    assert "credential protection" in by_id["llm_gateway"]["detail"]
 
 
 def test_log_redaction_removes_configured_values_and_token(monkeypatch):

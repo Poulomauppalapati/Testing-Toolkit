@@ -161,9 +161,9 @@ def run_doctor() -> dict[str, Any]:
             _PASS if ok else _FAIL,
             reason,
             "" if ok else (
-                "Ask the Testing Toolkit administrator to configure the "
-                "central AI service, or set TT_ENFORCE_DENSE=0 to run "
-                "lexical-only."
+                "The centrally managed AI credential is missing or unreadable. "
+                "Reinstall or update the Testing Toolkit agent; if it persists, "
+                "send the agent version and Doctor report to the administrator."
             ),
         )
     except Exception as e:  # noqa: BLE001
@@ -178,9 +178,12 @@ def run_doctor() -> dict[str, Any]:
         _check(
             checks, "reranker", "Cross-encoder reranker (API /rerank)",
             _PASS if ok else _WARN,
-            "gateway /rerank available" if ok
-            else "no API key configured",
-            "" if ok else "Add an LLM API key in Settings to enable reranking.",
+            "centrally managed gateway /rerank available" if ok
+            else "centrally managed AI credential unavailable",
+            "" if ok else (
+                "Update or reinstall the agent to restore the centrally managed "
+                "AI credential; users do not enter AI keys in Settings."
+            ),
         )
     except Exception as e:  # noqa: BLE001
         _check(checks, "reranker", "Cross-encoder reranker (API /rerank)", _WARN,
@@ -197,17 +200,22 @@ def run_doctor() -> dict[str, Any]:
         from core.settings_store import build_llm_client, has_api_key
 
         if not has_api_key():
-            _check(checks, "llm_gateway", "LLM gateway (AI API)", _WARN,
-                   "no API key configured",
-                   "Add an LLM API key + base URL in Settings.")
+            _check(
+                checks, "llm_gateway", "LLM gateway (AI API)", _WARN,
+                "centrally managed AI credential unavailable",
+                "Update or reinstall the agent. AI credentials are managed by "
+                "the Testing Toolkit administrator and are not entered in Settings.",
+            )
         else:
-            base = ""
-            try:
-                base = getattr(build_llm_client(), "base_url", "") or ""
-            except Exception:  # noqa: BLE001
-                base = ""
-            _check(checks, "llm_gateway", "LLM gateway (AI API)", _PASS,
-                   f"configured{f' ({base})' if base else ''}")
+            # Do not disclose the private gateway host or proxy path in a user-
+            # visible diagnostic. Credential state is enough to troubleshoot.
+            build_llm_client()
+            from core.app_config import credential_protection_state
+            protection = credential_protection_state()
+            _check(
+                checks, "llm_gateway", "LLM gateway (AI API)", _PASS,
+                f"centrally managed; credential protection: {protection}",
+            )
     except Exception as e:  # noqa: BLE001
         _check(checks, "llm_gateway", "LLM gateway (AI API)", _WARN,
                f"probe failed: {e!r}")
@@ -219,10 +227,10 @@ def run_doctor() -> dict[str, Any]:
         ok = bool(ocr_available())
         _check(checks, "ocr", "OCR (scanned PDFs / images)",
                _PASS if ok else _WARN,
-               "API OCR (gateway vision)" if ok
-               else "no API key configured",
-               "" if ok else "Add an LLM API key in Settings to enable OCR of "
-               "scanned PDFs and images.")
+               "API OCR (centrally managed gateway vision)" if ok
+               else "centrally managed AI credential unavailable",
+               "" if ok else "Update or reinstall the agent to restore OCR; "
+               "users do not enter AI keys in Settings.")
     except Exception as e:  # noqa: BLE001
         _check(checks, "ocr", "OCR (scanned PDFs / images)", _WARN,
                f"probe failed: {e!r}")
@@ -244,9 +252,12 @@ def run_doctor() -> dict[str, Any]:
                    "" if video else "Optional: install ffmpeg to also index "
                    "video files (audio track extraction).")
         else:
-            _check(checks, "multimedia", "Audio/video transcription", _WARN,
-                   "no API key configured",
-                   "Add an LLM API key in Settings to transcribe audio/video.")
+            _check(
+                checks, "multimedia", "Audio/video transcription", _WARN,
+                "centrally managed AI credential unavailable",
+                "Update or reinstall the agent to restore transcription; users "
+                "do not enter AI keys in Settings.",
+            )
     except Exception as e:  # noqa: BLE001
         _check(checks, "multimedia", "Audio/video transcription", _WARN,
                f"probe failed: {e!r}")

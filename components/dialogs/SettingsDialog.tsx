@@ -26,11 +26,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // Test ADO — verifies the ADO PAT AND the backend-managed AI API, matching
-  // the desktop "Test ADO" button ("Testing ADO + AI API connections...").
+  // Test ADO verifies both the user-provided ADO credentials and the centrally
+  // managed AI service. AI credentials are intentionally never entered here.
   const testAdo = async () => {
     setBusy(true);
-    setStatus("Testing ADO + AI API connections...");
+    setStatus("Testing ADO + centrally managed AI service...");
     try {
       await agent.saveSettings(toPayload(values));
       const [ado, llm] = await Promise.all([
@@ -39,7 +39,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       ]);
       const parts = [
         ado.ok ? "[OK] ADO connected" : `[FAIL] ADO: ${ado.detail}`,
-        llm.ok ? "[OK] AI API reachable" : `[FAIL] AI API: ${llm.detail}`,
+        llm.ok
+          ? "[OK] Managed AI service reachable"
+          : `[FAIL] Managed AI service: ${llm.detail}. Update or reinstall the agent; no AI key is entered in Settings.`,
       ];
       setStatus(parts.join("  ·  "));
     } catch (e) {
