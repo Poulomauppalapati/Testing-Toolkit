@@ -1,7 +1,7 @@
 {
-  "version": "2.16.8",
+  "version": "2.16.9",
   "ref": "main",
-  "generatedAt": "2026-07-12T09:09:07.586Z",
+  "generatedAt": "2026-07-12T09:20:46.010Z",
   "files": [
     {
       "path": ".env.enc",
@@ -76,7 +76,7 @@
     {
       "path": "agent/routes/chat.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/chat.py?ref=main",
-      "hash": "100d92580a6bf712d65a7f18f487db4e284ed08dcca22d58ef4c15048d7a1a8d"
+      "hash": "17d8396e5367144948cab4a4c4f0a07d3b719e77767961c9cedbb63176b7f37e"
     },
     {
       "path": "agent/routes/credentials.py",
@@ -96,7 +96,7 @@
     {
       "path": "agent/routes/generate.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/generate.py?ref=main",
-      "hash": "bf8b3ecd44dfb0603b8b8b56eda01519a2c47cbeec4b0de1b6299d24a9cf885b"
+      "hash": "ca6b9298749baf1ea7710f98b8849e67be1d0d3de5159a1fb5581ab6547ddc21"
     },
     {
       "path": "agent/routes/health.py",
@@ -156,7 +156,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "3ca518625fa9a35d2df1012d16f89adc8085075ca0465b782737c4910bffe4da"
+      "hash": "c7d1e06edf4cd727b2c7fcbe5f52196eaba82393b69965ae7f592abf9b4f148c"
     },
     {
       "path": "automation/__init__.py",
@@ -306,7 +306,7 @@
     {
       "path": "core/project_store.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/project_store.py?ref=main",
-      "hash": "0d410e0feb5e9501db50ea796b1232fd1ef05816a304d2f63a5b94525d084acf"
+      "hash": "dc96598324cc124fe9a6d2891ff6a2d9882e755622231c2bfa391349deef37fb"
     },
     {
       "path": "core/protocols.py",
@@ -321,7 +321,7 @@
     {
       "path": "core/settings_store.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/settings_store.py?ref=main",
-      "hash": "6e4f07666fcf06b75f86a94e83c6dbd48e38dfd640ac7eb2ef130e8de9e2f689"
+      "hash": "37a6ddecb7955de1936708bc85ae9ac59878adbec1628d31fa4d5c6acd18dab1"
     },
     {
       "path": "core/source_registry.py",
@@ -546,7 +546,7 @@
     {
       "path": "tools/office_convert.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/tools/office_convert.py?ref=main",
-      "hash": "5f652567fb53ac60425bba6e330dfae8043166591438286613e5f3840245ba76"
+      "hash": "a40536c239749e39e0bb969525167d6fe78eadfdc60fcf26c6b3f236a4917aaa"
     },
     {
       "path": "tools/pdf_packager.py",
