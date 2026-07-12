@@ -109,6 +109,9 @@ class WorkItemRow:
     tags: list[str] = field(default_factory=list)
     iteration_path: str = ""
     area_path: str = ""
+    # Count of linked Test Case work items (ADO "Tested By" relations). Filled
+    # by a relations pass after the grid fetch; 0 when none/unavailable.
+    test_case_count: int = 0
 
     @property
     def iteration_leaf(self) -> str:
@@ -454,6 +457,9 @@ async def load_board_view_async(
         if on_log:
             on_log(f"[INFO] WIQL matched {len(ids)} work item(s)")
         rows = await _fetch_rows(client, org, project, ids, cfg) if ids else []
+        if rows:
+            counts = await _fetch_test_case_counts(client, org, project, ids, cfg)
+            _apply_test_case_counts(rows, counts)
     return BoardView(columns=columns, rows=rows)
 
 
@@ -536,6 +542,62 @@ async def _fetch_rows_streaming(
     return rows
 
 
+_TESTED_BY_REL: Final[str] = "Microsoft.VSTS.Common.TestedBy-Forward"
+
+
+async def _fetch_test_case_counts(
+    client: httpx.AsyncClient, org: str, project: str,
+    ids: list[int], cfg: RuntimeConfig,
+) -> dict[int, int]:
+    """Count linked Test Case work items ("Tested By" relations) per work item.
+
+    Uses a separate workitemsbatch pass with $expand=relations (the batch API
+    does not allow combining `fields` and `$expand`). Best-effort: returns {}
+    on any error so the board still loads without the count column."""
+    counts: dict[int, int] = {}
+    if not ids:
+        return counts
+    url = (
+        f"https://dev.azure.com/{org}/{project}/_apis/wit/workitemsbatch"
+        f"?api-version={API_VER_WI}"
+    )
+    for start in range(0, len(ids), _BATCH_LIMIT):
+        batch_ids = ids[start:start + _BATCH_LIMIT]
+        body = {"ids": batch_ids, "$expand": "relations"}
+        for attempt in range(cfg.retry_count):
+            try:
+                r = await client.post(
+                    url, json=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                if r.status_code in (429, 503):
+                    await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                for wi in r.json().get("value", []) or []:
+                    wid = int(wi.get("id", 0) or 0)
+                    n = 0
+                    for rel in wi.get("relations", []) or []:
+                        if str(rel.get("rel", "")) == _TESTED_BY_REL:
+                            n += 1
+                    if wid and n:
+                        counts[wid] = n
+                break
+            except (httpx.HTTPError, _ssl.SSLError):
+                await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
+        # On exhausted retries just skip this batch (best-effort).
+    return counts
+
+
+def _apply_test_case_counts(
+    rows: list["WorkItemRow"], counts: dict[int, int],
+) -> None:
+    if not counts:
+        return
+    for row in rows:
+        row.test_case_count = counts.get(row.wi_id, 0)
+
+
 async def load_board_view_streaming(
     org: str, project: str, board: "Board", cfg: RuntimeConfig,
     scope_to_team_area: bool = True,
@@ -570,6 +632,14 @@ async def load_board_view_streaming(
             )
             if ids else []
         )
+        if rows:
+            counts = await _fetch_test_case_counts(client, org, project, ids, cfg)
+            _apply_test_case_counts(rows, counts)
+            if on_log and counts:
+                on_log(
+                    f"[INFO] Linked test cases found on "
+                    f"{len(counts)} work item(s)"
+                )
     return BoardView(columns=columns, rows=rows)
 
 

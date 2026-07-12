@@ -21,7 +21,7 @@ import {
   NO_ITER,
   UNASSIGNED,
   groupRowsByColumn,
-  coveredWorkItemIds,
+  testCaseCountsByWorkItem,
   uniqueSorted,
 } from "@/lib/board-utils";
 import { DetailPane } from "./DetailPane";
@@ -85,8 +85,8 @@ export function BoardGrid() {
     { refreshInterval: 60_000, revalidateOnFocus: false, shouldRetryOnError: false }
   );
 
-  const coveredSet = useMemo(
-    () => coveredWorkItemIds(rows, testCases ?? []),
+  const testCounts = useMemo(
+    () => testCaseCountsByWorkItem(rows, testCases ?? []),
     [rows, testCases]
   );
   const hasCoverageData = testCases !== undefined;
@@ -269,7 +269,7 @@ export function BoardGrid() {
                   <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold">State</th>
                   <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold">Assignee</th>
                   <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold">Sprint</th>
-                  <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold" title="Whether runnable generated test cases currently trace to this work item">Generated Tests</th>
+                  <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold" title="Total test cases traced to this work item: tool-generated plus those already linked in the tracker (ADO 'Tested By' / JIRA test links)">Generated Tests</th>
                   <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold">Last Run</th>
                 </tr>
               </thead>
@@ -289,7 +289,7 @@ export function BoardGrid() {
                       someChecked={someChecked}
                       selected={selected}
                       activeWiId={activeWiId}
-                      coveredSet={coveredSet}
+                      testCounts={testCounts}
                       hasCoverageData={hasCoverageData}
                       runStatus={runStatus}
                       hasRunData={hasRunData}
@@ -373,21 +373,27 @@ function titleTypeColor(t: string): string {
   return "var(--tt-text-primary)";
 }
 
-  /** Generation traceability only; execution status remains in Last Run. */
+  /**
+   * Total test cases traced to a work item: tool-generated + linked in the
+   * tracker (ADO "Tested By" / JIRA test links). Execution status remains in
+   * Last Run.
+   */
   function CoverageCell({
-  covered,
+  count,
   hasData,
   }: {
-  covered: boolean;
+  count: number;
   hasData: boolean;
   }) {
+  if (count > 0)
+  return (
+  <span style={{ color: "var(--tt-success)" }}>
+  {count} {count === 1 ? "test" : "tests"}
+  </span>
+  );
   if (!hasData)
   return <span style={{ color: "var(--tt-text-faint)" }}>—</span>;
-  return covered ? (
-  <span style={{ color: "var(--tt-success)" }}>Generated</span>
-  ) : (
-  <span style={{ color: "var(--tt-text-muted)" }}>None</span>
-  );
+  return <span style={{ color: "var(--tt-text-muted)" }}>None</span>;
   }
 
 /** Last-Run cell — "Pass" (green) / "Fail" (red) / "-" (no result). */
@@ -422,7 +428,7 @@ function LaneGroup({
   someChecked,
   selected,
   activeWiId,
-  coveredSet,
+  testCounts,
   hasCoverageData,
   runStatus,
   hasRunData,
@@ -436,7 +442,7 @@ function LaneGroup({
   someChecked: boolean;
   selected: Set<WiId>;
   activeWiId: WiId | null;
-  coveredSet: Set<string>;
+  testCounts: Map<string, number>;
   hasCoverageData: boolean;
   runStatus: Map<string, "pass" | "fail">;
   hasRunData: boolean;
@@ -542,7 +548,7 @@ function LaneGroup({
               title="Runnable generated test cases traced to this work item"
             >
               <CoverageCell
-                covered={coveredSet.has(String(r.wi_id))}
+                count={testCounts.get(String(r.wi_id)) ?? 0}
                 hasData={hasCoverageData}
               />
             </td>

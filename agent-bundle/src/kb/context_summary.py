@@ -158,6 +158,39 @@ def _normalize_name(value: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9]+", " ", value.lower()).split())
 
 
+# Cap the accumulated description per item so a term that appears in 100+
+# documents does not balloon into a wall of near-identical sentences.
+_MAX_DESC_CHARS: Final[int] = 600
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split a description into trimmed sentence-like fragments for dedup."""
+    parts = re.split(r"(?<=[.!?;])\s+|\n+", text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _dedup_merge_description(existing: str, incoming: str) -> str:
+    """Append only sentences from `incoming` whose normalized form is not
+    already represented in `existing` (case/whitespace/punctuation-insensitive),
+    capping the total length so repeated documents cannot inflate the summary."""
+    if not incoming:
+        return existing
+    if not existing:
+        kept = _split_sentences(incoming)
+    else:
+        seen = {_normalize_name(s) for s in _split_sentences(existing)}
+        kept = _split_sentences(existing)
+        for sentence in _split_sentences(incoming):
+            norm = _normalize_name(sentence)
+            if norm and norm not in seen:
+                seen.add(norm)
+                kept.append(sentence)
+    out = " ".join(kept).strip()
+    if len(out) > _MAX_DESC_CHARS:
+        out = out[:_MAX_DESC_CHARS].rstrip() + "…"
+    return out
+
+
 def merge_context_maps(maps: list[ProjectContext], fingerprint: str) -> ProjectContext:
     merged: dict[str, dict[str, ContextItem]] = {category: {} for category in CATEGORIES}
     for context in maps:
@@ -168,10 +201,15 @@ def merge_context_maps(maps: list[ProjectContext], fingerprint: str) -> ProjectC
                     continue
                 existing = merged[category].get(key)
                 if existing is None:
-                    merged[category][key] = ContextItem(item.name, item.description, sorted(set(item.sources)))
+                    merged[category][key] = ContextItem(
+                        item.name,
+                        _dedup_merge_description("", item.description),
+                        sorted(set(item.sources)),
+                    )
                     continue
-                if item.description and item.description not in existing.description:
-                    existing.description = f"{existing.description} {item.description}".strip()
+                existing.description = _dedup_merge_description(
+                    existing.description, item.description
+                )
                 existing.sources = sorted(set(existing.sources + item.sources))
     values = {category: sorted(items.values(), key=lambda item: item.name.lower()) for category, items in merged.items()}
     enabled = all(context.enabled for context in maps) if maps else True

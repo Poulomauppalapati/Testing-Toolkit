@@ -38,6 +38,9 @@ class JiraIssue:
     priority: str
     sprint: str
     labels: list[str] = field(default_factory=list)
+    # Count of linked Test issues (issue links whose target is a Test/Test Case
+    # issue type or whose link type mentions "test"). 0 when none/unavailable.
+    test_case_count: int = 0
 
 
 # ------------------------------------------------------------------
@@ -86,6 +89,19 @@ def _parse_issue(raw: dict[str, Any]) -> JiraIssue:
     labels = fields.get("labels") or []
     issue_type_obj = fields.get("issuetype") or {}
     status_obj = fields.get("status") or {}
+    # Count linked Test issues: an issuelink whose linked issue is a Test /
+    # Test Case type, or whose link type name mentions "test" (e.g. "Tests").
+    test_links = 0
+    for link in fields.get("issuelinks") or []:
+        if not isinstance(link, dict):
+            continue
+        link_type = str((link.get("type") or {}).get("name", "")).lower()
+        linked = link.get("inwardIssue") or link.get("outwardIssue") or {}
+        linked_type = str(
+            ((linked.get("fields") or {}).get("issuetype") or {}).get("name", "")
+        ).lower()
+        if "test" in linked_type or "test" in link_type:
+            test_links += 1
     return JiraIssue(
         key=str(raw.get("key", "")),
         issue_id=int(raw.get("id", 0) or 0),
@@ -102,6 +118,7 @@ def _parse_issue(raw: dict[str, Any]) -> JiraIssue:
         priority=priority_name,
         sprint=sprint_name,
         labels=list(labels),
+        test_case_count=test_links,
     )
 
 
@@ -209,7 +226,7 @@ async def search_issues(
     page_size = min(max_results, 100)
     fields_requested = [
         "summary", "issuetype", "status", "assignee",
-        "priority", "labels", "sprint",
+        "priority", "labels", "sprint", "issuelinks",
     ]
     try:
         async with _client(url, user, pat, cfg) as client:

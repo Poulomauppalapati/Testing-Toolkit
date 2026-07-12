@@ -236,6 +236,8 @@ export interface WorkItemRow {
   iteration_path: string;
   iteration_leaf?: string;
   area_path: string;
+  /** Count of linked Test Case work items (ADO "Tested By" / JIRA test links). */
+  linked_test_case_count?: number;
 }
 
 export interface BoardView {

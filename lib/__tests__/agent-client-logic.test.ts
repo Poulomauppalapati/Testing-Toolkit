@@ -8,7 +8,7 @@ import {
   agent,
 } from "../agent-client";
 import type { WorkItemRow } from "../agent-client";
-import { coveredWorkItemIds, userStoryIds } from "../board-utils";
+  import { coveredWorkItemIds, testCaseCountsByWorkItem, userStoryIds } from "../board-utils";
 import { humanSize } from "../../components/ui/download-links";
 import { ErrorBoundary } from "../../components/ui/error-boundary";
 import { toPayload } from "../../components/dialogs/ConnectionFields";
@@ -192,6 +192,34 @@ describe("board coverage traceability", () => {
       { wi_id: "1536942", step_count: 2 },
     ] as never[]);
     expect([...covered]).toEqual(["1536942"]);
+  });
+});
+
+describe("testCaseCountsByWorkItem (Generated Tests column)", () => {
+  it("sums tool-generated and tracker-linked test cases per work item", () => {
+    const rows = [
+      { wi_id: 1536952, linked_test_case_count: 6 },
+      { wi_id: 1536939, linked_test_case_count: 0 },
+      { wi_id: 1536942 },
+    ] as WorkItemRow[];
+    const counts = testCaseCountsByWorkItem(rows, [
+      // Two tool-generated with steps for 1536952 -> 2 + 6 linked = 8.
+      { wi_id: "1536952", step_count: 3 },
+      { wi_id: "1536952", step_count: 5 },
+      // Stepless generated is ignored.
+      { wi_id: "1536939", step_count: 0 },
+      // Generated-only for 1536942 -> 1.
+      { wi_id: "1536942", step_count: 4 },
+    ] as never[]);
+    expect(counts.get("1536952")).toBe(8);
+    expect(counts.get("1536942")).toBe(1);
+    expect(counts.has("1536939")).toBe(false);
+  });
+
+  it("counts tracker-linked test cases even without any generated ones", () => {
+    const rows = [{ wi_id: "PROJ-1", linked_test_case_count: 3 }] as WorkItemRow[];
+    const counts = testCaseCountsByWorkItem(rows, [] as never[]);
+    expect(counts.get("PROJ-1")).toBe(3);
   });
 });
 

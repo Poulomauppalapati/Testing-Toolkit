@@ -120,6 +120,7 @@ def _issue_row(iss) -> dict[str, Any]:
         "iteration_path": iss.sprint,
         "iteration_leaf": iss.sprint,
         "area_path": "",
+        "linked_test_case_count": getattr(iss, "test_case_count", 0),
     }
 
 

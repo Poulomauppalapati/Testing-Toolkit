@@ -137,6 +137,7 @@ async def list_work_items(req: WorkItemsRequest) -> dict[str, Any]:
             "iteration_path": r.iteration_path,
             "iteration_leaf": r.iteration_leaf,
             "area_path": r.area_path,
+            "linked_test_case_count": getattr(r, "test_case_count", 0),
         }
 
     groups = [
@@ -163,6 +164,7 @@ def _serialize_row(r) -> dict[str, Any]:
         "iteration_path": r.iteration_path,
         "iteration_leaf": r.iteration_leaf,
         "area_path": r.area_path,
+        "linked_test_case_count": getattr(r, "test_case_count", 0),
     }
 
 
