@@ -740,33 +740,49 @@ try {
     # it works. The offline dependency install and agent self-test legitimately
     # take several minutes; a blocking call with redirected output made the
     # console look frozen. We tail the installer's own log so the user sees the
-    # CURRENT activity + an elapsed timer + a spinner, and the trace log gets a
+    # CURRENT activity + an elapsed timer + an animated bar, and the trace log gets a
     # [PROGRESS] line every 10s so support sees forward motion too.
     $code = $null
     try {
       New-Item -ItemType File -Force -Path $pythonLog | Out-Null
       $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/c "' + $installCmd + '"') -WorkingDirectory $dest -NoNewWindow -PassThru -RedirectStandardOutput $pythonLog -RedirectStandardError $pythonErr
       $sw = [System.Diagnostics.Stopwatch]::StartNew()
-      $spin = @('|','/','-','\\')
-      $si = 0
+      # This step is an opaque child process with no knowable total, so we render
+      # an INDETERMINATE bar in the same [####] bracket style as the other steps:
+      # a block that sweeps across the track (like an activity/tqdm bar). Honest
+      # about progress while giving the visual bar users expect.
+      $barW = 28
+      $blk = 6
+      $pos = 0
+      $dir = 1
+      $step = 0
       $lastTrace = -1
       $lastActivity = 'starting offline installer'
       while (-not $proc.HasExited) {
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds 250
         try {
           $tail = Get-Content -LiteralPath $pythonLog -Tail 1 -ErrorAction SilentlyContinue
           if ($tail) { $t = ([string]$tail).Trim(); if ($t) { $lastActivity = $t } }
         } catch {}
         $elapsed = [int]$sw.Elapsed.TotalSeconds
-        $c = $spin[$si % $spin.Count]; $si++
+        # Advance the sweeping block and bounce it off both ends of the track.
+        $pos += $dir
+        if ($pos -le 0) { $pos = 0; $dir = 1 }
+        elseif ($pos -ge ($barW - $blk)) { $pos = $barW - $blk; $dir = -1 }
+        $bar = ('-' * $pos) + ('#' * $blk) + ('-' * ($barW - $blk - $pos))
         $label = ($lastActivity -replace '\\s+', ' ')
-        if ($label.Length -gt 44) { $label = $label.Substring(0, 41) + '...' }
+        if ($label.Length -gt 40) { $label = $label.Substring(0, 37) + '...' }
         $mm = [int]($elapsed / 60); $ss = $elapsed % 60
-        Write-Host -NoNewline ("\`r    [{0}] {1:D2}:{2:D2} elapsed  {3,-46}" -f $c, $mm, $ss, $label)
+        Write-Host -NoNewline ("\`r    [{0}] {1:D2}:{2:D2} elapsed  {3,-42}" -f $bar, $mm, $ss, $label) -ForegroundColor Cyan
+        $step++
         if ($elapsed -ne $lastTrace -and ($elapsed % 10) -eq 0) {
           $lastTrace = $elapsed
           Trace 'PROGRESS' ('installing/verifying agent - ' + $mm.ToString('00') + ':' + $ss.ToString('00') + ' elapsed - ' + $label)
         }
+      }
+      # Snap the bar to a full [############] on success so it reads as complete.
+      if ($proc.ExitCode -eq 0) {
+        Write-Host -NoNewline ("\`r    [{0}] done  {1,-48}" -f ('#' * $barW), 'agent installed and verified') -ForegroundColor Cyan
       }
       Write-Host ""
       $code = $proc.ExitCode

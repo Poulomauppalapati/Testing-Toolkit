@@ -61,6 +61,10 @@ describe("Windows installer console contract", () => {
     expect(payload).toContain("while (-not $proc.HasExited)");
     expect(payload).toContain("Get-Content -LiteralPath $pythonLog -Tail 1");
     expect(payload).toContain("elapsed");
+    // The step renders an animated [####] bar (indeterminate sweep) matching the
+    // other steps' bar style, and snaps to a full bar on success.
+    expect(payload).toContain("$bar = ('-' * $pos) + ('#' * $blk) + ('-' * ($barW - $blk - $pos))");
+    expect(payload).toContain("('#' * $barW)");
     // Python output must be unbuffered or the tail would show nothing live.
     expect(payload).toContain("$env:PYTHONUNBUFFERED = '1'");
     // A periodic PROGRESS trace so the log also shows forward motion.
