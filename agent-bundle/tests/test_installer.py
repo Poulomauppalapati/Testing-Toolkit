@@ -302,13 +302,12 @@ def test_linux_autostart_quotes_paths_and_metacharacters():
     assert "WorkingDirectory='/home/a user/Testing Toolkit;false'" in unit
 
 
-def test_import_selftest_requires_managed_ai_credential():
-    """A release must not report install success when the hidden credential
-    was omitted or cannot be authenticated by the installed runtime."""
+def test_import_selftest_never_blocks_core_agent_on_ai_credentials():
+    """AI configuration failures must remain diagnosable after agent startup."""
     source = _INSTALL_PY.read_text(encoding="utf-8")
-    assert "assert cfg.LLM_API_KEY" in source
-    assert "credential_protection_state() in ('os-bound','release-envelope')" in source
-    assert "Authenticated AI credential envelope is missing from the installed agent" in source
+    assert "importlib.import_module('agent.server')" in source
+    assert "assert cfg.LLM_API_KEY" not in source
+    assert "AI features will be unavailable" in source
 
 
 # --- source/binary drift guard --------------------------------------------
