@@ -289,6 +289,47 @@ function DocumentsSection({
     setBusy(false);
   };
 
+  const forceClear = async () => {
+    if (!project) return;
+    const wipeDocs = window.confirm(
+      "Force-clear the knowledge base?\n\n" +
+        "This immediately stops any in-progress indexing or context mapping and " +
+        "deletes the index, vectors, and project context.\n\n" +
+        "Click OK to ALSO delete all uploaded documents (full wipe), or Cancel " +
+        "to keep the documents and clear only the derived index."
+    );
+    // OK -> full wipe (remove documents); Cancel -> keep documents, clear index.
+    // Either branch is still a force-clear — the user explicitly asked to be
+    // able to terminate at any time, so there is no "do nothing" path here.
+    const keepDocuments = !wipeDocs;
+    setBusy(true);
+    // Optimistically stop local progress UI so it doesn't look stuck.
+    setIndexing(false);
+    setIndexProgress("");
+    setIndexPct(null);
+    setContextRunning(false);
+    setContextProgress("");
+    setContextPct(null);
+    pushLog("WARN", "Force-clearing knowledge base...");
+    try {
+      const r = await agent.clearKb(project, keepDocuments);
+      clearKbDirty();
+      setSelectedDocs(new Set());
+      if (!keepDocuments) clearKbUploads();
+      pushLog(
+        "SUCCESS",
+        `Knowledge base cleared${
+          r.stopped_jobs.length ? ` (stopped ${r.stopped_jobs.length} job(s))` : ""
+        }${keepDocuments ? " — documents kept" : ""}.`
+      );
+      refresh();
+    } catch (e) {
+      pushLog("ERROR", `Force-clear failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const upload = async (files: FileList | null) => {
     if (!files || !project || files.length === 0) return;
     // Hand the batch to app-level state: it shows the files immediately, keeps
@@ -385,6 +426,16 @@ function DocumentsSection({
         >
           <RefreshCw className={`h-3.5 w-3.5 ${indexing ? "animate-spin" : ""}`} />{" "}
           Rebuild index
+        </button>
+        {/* Force-clear stays enabled even mid-index so it can terminate a
+            stuck/running job and wipe the KB at any point. */}
+        <button
+          className="tt-btn-ghost !px-3 !py-1.5 text-xs !text-[var(--tt-danger)]"
+          disabled={busy || !project}
+          onClick={forceClear}
+          title="Stop any running indexing and wipe the knowledge base (force clear)"
+        >
+          <Trash2 className="h-3.5 w-3.5" /> Force clear
         </button>
         <input
           ref={fileRef}

@@ -527,6 +527,31 @@ async def delete_document(project: str, name: str) -> dict:
     return {"ok": True, "changed": name}
 
 
+@router.post("/clear/{project}")
+async def clear_kb(project: str, keep_documents: bool = False) -> dict:
+    """Force-clear a project's knowledge base at ANY point, regardless of
+    progress. Requests a stop on any in-flight KB indexing and project-context
+    jobs, then wipes the index, dense vector store, context summary, and context
+    maps. By default the uploaded source documents are removed too; pass
+    ``keep_documents=true`` to keep the files and only drop the derived index.
+
+    This is a hard terminate + wipe (a "force kill"), not a graceful rebuild."""
+    from agent.jobs import JOBS
+    import core.project_store as ps
+
+    stopped: list[str] = []
+    for kind in ("kb_index", "kb_context"):
+        job = JOBS.find_active(kind, project)
+        if job is not None:
+            job.request_stop()
+            job.log("[WARN] KB force-clear requested — stopping this job.")
+            stopped.append(job.id)
+
+    result = await asyncio.to_thread(ps.clear_kb, project, keep_documents=keep_documents)
+    result["stopped_jobs"] = stopped
+    return result
+
+
 # ---------------------------------------------------------------------
 # Per-phase test-script templates (desktop project KB dialog parity)
 # ---------------------------------------------------------------------

@@ -1294,6 +1294,19 @@ export const agent = {
     );
   },
 
+  /** Force-clear a project's KB at any point: stops any running index/context
+   *  jobs and wipes the index, vectors, context summary, and (by default) the
+   *  uploaded documents. Pass keepDocuments to drop only the derived index. */
+  async clearKb(
+    project: string,
+    keepDocuments = false
+  ): Promise<{ cleared: string[]; kept_documents: boolean; stopped_jobs: string[] }> {
+    return agentFetch(
+      `/kb/clear/${encodeURIComponent(project)}?keep_documents=${keepDocuments}`,
+      { method: "POST" }
+    );
+  },
+
   // -- Per-phase test-script templates --
   async templateStatus(
     project: string,

@@ -1,19 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import {
-  HelpCircle,
-  Settings,
-  Brain,
-  KeyRound,
-  ChevronLeft,
-  Sun,
-  Moon,
-  RefreshCw,
-  RefreshCcw,
-  LayoutDashboard,
-  KanbanSquare,
-} from "lucide-react";
+import { RefreshCw, LayoutDashboard, KanbanSquare } from "lucide-react";
 
 import { useAppState } from "@/lib/app-state";
 import { useTheme } from "@/lib/theme";
@@ -22,6 +10,8 @@ import { agent } from "@/lib/agent-client";
 import { getPreferences, setSizePref } from "@/lib/preferences";
 import { ResizeHandle } from "@/components/ui/resizer";
 import { useAppUpdate } from "@/lib/use-app-update";
+import { SourceLogo } from "@/components/ui/source-logo";
+import { projectSourceType } from "@/lib/board-utils";
 
 export function NavPanel() {
   const {
@@ -39,6 +29,7 @@ export function NavPanel() {
     setLogVisible,
     pushLog,
     boardView,
+    settings,
   } = useAppState();
 
   const { theme, toggleTheme } = useTheme();
@@ -88,6 +79,10 @@ export function NavPanel() {
               projects.map((full) => {
                 const name = displayName(full);
                 const isSelected = full === currentProject;
+                const source = projectSourceType(full, {
+                  jiraConfigured: settings?.jira_configured,
+                  adoConfigured: settings?.ado_configured,
+                });
                 return (
                   <div
                     key={full}
@@ -105,6 +100,8 @@ export function NavPanel() {
                     className="tt-list-item flex items-center gap-2 text-sm"
                     title={full}
                   >
+                    {/* Work-item source brand mark (Azure DevOps / Jira) */}
+                    <SourceLogo source={source} size={18} />
                     <span className="truncate">{name}</span>
                     {isSelected && (
                       <LayoutDashboard className="ml-auto h-3 w-3 shrink-0 opacity-60" />
@@ -199,7 +196,6 @@ export function NavPanel() {
                 ref={ref}
                 onClick={toggle}
                 title="Help & About"
-                icon={<HelpCircle className="h-3.5 w-3.5" strokeWidth={2} />}
                 label="Help"
               />
             )}
@@ -207,53 +203,36 @@ export function NavPanel() {
           <NavLabelBtn
             title="Settings"
             onClick={() => openDialog("settings")}
-            icon={<Settings className="h-3.5 w-3.5" strokeWidth={2} />}
             label="Settings"
           />
           <NavLabelBtn
             title="Project Knowledge Base"
             disabled={!currentProject}
             onClick={() => openDialog("kb")}
-            icon={<Brain className="h-3.5 w-3.5" strokeWidth={2} />}
             label="Project KB"
           />
           <NavLabelBtn
             title="Manage encrypted test-environment credentials for E2E automation"
             disabled={!currentProject}
             onClick={() => openDialog("credentials")}
-            icon={<KeyRound className="h-3.5 w-3.5" strokeWidth={2} />}
             label="Credentials"
           />
           <NavLabelBtn
             title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
             aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
             onClick={toggleTheme}
-            icon={
-              theme === "dark" ? (
-                <Sun className="h-3.5 w-3.5" strokeWidth={2} />
-              ) : (
-                <Moon className="h-3.5 w-3.5" strokeWidth={2} />
-              )
-            }
             label={theme === "dark" ? "Light" : "Dark"}
           />
           <NavLabelBtn
             title="Check for updates"
             disabled={updateBusy}
             onClick={() => void onUpdateClick()}
-            icon={
-              <RefreshCcw
-                className={`h-3.5 w-3.5 ${updateBusy ? "animate-spin" : ""}`}
-                strokeWidth={2}
-              />
-            }
-            label="Update"
+            label={updateBusy ? "Checking..." : "Update"}
           />
           <div className="col-span-full">
             <NavLabelBtn
               title="Collapse Navigation Bar"
               onClick={() => setNavVisible(false)}
-              icon={<ChevronLeft className="h-3.5 w-3.5" strokeWidth={2} />}
               label="Collapse Navigation Bar"
             />
           </div>
@@ -278,28 +257,30 @@ export function NavPanel() {
 // ---------------------------------------------------------------------------
 import React from "react";
 
-/** Labeled icon button for the bottom toolbar — icon + short text label. */
+/**
+ * Text-only button for the EXPANDED nav bottom toolbar. Icons are intentionally
+ * omitted here — the collapsed rail (ActivityBar) shows the icons instead, so
+ * expanded mode stays text-only per product design.
+ */
 const NavLabelBtn = React.forwardRef<
   HTMLButtonElement,
   {
     title: string;
     onClick: () => void;
-    icon: React.ReactNode;
     label: string;
     disabled?: boolean;
     "aria-label"?: string;
   }
->(function NavLabelBtn({ title, onClick, icon, label, disabled, ...rest }, ref) {
+>(function NavLabelBtn({ title, onClick, label, disabled, ...rest }, ref) {
   return (
     <button
       ref={ref}
       title={title}
       aria-label={rest["aria-label"] ?? title}
       disabled={disabled}
-      className="tt-btn-ghost flex h-9 w-full min-w-0 items-center justify-center gap-1.5 !px-2 !text-[11px] disabled:opacity-40"
+      className="tt-btn-ghost flex h-9 w-full min-w-0 items-center justify-center !px-2 !text-[11px] disabled:opacity-40"
       onClick={onClick}
     >
-      {icon}
       <span className="truncate">{label}</span>
     </button>
   );

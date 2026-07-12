@@ -637,6 +637,68 @@ def clear_context_summary(full_name: str) -> bool:
         return False
 
 
+def clear_kb(full_name: str, *, keep_documents: bool = False) -> dict:
+    """Force-wipe a project's knowledge base regardless of any in-progress work.
+
+    Removes the retrieval index (kb_index.json), the dense/hybrid vector store
+    (hybrid_index/), the aggregate project-context summary, and the per-document
+    context-map checkpoints (.context_maps). When ``keep_documents`` is False
+    (the default) the uploaded source documents in kb/ are deleted too, leaving a
+    clean empty knowledge base. Every removal is best-effort so a locked file can
+    never leave the KB half-cleared — it deletes as much as it can and reports
+    what was removed. This is a destructive "force clear" and does NOT rely on a
+    graceful reindex.
+    """
+    import shutil
+
+    p = ProjectPaths.for_name(full_name)
+    removed: list[str] = []
+
+    def _rm_file(path: Path, label: str) -> None:
+        try:
+            if path.exists():
+                path.unlink(missing_ok=True)
+                removed.append(label)
+        except OSError:
+            pass
+
+    def _rm_tree(path: Path, label: str) -> None:
+        try:
+            if path.exists():
+                shutil.rmtree(path, ignore_errors=True)
+                removed.append(label)
+        except OSError:
+            pass
+
+    # 1) Retrieval index + dense vector store.
+    _rm_file(p.index_path, "index")
+    _rm_tree(p.hybrid_dir, "vectors")
+    # 2) Project context summary + per-document map checkpoints.
+    _rm_file(p.context_summary_path, "context-summary")
+    _rm_tree(p.context_maps_dir, "context-maps")
+    # 3) Uploaded source documents (unless the caller wants to keep them).
+    if not keep_documents and p.kb_dir.exists():
+        doc_count = 0
+        for entry in list(p.kb_dir.iterdir()):
+            try:
+                if entry.is_file():
+                    entry.unlink(missing_ok=True)
+                    doc_count += 1
+                elif entry.is_dir():
+                    shutil.rmtree(entry, ignore_errors=True)
+            except OSError:
+                pass
+        if doc_count:
+            removed.append(f"{doc_count} document(s)")
+    # Ensure an empty kb/ folder remains so future uploads/indexing work.
+    try:
+        p.kb_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
+    return {"cleared": removed, "kept_documents": keep_documents}
+
+
 def context_summary_fingerprint(full_name: str) -> str:
     """Return the KB fingerprint stored in the context summary, or empty
     string if no summary exists. Used to check staleness."""
