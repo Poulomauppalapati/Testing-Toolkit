@@ -1,7 +1,7 @@
 {
-  "version": "2.16.6",
+  "version": "2.16.7",
   "ref": "main",
-  "generatedAt": "2026-07-12T08:21:06.651Z",
+  "generatedAt": "2026-07-12T08:40:33.145Z",
   "files": [
     {
       "path": ".env.enc",
@@ -156,7 +156,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "f80433aeb5390ff00beeb5450e5066553d5353289f71516ec6b83b9858e23316"
+      "hash": "2db4dc5af7d55e520423a8cefe48fa36b31de52006fa6ae6794d72034faa4b8c"
     },
     {
       "path": "automation/__init__.py",
@@ -246,7 +246,7 @@
     {
       "path": "core/diagnostics.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/diagnostics.py?ref=main",
-      "hash": "31fb611363a6d6e0084f9de97e5113bf847f0caa29a573c10aa4255cfcb9768d"
+      "hash": "fcdfb99ccdb518274febaef7dbca2ba656bedb0f1ae7f2b38373091f8696e69d"
     },
     {
       "path": "core/guardrails.py",
@@ -561,7 +561,7 @@
   ],
   "installer": {
     "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/install.py?ref=main",
-    "hash": "7659940277ce54c130d6e9bea961444eca74cffb5e8d1d781feb645098bba09a"
+    "hash": "48482c681ec86bcf4688671cb05037945d2b860c69c28a3f7f346f001c8f66ed"
   },
   "requirements": {
     "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/requirements.txt?ref=main",
