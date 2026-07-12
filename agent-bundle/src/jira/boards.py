@@ -89,19 +89,44 @@ def _parse_issue(raw: dict[str, Any]) -> JiraIssue:
     labels = fields.get("labels") or []
     issue_type_obj = fields.get("issuetype") or {}
     status_obj = fields.get("status") or {}
-    # Count linked Test issues: an issuelink whose linked issue is a Test /
-    # Test Case type, or whose link type name mentions "test" (e.g. "Tests").
-    test_links = 0
+    # Versatile linked-test-case discovery, tolerant of any team's JIRA setup.
+    # Counts DISTINCT test issues reached via EITHER (a) an issue link whose
+    # linked issue type OR link-type name mentions "test" (covers "Tests" /
+    # "Tested By" link types and Test / Test Case / Xray-Zephyr test issue
+    # types like "Test", "Test Execution", "Test Set"), OR (b) a subtask whose
+    # type mentions "test" (teams that model tests as subtasks). De-duplicated
+    # by issue key so a test reachable both ways is counted once.
+    test_keys: set[str] = set()
+    _n = 0
     for link in fields.get("issuelinks") or []:
         if not isinstance(link, dict):
             continue
         link_type = str((link.get("type") or {}).get("name", "")).lower()
         linked = link.get("inwardIssue") or link.get("outwardIssue") or {}
+        if not isinstance(linked, dict):
+            continue
         linked_type = str(
             ((linked.get("fields") or {}).get("issuetype") or {}).get("name", "")
         ).lower()
         if "test" in linked_type or "test" in link_type:
-            test_links += 1
+            key = str(linked.get("key", ""))
+            if not key:
+                _n += 1
+                key = f"link#{_n}"
+            test_keys.add(key)
+    for sub in fields.get("subtasks") or []:
+        if not isinstance(sub, dict):
+            continue
+        sub_type = str(
+            ((sub.get("fields") or {}).get("issuetype") or {}).get("name", "")
+        ).lower()
+        if "test" in sub_type:
+            key = str(sub.get("key", ""))
+            if not key:
+                _n += 1
+                key = f"sub#{_n}"
+            test_keys.add(key)
+    test_links = len(test_keys)
     return JiraIssue(
         key=str(raw.get("key", "")),
         issue_id=int(raw.get("id", 0) or 0),
@@ -226,7 +251,7 @@ async def search_issues(
     page_size = min(max_results, 100)
     fields_requested = [
         "summary", "issuetype", "status", "assignee",
-        "priority", "labels", "sprint", "issuelinks",
+        "priority", "labels", "sprint", "issuelinks", "subtasks",
     ]
     try:
         async with _client(url, user, pat, cfg) as client:

@@ -86,6 +86,48 @@ async def test_per_item_fallback_when_batch_ignores_expand() -> None:
     assert counts == {1536967: 6}
 
 
+@pytest.mark.asyncio
+async def test_type_based_child_test_cases_are_counted() -> None:
+    """A team that models tests as CHILD work items (no TestedBy relation) is
+    still covered: child/related links whose target is a Test-type work item
+    are type-checked and counted."""
+    def rel(kind: str, tid: int) -> dict:
+        return {
+            "rel": kind,
+            "url": f"https://dev.azure.com/o/p/_apis/wit/workItems/{tid}",
+            "attributes": {},
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        if "$expand" in body:
+            # WI 500 has two children (600 Test Case, 601 Task) + one related
+            # (602 Test Case).
+            return httpx.Response(200, json={"value": [{
+                "id": 500,
+                "relations": [
+                    rel("System.LinkTypes.Hierarchy-Forward", 600),
+                    rel("System.LinkTypes.Hierarchy-Forward", 601),
+                    rel("System.LinkTypes.Related", 602),
+                ],
+            }]})
+        # fields pass -> return the types of the candidate targets
+        types = {600: "Test Case", 601: "Task", 602: "Test Case"}
+        return httpx.Response(200, json={"value": [
+            {"id": tid, "fields": {"System.WorkItemType": types.get(tid, "")}}
+            for tid in body["ids"]
+        ]})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        counts = await boards._fetch_test_case_counts(
+            client, "org", "proj", [500], _cfg()
+        )
+
+    # 600 + 602 are Test Case; 601 (Task) excluded.
+    assert counts == {500: 2}
+
+
 def test_count_tested_by_matches_reference_and_friendly_name() -> None:
     # Reference name only (no friendly attribute name).
     wi_ref = {"relations": [{"rel": "Microsoft.VSTS.Common.TestedBy-Forward"}]}

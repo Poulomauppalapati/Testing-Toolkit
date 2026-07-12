@@ -549,32 +549,67 @@ async def _fetch_rows_streaming(
     return rows
 
 
-_TESTED_BY_REL: Final[str] = "Microsoft.VSTS.Common.TestedBy-Forward"
+# --------------------- versatile test-case discovery ---------------------
+# A relation points AT a test case when its reference name OR friendly
+# attribute name matches one of these hints (alnum-stripped, lowercased).
+# Covers "Tested By" (TestedBy-Forward), "Tests", shared-step "TestCase..",
+# and custom link types teams rename for test coverage.
+_TEST_REL_HINTS: Final[tuple[str, ...]] = ("testedby", "tests", "testcase")
+# Link relations whose TARGETS we type-check as possible test cases -- many
+# teams model a test as a child/related work item instead of using a
+# TestedBy relation.
+_LINK_REL_HINTS: Final[tuple[str, ...]] = (
+    "hierarchy", "related", "dependency",
+)
+# A linked work item is a test case when its type name contains this token
+# (case-insensitive): "Test Case", "Test", "QA Test", etc.
+_TEST_TYPE_TOKEN: Final[str] = "test"
+
+
+def _norm(s: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+
+def _is_test_relation(rel: dict[str, Any]) -> bool:
+    """True when a relation directly denotes test coverage (Tested By, Tests,
+    or a custom/renamed test link type)."""
+    ref = _norm(rel.get("rel", ""))
+    name = _norm((rel.get("attributes") or {}).get("name", ""))
+    return any(h in ref or h in name for h in _TEST_REL_HINTS)
+
+
+def _is_link_relation(rel: dict[str, Any]) -> bool:
+    """True for parent/child/related/dependency links whose target might be a
+    test-type work item worth type-checking."""
+    ref = _norm(rel.get("rel", ""))
+    return any(h in ref for h in _LINK_REL_HINTS)
+
+
+def _rel_target_id(rel: dict[str, Any]) -> int:
+    m = re.search(r"/workitems/(\d+)", str(rel.get("url", "")), re.IGNORECASE)
+    return int(m.group(1)) if m else 0
 
 
 def _count_tested_by(wi: dict[str, Any]) -> int:
-    """Count "Tested By" relations on a single work-item payload. Matches by
-    the reference name (TestedBy-Forward) OR the friendly attribute name ADO
-    shows ("Tested By"), so it is robust to reference-name variations."""
-    n = 0
-    for rel in wi.get("relations", []) or []:
-        rtype = str(rel.get("rel", ""))
-        rname = str((rel.get("attributes") or {}).get("name", ""))
-        if rtype == _TESTED_BY_REL or rname.strip().lower() == "tested by":
-            n += 1
-    return n
+    """Count test-case relations on a single work-item payload. Matches the
+    reference name (e.g. TestedBy-Forward) OR the friendly attribute name ADO
+    shows ("Tested By"/"Tests"), so it is robust to reference-name variations
+    and to teams that rename their test link types."""
+    return sum(
+        1 for rel in wi.get("relations", []) or [] if _is_test_relation(rel)
+    )
 
 
-async def _fetch_counts_per_item(
+async def _fetch_relations_per_item(
     client: httpx.AsyncClient, org: str, project: str,
     ids: list[int], cfg: RuntimeConfig,
-) -> dict[int, int]:
-    """Fallback: fetch relations one work item at a time via the single-item
-    GET (?$expand=relations), which is honored even when the batch endpoint
-    ignores $expand. Bounded concurrency keeps this from hammering ADO."""
-    counts: dict[int, int] = {}
+) -> dict[int, list[dict[str, Any]]]:
+    """Fetch relations one work item at a time via the single-item GET
+    (?$expand=relations), which is honored even when the batch endpoint ignores
+    $expand. Bounded concurrency keeps this from hammering ADO."""
+    out: dict[int, list[dict[str, Any]]] = {}
     if not ids:
-        return counts
+        return out
     sem = asyncio.Semaphore(8)
 
     async def _one(wid: int) -> None:
@@ -592,47 +627,40 @@ async def _fetch_counts_per_item(
                         )
                         continue
                     r.raise_for_status()
-                    n = _count_tested_by(r.json())
-                    if n:
-                        counts[wid] = n
+                    out[wid] = r.json().get("relations") or []
                     return
                 except (httpx.HTTPError, _ssl.SSLError):
                     await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
 
     await asyncio.gather(*(_one(w) for w in ids))
-    return counts
+    return out
 
 
-async def _fetch_test_case_counts(
+async def _fetch_relations(
     client: httpx.AsyncClient, org: str, project: str,
     ids: list[int], cfg: RuntimeConfig,
-) -> dict[int, int]:
-    """Count linked Test Case work items ("Tested By" relations) per work item.
-
-    Primary path is a workitemsbatch pass with ``$expand: "Relations"`` (the
-    batch body must use the CAPITALIZED enum name -- lowercase "relations" is
-    silently ignored by ADO, which was why the "Generated Tests" column showed
-    None. The batch API also forbids combining `fields` with `$expand`, so this
-    is a dedicated pass with no fields filter). If a batch response comes back
-    with no relations on ANY item (an org that ignores batch $expand), we fall
-    back to a per-item GET which is always honored. Best-effort: returns {} on
-    error so the board still loads."""
-    counts: dict[int, int] = {}
+) -> dict[int, list[dict[str, Any]]]:
+    """Return {work_item_id: relations[]}. Primary path is a workitemsbatch pass
+    with ``$expand: "Relations"`` (the batch body MUST use the CAPITALIZED enum
+    name -- lowercase "relations" is silently ignored by ADO, which is why the
+    count was always 0). If a batch responds with NO relations on ANY item (an
+    org that ignores batch $expand), fall back to the per-item GET which is
+    always honored. Best-effort."""
+    out: dict[int, list[dict[str, Any]]] = {}
     if not ids:
-        return counts
+        return out
     url = (
         f"https://dev.azure.com/{org}/{project}/_apis/wit/workitemsbatch"
         f"?api-version={API_VER_WI}"
     )
     for start in range(0, len(ids), _BATCH_LIMIT):
         batch_ids = ids[start:start + _BATCH_LIMIT]
-        body = {"ids": batch_ids, "$expand": "Relations"}
-        saw_relations = False
         got_response = False
+        saw_relations = False
         for attempt in range(cfg.retry_count):
             try:
                 r = await client.post(
-                    url, json=body,
+                    url, json={"ids": batch_ids, "$expand": "Relations"},
                     headers={"Content-Type": "application/json"},
                 )
                 if r.status_code in (429, 503):
@@ -642,23 +670,127 @@ async def _fetch_test_case_counts(
                 got_response = True
                 for wi in r.json().get("value", []) or []:
                     wid = int(wi.get("id", 0) or 0)
-                    if wi.get("relations"):
+                    rels = wi.get("relations") or []
+                    if rels:
                         saw_relations = True
-                    n = _count_tested_by(wi)
-                    if wid and n:
-                        counts[wid] = n
+                    if wid:
+                        out[wid] = rels
                 break
             except (httpx.HTTPError, _ssl.SSLError):
                 await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
-        # If the batch responded but carried no relations at all, the org is
-        # ignoring batch $expand -> fall back to the per-item GET for this
-        # batch's ids (proven to return relations).
         if got_response and not saw_relations:
-            counts.update(
-                await _fetch_counts_per_item(
+            out.update(
+                await _fetch_relations_per_item(
                     client, org, project, batch_ids, cfg
                 )
             )
+    return out
+
+
+async def _fetch_work_item_types(
+    client: httpx.AsyncClient, org: str, project: str,
+    ids: list[int], cfg: RuntimeConfig,
+) -> dict[int, str]:
+    """Return {work_item_id: System.WorkItemType} for the given ids via a
+    workitemsbatch fields pass. Best-effort."""
+    types: dict[int, str] = {}
+    if not ids:
+        return types
+    url = (
+        f"https://dev.azure.com/{org}/{project}/_apis/wit/workitemsbatch"
+        f"?api-version={API_VER_WI}"
+    )
+    for start in range(0, len(ids), _BATCH_LIMIT):
+        batch_ids = ids[start:start + _BATCH_LIMIT]
+        for attempt in range(cfg.retry_count):
+            try:
+                r = await client.post(
+                    url,
+                    json={"ids": batch_ids, "fields": ["System.WorkItemType"]},
+                    headers={"Content-Type": "application/json"},
+                )
+                if r.status_code in (429, 503):
+                    await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                for wi in r.json().get("value", []) or []:
+                    wid = int(wi.get("id", 0) or 0)
+                    wtype = str(
+                        (wi.get("fields") or {}).get("System.WorkItemType", "")
+                    )
+                    if wid:
+                        types[wid] = wtype
+                break
+            except (httpx.HTTPError, _ssl.SSLError):
+                await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
+    return types
+
+
+async def _fetch_test_case_counts(
+    client: httpx.AsyncClient, org: str, project: str,
+    ids: list[int], cfg: RuntimeConfig,
+) -> dict[int, int]:
+    """Versatile linked-test-case discovery per work item, designed to work
+    across any team's SDLC conventions. Counts DISTINCT test cases reached from
+    each work item via EITHER:
+      (a) a TEST RELATION -- Tested By / Tests / a renamed custom test link, OR
+      (b) a parent/child/related/dependency link whose TARGET work item is
+          itself a test-type item (type name contains "test": Test Case, Test).
+    This covers the VSTS TestedBy relation, requirement->child Test Case
+    hierarchies, and custom link types alike. De-duplicated by target id.
+    Best-effort: returns {} on error so the board still loads."""
+    counts: dict[int, int] = {}
+    if not ids:
+        return counts
+    relations_by_wi = await _fetch_relations(client, org, project, ids, cfg)
+    if not relations_by_wi:
+        return counts
+
+    direct: dict[int, set[int]] = {}      # test-relation target ids (dedup)
+    direct_noid: dict[int, int] = {}      # test relations with no parseable id
+    candidates: dict[int, set[int]] = {}  # link-target ids to type-check
+    all_candidate_ids: set[int] = set()
+    for wid, rels in relations_by_wi.items():
+        d: set[int] = set()
+        c: set[int] = set()
+        noid = 0
+        for rel in rels:
+            tid = _rel_target_id(rel)
+            if _is_test_relation(rel):
+                if tid:
+                    d.add(tid)
+                else:
+                    noid += 1
+            elif _is_link_relation(rel) and tid:
+                c.add(tid)
+        c -= d  # a target already counted as a test relation is not re-checked
+        direct[wid] = d
+        if noid:
+            direct_noid[wid] = noid
+        if c:
+            candidates[wid] = c
+            all_candidate_ids |= c
+
+    type_map = (
+        await _fetch_work_item_types(
+            client, org, project, sorted(all_candidate_ids), cfg
+        )
+        if all_candidate_ids else {}
+    )
+    test_typed = {
+        tid for tid, t in type_map.items() if _TEST_TYPE_TOKEN in _norm(t)
+    }
+
+    for wid in relations_by_wi:
+        d = direct.get(wid, set())
+        c = candidates.get(wid, set())
+        total = (
+            len(d)
+            + direct_noid.get(wid, 0)
+            + sum(1 for tid in c if tid in test_typed)
+        )
+        if total:
+            counts[wid] = total
     return counts
 
 
