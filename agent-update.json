@@ -1,7 +1,7 @@
 {
-  "version": "2.16.7",
+  "version": "2.16.8",
   "ref": "main",
-  "generatedAt": "2026-07-12T08:40:33.145Z",
+  "generatedAt": "2026-07-12T09:09:07.586Z",
   "files": [
     {
       "path": ".env.enc",
@@ -156,7 +156,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "2db4dc5af7d55e520423a8cefe48fa36b31de52006fa6ae6794d72034faa4b8c"
+      "hash": "3ca518625fa9a35d2df1012d16f89adc8085075ca0465b782737c4910bffe4da"
     },
     {
       "path": "automation/__init__.py",
@@ -561,7 +561,7 @@
   ],
   "installer": {
     "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/install.py?ref=main",
-    "hash": "48482c681ec86bcf4688671cb05037945d2b860c69c28a3f7f346f001c8f66ed"
+    "hash": "8bb8d6661fb4f75d18f2c62f0429127b78a78728f1922d7d7c0202abb9ad1969"
   },
   "requirements": {
     "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/requirements.txt?ref=main",
