@@ -626,6 +626,17 @@ def write_context_summary(full_name: str, ctx: "Any") -> bool:
     return save_context_summary(p.context_summary_path, ctx)
 
 
+def clear_context_summary(full_name: str) -> bool:
+    """Delete the project's stored context summary. Returns True if removed."""
+    p = ProjectPaths.for_name(full_name)
+    try:
+        existed = p.context_summary_path.exists()
+        p.context_summary_path.unlink(missing_ok=True)
+        return existed
+    except OSError:
+        return False
+
+
 def context_summary_fingerprint(full_name: str) -> str:
     """Return the KB fingerprint stored in the context summary, or empty
     string if no summary exists. Used to check staleness."""

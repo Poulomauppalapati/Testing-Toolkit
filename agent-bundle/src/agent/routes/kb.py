@@ -688,6 +688,7 @@ def _context_payload(project: str) -> dict:
         "n_items": sum(counts.values()),
         "counts": counts,
         "summary": ctx.to_prompt_section(),
+        "edited": bool(getattr(ctx, "override_summary", "").strip()),
         "status": ctx.status,
         "enabled": ctx.enabled,
         "mapped_documents": ctx.mapped_documents,
@@ -732,6 +733,37 @@ async def set_context_setting(project: str, req: ContextSettingRequest) -> dict:
     written = await asyncio.to_thread(ps.write_context_summary, project, context)
     if not written:
         raise HTTPException(500, "Could not persist the project context setting.")
+    return _context_payload(project)
+
+
+class ContextEditRequest(BaseModel):
+    summary: str
+
+
+@router.put("/context/{project}")
+async def edit_context(project: str, req: ContextEditRequest) -> dict:
+    """Save a user-edited project context summary. The edited text is injected
+    verbatim into generation (overriding the auto-rendered category sections).
+    An empty summary clears the override and falls back to the extracted one."""
+    import core.project_store as ps
+    from kb.context_summary import ProjectContext
+
+    context = await asyncio.to_thread(ps.read_context_summary, project)
+    if context is None:
+        context = ProjectContext()
+    context.override_summary = req.summary.strip()
+    written = await asyncio.to_thread(ps.write_context_summary, project, context)
+    if not written:
+        raise HTTPException(500, "Could not persist the edited project context.")
+    return _context_payload(project)
+
+
+@router.delete("/context/{project}")
+async def clear_context(project: str) -> dict:
+    """Delete the stored project context summary for this project."""
+    import core.project_store as ps
+
+    await asyncio.to_thread(ps.clear_context_summary, project)
     return _context_payload(project)
 
 

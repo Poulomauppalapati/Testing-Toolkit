@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Upload, FileText, RefreshCw, Download, Trash2, Sparkles, Eye, EyeOff } from "lucide-react";
+  import { Upload, FileText, RefreshCw, Download, Trash2, Sparkles, Eye, EyeOff, Pencil, Copy, Check, X } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { agent, type KbStatus, type TcType, TC_TYPES, TC_DISPLAY_NAME, type TemplateStatus, type ProjectContextSummary } from "@/lib/agent-client";
 import { useAppState } from "@/lib/app-state";
@@ -669,6 +669,9 @@ function ProjectContextSection({
   const [showSummary, setShowSummary] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!project) return;
@@ -743,6 +746,68 @@ function ProjectContextSection({
     }
   };
 
+  const startEdit = () => {
+    setDraft(ctx?.summary ?? "");
+    setEditing(true);
+    setShowSummary(true);
+    setError("");
+  };
+
+  const saveEdit = async () => {
+    if (!project) return;
+    setBusy(true);
+    setError("");
+    try {
+      const c = await agent.editContext(project, draft);
+      setCtx(c);
+      setEditing(false);
+      pushLog("SUCCESS", "Project context saved.");
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      pushLog("ERROR", `Could not save project context: ${msg}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copySummary = async () => {
+    const text = ctx?.summary ?? "";
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError("Clipboard is unavailable in this browser.");
+    }
+  };
+
+  const clearContext = async () => {
+    if (!project || !ctx?.has) return;
+    if (
+      !window.confirm(
+        "Clear the stored project context for this project? This removes the extracted summary and any edits."
+      )
+    )
+      return;
+    setBusy(true);
+    setError("");
+    try {
+      const c = await agent.clearContext(project);
+      setCtx(c);
+      setEditing(false);
+      setShowSummary(false);
+      pushLog("INFO", "Project context cleared.");
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      pushLog("ERROR", `Could not clear project context: ${msg}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const statusText = !ctx
     ? "Loading project context..."
     : ctx.has
@@ -752,7 +817,7 @@ function ProjectContextSection({
           ctx.counts.actors ?? 0
         } actors, ${ctx.counts.entities ?? 0} entities, ${
           ctx.counts.workflows ?? 0
-        } workflows, ${ctx.counts.screens ?? 0} screens)`
+        } workflows, ${ctx.counts.screens ?? 0} screens)${ctx.edited ? " • edited" : ""}`
       : "No project context extracted yet. Index the knowledge base with the AI API available, or click Regenerate.";
 
   const canToggle = ctx?.has && !busy;
@@ -778,8 +843,8 @@ function ProjectContextSection({
         <button
           className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5"
           onClick={() => setShowSummary((s) => !s)}
-          disabled={!ctx?.has}
-          title="View the auto-extracted project context summary (actors, entities, workflows, screens, ...)"
+          disabled={!ctx?.has || editing}
+          title="View the project context summary (actors, entities, workflows, screens, ...)"
         >
           {showSummary ? (
             <EyeOff className="h-3.5 w-3.5" />
@@ -790,8 +855,39 @@ function ProjectContextSection({
         </button>
         <button
           className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5"
+          onClick={startEdit}
+          disabled={!ctx?.has || busy || editing}
+          title="Edit the project context text that gets injected into generation"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          Edit
+        </button>
+        <button
+          className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5"
+          onClick={copySummary}
+          disabled={!ctx?.has || editing}
+          title="Copy the project context summary to the clipboard"
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+          {copied ? "Copied" : "Copy"}
+        </button>
+        <button
+          className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5"
+          onClick={clearContext}
+          disabled={!ctx?.has || busy || editing}
+          title="Delete the stored project context for this project"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Clear
+        </button>
+        <button
+          className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5"
           onClick={regenerate}
-          disabled={busy}
+          disabled={busy || editing}
           title="Re-extract project context from KB documents using the LLM"
         >
           <Sparkles className="h-3.5 w-3.5" />
@@ -814,10 +910,49 @@ function ProjectContextSection({
       {error && (
         <p className="text-xs text-[var(--tt-danger)]">{error}</p>
       )}
-      {showSummary && ctx?.has && (
-        <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded-[10px] border border-[var(--tt-outline)] bg-[var(--tt-surface-base)] p-3 font-mono text-[11px] leading-relaxed text-[var(--tt-text-secondary)]">
-          {ctx.summary}
-        </pre>
+      {editing ? (
+        <div className="flex flex-col gap-2">
+          <textarea
+            className="tt-input h-52 resize-y font-mono text-[11px] leading-relaxed"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            disabled={busy}
+            spellCheck={false}
+            aria-label="Project context editor"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              className="tt-btn-primary !px-2.5 !py-1 !text-xs !gap-1.5"
+              onClick={saveEdit}
+              disabled={busy}
+            >
+              <Check className="h-3.5 w-3.5" />
+              {busy ? "Saving..." : "Save"}
+            </button>
+            <button
+              className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5"
+              onClick={() => {
+                setEditing(false);
+                setError("");
+              }}
+              disabled={busy}
+            >
+              <X className="h-3.5 w-3.5" />
+              Cancel
+            </button>
+            <span className="text-xs text-[var(--tt-text-muted)]">
+              Saved text is injected verbatim into generation. Clear the box and
+              save to revert to the auto-extracted summary.
+            </span>
+          </div>
+        </div>
+      ) : (
+        showSummary &&
+        ctx?.has && (
+          <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded-[10px] border border-[var(--tt-outline)] bg-[var(--tt-surface-base)] p-3 font-mono text-[11px] leading-relaxed text-[var(--tt-text-secondary)]">
+            {ctx.summary}
+          </pre>
+        )
       )}
     </div>
   );

@@ -316,6 +316,8 @@ export interface ProjectContextSummary {
     glossary: number;
   }>;
   summary: string;
+  /** True when the summary is a user-edited override (not auto-extracted). */
+  edited?: boolean;
   status: "complete" | "partial" | "preserved" | "unavailable";
   enabled: boolean;
   mapped_documents: number;
@@ -1375,6 +1377,20 @@ export const agent = {
     return agentFetch<ProjectContextSummary>(
       `/kb/context/${encodeURIComponent(project)}/regenerate`,
       { method: "POST" }
+    );
+  },
+
+  async editContext(project: string, summary: string): Promise<ProjectContextSummary> {
+    return agentFetch<ProjectContextSummary>(
+      `/kb/context/${encodeURIComponent(project)}`,
+      { method: "PUT", body: JSON.stringify({ summary }) }
+    );
+  },
+
+  async clearContext(project: string): Promise<ProjectContextSummary> {
+    return agentFetch<ProjectContextSummary>(
+      `/kb/context/${encodeURIComponent(project)}`,
+      { method: "DELETE" }
     );
   },
 

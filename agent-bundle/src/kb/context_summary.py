@@ -57,12 +57,21 @@ class ProjectContext:
     mapped_documents: int = 0
     total_documents: int = 0
     failed_documents: list[str] = field(default_factory=list)
+    # User-edited context text. When set, it is injected verbatim instead of the
+    # auto-rendered category sections (set via the KB dialog "Edit" action).
+    override_summary: str = ""
 
     def is_empty(self) -> bool:
+        if self.override_summary.strip():
+            return False
         return not any(getattr(self, category) for category in CATEGORIES)
 
     def to_prompt_section(self) -> str:
-        if not self.enabled or self.is_empty():
+        if not self.enabled:
+            return ""
+        if self.override_summary.strip():
+            return self.override_summary.strip()
+        if self.is_empty():
             return ""
         titles = {
             "actors": "ACTORS/ROLES", "entities": "BUSINESS ENTITIES",
@@ -111,6 +120,7 @@ class ProjectContext:
             mapped_documents=int(data.get("mapped_documents", 0) or 0),
             total_documents=int(data.get("total_documents", 0) or 0),
             failed_documents=[str(item) for item in data.get("failed_documents", [])],
+            override_summary=str(data.get("override_summary", "")),
         )
 
 

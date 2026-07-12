@@ -95,7 +95,6 @@ export function NavPanel() {
             ) : (
               projects.map((full) => {
                 const name = displayName(full);
-                const source = projectSourceType(full, sourceOpts);
                 const isSelected = full === currentProject;
                 return (
                   <div

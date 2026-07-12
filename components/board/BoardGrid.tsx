@@ -1,10 +1,28 @@
 "use client";
 
-import { useMemo, useState, type MouseEvent } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import useSWR from "swr";
-import { RefreshCw, PanelRightOpen, PanelRightClose } from "lucide-react";
+import {
+  RefreshCw,
+  PanelRightOpen,
+  PanelRightClose,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { useAppState } from "@/lib/app-state";
 import { usePreferences, getPreferences, setSizePref } from "@/lib/preferences";
+import {
+  useBoardColumns,
+  BOARD_COLUMNS,
+  COLLAPSED_WIDTH,
+  type BoardColumnId,
+} from "@/lib/board-columns";
 import { ResizeHandle } from "@/components/ui/resizer";
 import {
   agent,
@@ -40,6 +58,16 @@ export function BoardGrid() {
 
   const { prefs, togglePanel, setPanel } = usePreferences();
   const detailVisible = prefs.panels.detail;
+
+  // Persisted per-column widths + collapsed flags (Excel-like resizing and
+  // header carets). Restored automatically from localStorage on next launch.
+  const {
+    state: colState,
+    width: colWidth,
+    isCollapsed: colCollapsed,
+    setWidth: setColWidth,
+    toggleCollapsed: toggleColCollapsed,
+  } = useBoardColumns();
 
   // Clicking a work item activates it and auto-opens the detail panel.
   const activateRow = (id: WiId) => {
@@ -259,18 +287,29 @@ export function BoardGrid() {
               warn
             />
           ) : (
-            <table className="w-full border-collapse text-sm">
+            <table className="w-full table-fixed border-collapse text-sm">
+              <colgroup>
+                <col style={{ width: 32 }} />
+                {BOARD_COLUMNS.map((c) => (
+                  <col key={c.id} style={{ width: colWidth(c.id) }} />
+                ))}
+              </colgroup>
               <thead className="sticky top-0 z-10 bg-[var(--tt-surface-base)]">
                 <tr className="text-left text-xs text-[var(--tt-text-secondary)]">
-                  <th className="w-8 border-b border-[var(--tt-outline)] px-2 py-2" />
-                  <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold">ID</th>
-                  <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold">Title</th>
-                  <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold">Type</th>
-                  <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold">State</th>
-                  <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold">Assignee</th>
-                  <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold">Sprint</th>
-                  <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold" title="Total test cases traced to this work item: tool-generated plus those already linked in the tracker (ADO 'Tested By' / JIRA test links)">Generated Tests</th>
-                  <th className="border-b border-[var(--tt-outline)] px-2 py-2 font-semibold">Last Run</th>
+                  <th className="border-b border-[var(--tt-outline)] px-2 py-2" />
+                  {BOARD_COLUMNS.map((c) => (
+                    <ColumnHeader
+                      key={c.id}
+                      id={c.id}
+                      label={c.label}
+                      collapsed={colCollapsed(c.id)}
+                      currentWidth={colWidth(c.id)}
+                      onResize={(px, commit) =>
+                        setColWidth(c.id, px, commit)
+                      }
+                      onToggleCollapsed={() => toggleColCollapsed(c.id)}
+                    />
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -290,6 +329,7 @@ export function BoardGrid() {
                       selected={selected}
                       activeWiId={activeWiId}
                       testCounts={testCounts}
+                      collapsedCols={colState.collapsed}
                       hasCoverageData={hasCoverageData}
                       runStatus={runStatus}
                       hasRunData={hasRunData}
@@ -333,6 +373,97 @@ export function BoardGrid() {
         </>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Resizable / collapsible column header
+// ---------------------------------------------------------------------------
+const TESTS_HINT =
+  "Total test cases traced to this work item: tool-generated plus those already linked in the tracker (ADO 'Tested By' / JIRA test links)";
+
+function ColumnHeader({
+  id,
+  label,
+  collapsed,
+  currentWidth,
+  onResize,
+  onToggleCollapsed,
+}: {
+  id: BoardColumnId;
+  label: string;
+  collapsed: boolean;
+  currentWidth: number;
+  /** commit=false during a live drag, commit=true once on pointer-up. */
+  onResize: (px: number, commit: boolean) => void;
+  onToggleCollapsed: () => void;
+}) {
+  const drag = useRef<{ x: number; w: number } | null>(null);
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLSpanElement>) => {
+    if (collapsed) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { x: e.clientX, w: currentWidth };
+  };
+  const onPointerMove = (e: ReactPointerEvent<HTMLSpanElement>) => {
+    if (!drag.current) return;
+    onResize(drag.current.w + (e.clientX - drag.current.x), false);
+  };
+  const endDrag = (e: ReactPointerEvent<HTMLSpanElement>) => {
+    if (!drag.current) return;
+    const finalW = drag.current.w + (e.clientX - drag.current.x);
+    drag.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    onResize(finalW, true);
+  };
+
+  return (
+    <th
+      className="relative border-b border-[var(--tt-outline)] px-2 py-2 font-semibold"
+      style={collapsed ? { width: COLLAPSED_WIDTH, padding: 0 } : undefined}
+      title={collapsed ? `Expand ${label}` : id === "tests" ? TESTS_HINT : label}
+    >
+      {collapsed ? (
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          aria-label={`Expand ${label} column`}
+          className="flex h-full w-full items-center justify-center py-2 text-[var(--tt-text-muted)] hover:text-[var(--tt-text-primary)]"
+        >
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      ) : (
+        <div className="flex items-center gap-1">
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-label={`Collapse ${label} column`}
+            title={`Collapse ${label} column`}
+            className="shrink-0 text-[var(--tt-text-faint)] hover:text-[var(--tt-text-primary)]"
+          >
+            <ChevronLeft className="h-3 w-3" />
+          </button>
+          {/* Drag-to-resize handle on the column's right edge. */}
+          <span
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={`Resize ${label} column`}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+            className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-[var(--tt-info)]/50"
+          />
+        </div>
+      )}
+    </th>
   );
 }
 
@@ -429,6 +560,7 @@ function LaneGroup({
   selected,
   activeWiId,
   testCounts,
+  collapsedCols,
   hasCoverageData,
   runStatus,
   hasRunData,
@@ -443,6 +575,7 @@ function LaneGroup({
   selected: Set<WiId>;
   activeWiId: WiId | null;
   testCounts: Map<string, number>;
+  collapsedCols: Partial<Record<BoardColumnId, boolean>>;
   hasCoverageData: boolean;
   runStatus: Map<string, "pass" | "fail">;
   hasRunData: boolean;
@@ -450,6 +583,9 @@ function LaneGroup({
   onToggleRow: (id: WiId, on: boolean) => void;
   onActivate: (id: WiId) => void;
 }) {
+  // Placeholder shown in a collapsed column's cell.
+  const dot = (on: boolean | undefined) =>
+    on ? <span className="text-[var(--tt-text-faint)]">·</span> : null;
   return (
     <>
       <tr className="tt-group-row border-t border-[var(--tt-outline)] first:border-t-0">
@@ -510,54 +646,74 @@ function LaneGroup({
               />
             </td>
             {/* ID cell — no redundant left-border (now on <tr>) */}
-            <td className="whitespace-nowrap px-2 py-1.5">
-              <span className="font-mono text-xs font-bold text-[var(--tt-primary)]">
-                {r.wi_id}
-              </span>
+            <td className="truncate whitespace-nowrap px-2 py-1.5">
+              {collapsedCols.id ? (
+                dot(true)
+              ) : (
+                <span className="font-mono text-xs font-bold text-[var(--tt-primary)]">
+                  {r.wi_id}
+                </span>
+              )}
             </td>
-            {/* Title — stretches to fill; colored by work-item type (desktop
-                parity: green stories, red bugs, blue test cases) */}
+            {/* Title — colored by work-item type (desktop parity: green
+                stories, red bugs, blue test cases) */}
             <td
-              className="w-full truncate px-2 py-1.5 text-sm font-medium"
+              className="truncate px-2 py-1.5 text-sm font-medium"
               style={{ color: titleTypeColor(r.wi_type) }}
               title={r.title}
             >
-              {r.title}
+              {collapsedCols.title ? dot(true) : r.title}
             </td>
             {/* Type badge */}
-            <td className="whitespace-nowrap px-2 py-1.5">
-              <span className={`tt-badge ${typeBadgeClass}`}>
-                {r.wi_type}
-              </span>
+            <td className="truncate whitespace-nowrap px-2 py-1.5">
+              {collapsedCols.type ? (
+                dot(true)
+              ) : (
+                <span className={`tt-badge ${typeBadgeClass}`}>{r.wi_type}</span>
+              )}
             </td>
             {/* State badge */}
-            <td className="whitespace-nowrap px-2 py-1.5">
-              <span className={`tt-badge ${stateBadgeClass}`}>
-                {r.state || "n/a"}
-              </span>
+            <td className="truncate whitespace-nowrap px-2 py-1.5">
+              {collapsedCols.state ? (
+                dot(true)
+              ) : (
+                <span className={`tt-badge ${stateBadgeClass}`}>
+                  {r.state || "n/a"}
+                </span>
+              )}
             </td>
-            <td className="max-w-[120px] truncate whitespace-nowrap px-2 py-1.5 text-xs text-[var(--tt-text-secondary)]">
-              {r.assigned_to || "—"}
+            <td className="truncate whitespace-nowrap px-2 py-1.5 text-xs text-[var(--tt-text-secondary)]">
+              {collapsedCols.assignee ? dot(true) : r.assigned_to || "—"}
             </td>
-            <td className="max-w-[120px] truncate whitespace-nowrap px-2 py-1.5 text-xs text-[var(--tt-text-muted)]">
-              {r.board_lane || "—"}
+            <td className="truncate whitespace-nowrap px-2 py-1.5 text-xs text-[var(--tt-text-muted)]">
+              {collapsedCols.sprint ? dot(true) : r.board_lane || "—"}
             </td>
             {/* Generated-test traceability, not implementation coverage. */}
             <td
-              className="whitespace-nowrap px-2 py-1.5 text-xs"
+              className="truncate whitespace-nowrap px-2 py-1.5 text-xs"
               title="Runnable generated test cases traced to this work item"
             >
-              <CoverageCell
-                count={testCounts.get(String(r.wi_id)) ?? 0}
-                hasData={hasCoverageData}
-              />
+              {collapsedCols.tests ? (
+                dot(true)
+              ) : (
+                <CoverageCell
+                  count={testCounts.get(String(r.wi_id)) ?? 0}
+                  hasData={hasCoverageData}
+                />
+              )}
             </td>
             {/* Last Run */}
-            <td className="whitespace-nowrap px-2 py-1.5 text-xs">
-              <LastRunCell
-                status={hasRunData ? runStatus.get(String(r.wi_id)) ?? null : null}
-                hasData={hasRunData}
-              />
+            <td className="truncate whitespace-nowrap px-2 py-1.5 text-xs">
+              {collapsedCols.lastRun ? (
+                dot(true)
+              ) : (
+                <LastRunCell
+                  status={
+                    hasRunData ? runStatus.get(String(r.wi_id)) ?? null : null
+                  }
+                  hasData={hasRunData}
+                />
+              )}
             </td>
           </tr>
         );
