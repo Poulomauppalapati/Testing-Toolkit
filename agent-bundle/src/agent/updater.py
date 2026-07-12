@@ -98,6 +98,31 @@ def _fetch_manifest(url: str) -> dict[str, Any] | None:
         return None
 
 
+def _version_tuple(v: str) -> tuple[int, ...]:
+    parts: list[int] = []
+    for chunk in str(v).strip().split("."):
+        try:
+            parts.append(int(chunk))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts) or (0,)
+
+
+def _is_newer(latest: str, current: str) -> bool:
+    """True only when ``latest`` is STRICTLY greater than ``current``.
+
+    Using a semantic comparison (not ``!=``) means republishing a manifest at
+    an equal or older version never prompts a reinstall. Web/UI-only releases
+    deploy through Vercel and deliberately do not republish the manifest, so
+    installed agents are never nagged to reinstall for a label change.
+    """
+    a, b = _version_tuple(latest), _version_tuple(current)
+    n = max(len(a), len(b))
+    a += (0,) * (n - len(a))
+    b += (0,) * (n - len(b))
+    return a > b
+
+
 def check_for_update() -> dict[str, Any]:
     """Report current vs. available version without mutating the installation."""
     manifest_url = resolve_manifest_url()
@@ -106,7 +131,7 @@ def check_for_update() -> dict[str, Any]:
     return {
         "current": AGENT_VERSION,
         "latest": latest or None,
-        "update_available": bool(latest and latest != AGENT_VERSION),
+        "update_available": bool(latest and _is_newer(latest, AGENT_VERSION)),
         "configured": bool(manifest_url),
         "reachable": manifest is not None,
         "install_dir": str(install_dir()),

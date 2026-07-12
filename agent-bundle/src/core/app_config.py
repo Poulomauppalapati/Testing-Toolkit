@@ -157,7 +157,27 @@ OUTPUTS_DIR:  Final[Path] = WORKSPACE / "outputs"
 LOGS_DIR:     Final[Path] = WORKSPACE / "logs"
 
 UI_PREFS_PATH: Final[Path] = WORKSPACE / "ui_prefs.json"
-SETTINGS_PATH: Final[Path] = WORKSPACE / "settings.json"
+
+# --------------------- STABLE CONFIG DIRECTORY ----------------------
+# Connection settings (ADO organization/prefix, JIRA URL/user) and the
+# encrypted PAT fallback files live in a dedicated directory that is
+# INDEPENDENT of both the versioned install directory and the workspace.
+# The installer/updater must never touch it, so credentials survive every
+# agent update and reinstall. Override with TT_CONFIG_DIR (absolute path).
+def _resolve_config_dir() -> Path:
+    override = (os.environ.get("TT_CONFIG_DIR") or "").strip()
+    if override:
+        try:
+            return Path(override).expanduser()
+        except (OSError, ValueError):
+            pass
+    return Path.home() / ".testing_toolkit"
+
+
+CONFIG_DIR:    Final[Path] = _resolve_config_dir()
+SETTINGS_PATH: Final[Path] = CONFIG_DIR / "settings.json"
+# Legacy location (pre-2.19) — used only to migrate settings once.
+LEGACY_SETTINGS_PATH: Final[Path] = WORKSPACE / "settings.json"
 
 # -------------------------- DISPLAY ---------------------------
 # Projects are shown with this prefix stripped, e.g.

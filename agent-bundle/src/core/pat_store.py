@@ -21,7 +21,40 @@ from typing import Final
 
 # Hardcoded paths
 HOME_DIR: Final[Path] = Path.home()
-FALLBACK_PATH: Final[Path] = HOME_DIR / ".ado_pdf_packager_token"
+
+
+def _config_dir() -> Path:
+    """Stable config dir, resolved from TT_CONFIG_DIR or ~/.testing_toolkit.
+    Computed from the environment (not a cached app_config constant) so it
+    tracks HOME correctly under tests and reloads."""
+    override = (os.environ.get("TT_CONFIG_DIR") or "").strip()
+    if override:
+        try:
+            return Path(override).expanduser()
+        except (OSError, ValueError):
+            pass
+    return Path.home() / ".testing_toolkit"
+
+
+def _fallback_path() -> Path:
+    """Encrypted-PAT fallback file in the stable config dir so it survives
+    agent updates. Falls back to the legacy home path on error. A one-time
+    migration copies the legacy file across."""
+    legacy = Path.home() / ".ado_pdf_packager_token"
+    try:
+        target = _config_dir() / "ado_pat.enc"
+        if not target.exists() and legacy.exists():
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(legacy.read_bytes())
+            except OSError:
+                return legacy
+        return target
+    except Exception:
+        return legacy
+
+
+FALLBACK_PATH: Final[Path] = _fallback_path()
 SERVICE_NAME: Final[str] = "ado_pdf_packager"
 USERNAME: Final[str] = "default"
 
@@ -147,6 +180,8 @@ def _file_get() -> str | None:
 
 def _file_set(token: str) -> bool:
     try:
+        # The stable config dir may not exist yet on a fresh machine.
+        FALLBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
         data = token.encode("utf-8")
         # Try DPAPI (Windows)
         enc = _dpapi_encrypt(data)

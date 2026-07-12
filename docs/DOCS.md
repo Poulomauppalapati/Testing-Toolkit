@@ -230,9 +230,18 @@ and model routing are centrally managed and are never exposed as user settings.
 
 ## 5. Workspace layout
 
+Connection settings and credentials live in a stable config directory that is
+**independent of the versioned install and the workspace**, so they survive
+every agent update and reinstall (see 5.1).
+
 ```
+~/.testing_toolkit/            stable config dir (NEVER touched by updates)
+  settings.json                source connections, display prefix
+  ado_pat.enc                  encrypted ADO PAT fallback (if no OS keyring)
+  jira_pat.enc                 encrypted JIRA PAT fallback (if no OS keyring)
+
 ~/TestingToolkitWeb/
-  settings.json              source connections, display prefix, UI preferences
+  ui_prefs.json               UI preferences (window, panel sizes)
   projects/<name>/
     system_prompt.txt         per-project RLM generation prompt
     kb/                        requirement documents (source files)
@@ -246,6 +255,32 @@ and model routing are centrally managed and are never exposed as user settings.
       testcases/               test case review .xlsx
   logs/                       rotating debug log
 ```
+
+### 5.1 Credential persistence and updates
+
+- Personal Access Tokens are stored in the OS secret store first (Windows
+  Credential Manager / macOS Keychain / Linux Secret Service). When no keyring
+  is available the agent writes an **encrypted** fallback file into
+  `~/.testing_toolkit/` (`ado_pat.enc`, `jira_pat.enc`).
+- The ADO organization/prefix and JIRA URL/user live in
+  `~/.testing_toolkit/settings.json`.
+- Because none of these paths sit inside the versioned install directory, an
+  agent update or reinstall cannot delete or overwrite them. On first launch of
+  v2.19+, any pre-existing `~/TestingToolkitWeb/settings.json` and legacy PAT
+  files are migrated once into the stable config dir automatically.
+- Override the config dir with `TT_CONFIG_DIR` (absolute path) if required.
+
+### 5.2 Update policy (web vs. agent)
+
+- The web app deploys continuously to Vercel. **UI-only and label changes ship
+  through the web deploy and never require an agent reinstall.**
+- The installed agent only prompts to reinstall when the published update
+  manifest advertises a version **strictly newer** than the running agent
+  (semantic comparison, not string inequality). Re-publishing a manifest at an
+  equal or lower version does not nag users.
+- The agent update path is detection-only: the agent never downloads, patches,
+  or restarts itself. A genuinely newer agent is installed through the normal
+  installer, which preserves the workspace and the stable config dir.
 
 ---
 

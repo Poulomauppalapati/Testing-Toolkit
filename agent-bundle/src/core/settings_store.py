@@ -183,6 +183,7 @@ def _file_get(path: Path) -> str | None:
 
 def _file_set(path: Path, value: str) -> bool:
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         encrypted = _encrypt_value(value)
         path.write_text(encrypted, encoding="ascii")
         try:
@@ -225,7 +226,27 @@ _DEFAULTS: Final[dict[str, str]] = {
 }
 
 
+def _migrate_legacy_settings() -> None:
+    """One-time move of settings.json from the old workspace location into the
+    stable config dir, so connection details survive updates. Best-effort and
+    idempotent: it only copies when the new file is absent and the legacy file
+    exists."""
+    try:
+        from core.app_config import LEGACY_SETTINGS_PATH
+
+        if SETTINGS_PATH.exists() or not LEGACY_SETTINGS_PATH.exists():
+            return
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_PATH.write_text(
+            LEGACY_SETTINGS_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
 def _load_all() -> dict[str, str]:
+    if not SETTINGS_PATH.exists():
+        _migrate_legacy_settings()
     if not SETTINGS_PATH.exists():
         return {}
     try:
@@ -304,7 +325,36 @@ def save_pat_value(pat: str) -> bool:
 # ---------------------------------------------------------------------
 _JIRA_SERVICE: Final[str] = "testing_toolkit_jira"
 _JIRA_USERNAME: Final[str] = "default"
-_JIRA_FALLBACK_PATH: Final[Path] = Path.home() / ".testing_toolkit_jira_pat"
+
+
+def _config_dir() -> Path:
+    override = (os.environ.get("TT_CONFIG_DIR") or "").strip()
+    if override:
+        try:
+            return Path(override).expanduser()
+        except (OSError, ValueError):
+            pass
+    return Path.home() / ".testing_toolkit"
+
+
+def _jira_fallback_path() -> Path:
+    """JIRA PAT fallback file in the stable config dir (survives updates), with
+    one-time migration from the legacy home-directory location."""
+    legacy = Path.home() / ".testing_toolkit_jira_pat"
+    try:
+        target = _config_dir() / "jira_pat.enc"
+        if not target.exists() and legacy.exists():
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(legacy.read_bytes())
+            except OSError:
+                return legacy
+        return target
+    except Exception:
+        return legacy
+
+
+_JIRA_FALLBACK_PATH: Final[Path] = _jira_fallback_path()
 
 
 def load_jira_pat() -> str:

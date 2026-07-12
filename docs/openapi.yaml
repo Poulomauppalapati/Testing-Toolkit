@@ -372,6 +372,40 @@ paths:
               schema:
                 $ref: "#/components/schemas/KbStatus"
 
+  /kb/clear/{project}:
+    post:
+      tags: [Knowledge Base]
+      summary: Force-clear a project's knowledge base
+      description: >
+        Immediately stops any in-flight indexing/context jobs for the project
+        and wipes the index, dense vector store, context summary, and context
+        maps. Uploaded documents are deleted unless keep_documents=true. This is
+        a hard terminate + wipe, callable at any point regardless of progress.
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema: { type: string }
+        - name: keep_documents
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: What was cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cleared:
+                    type: array
+                    items: { type: string }
+                  kept_documents: { type: boolean }
+                  stopped_jobs:
+                    type: array
+                    items: { type: string }
+
   /llm/complete:
     post:
       tags: [LLM]
