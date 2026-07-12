@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FTimeout
+from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
@@ -142,6 +143,31 @@ def test_kb_retrieve_no_500(client):
 def test_kb_status_no_500(client):
     r = client.get("/kb/status/SomeProject")
     assert r.status_code != 500, r.text
+
+
+def test_copy_upload_limited_rejects_oversize_without_unbounded_read(tmp_path):
+    from agent.routes import kb
+
+    class ChunkGuard(BytesIO):
+        def read(self, size=-1):
+            assert size == kb._UPLOAD_CHUNK_BYTES
+            return super().read(size)
+
+    destination = tmp_path / "bounded.upload"
+    payload = ChunkGuard(b"x" * (kb._UPLOAD_CHUNK_BYTES + 1))
+    with pytest.raises(ValueError, match="1 MB limit"):
+        kb._copy_upload_limited(payload, destination, kb._UPLOAD_CHUNK_BYTES)
+    assert destination.stat().st_size == kb._UPLOAD_CHUNK_BYTES
+
+
+def test_copy_upload_limited_streams_valid_payload(tmp_path):
+    from agent.routes import kb
+
+    destination = tmp_path / "valid.upload"
+    source = BytesIO(b"bounded")
+    written = kb._copy_upload_limited(source, destination, 1024)
+    assert written == 7
+    assert destination.read_bytes() == b"bounded"
 
 
 def test_context_worker_can_start_without_asyncio_loop(monkeypatch):

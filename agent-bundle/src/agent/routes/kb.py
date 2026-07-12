@@ -16,6 +16,25 @@ from agent.jobs import Job
 
 router = APIRouter()
 
+_MAX_KB_UPLOAD_BYTES = 250 * 1024 * 1024
+_MAX_TEMPLATE_UPLOAD_BYTES = 25 * 1024 * 1024
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+def _copy_upload_limited(file_obj: Any, destination: Path, limit_bytes: int) -> int:
+    """Stream an upload to a temporary file while enforcing a hard byte ceiling."""
+    written = 0
+    with destination.open("wb") as output:
+        while True:
+            chunk = file_obj.read(_UPLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > limit_bytes:
+                raise ValueError(f"Upload exceeds the {limit_bytes // (1024 * 1024)} MB limit")
+            output.write(chunk)
+    return written
+
 
 class RetrieveRequest(BaseModel):
     project: str
@@ -414,12 +433,11 @@ async def upload_document(
 ) -> dict:
     """Upload a document to the project's kb/ folder.
 
-    The body is streamed straight to disk on a worker thread via
-    shutil.copyfileobj instead of buffering the whole file in memory with
-    ``await file.read()``. That keeps memory flat and the write fast even for
-    large docs, and never blocks the event loop. No indexing happens here -
-    that is deferred to the explicit rebuild/auto-index on dialog close."""
-    import shutil
+    The body is streamed into a size-limited temporary file on a worker thread,
+    then atomically replaces the destination. That keeps memory flat, prevents
+    partial overwrites, and never blocks the event loop. No indexing happens
+    here - that is deferred to the explicit rebuild/auto-index on dialog close."""
+    import tempfile
 
     project_dir = PROJECTS_DIR / project
     kb_dir = project_dir / "kb"
@@ -430,13 +448,27 @@ async def upload_document(
     if not safe_name:
         raise HTTPException(400, "Invalid file name")
     dest = kb_dir / safe_name
+    temp_path: Path | None = None
 
     def _save() -> int:
-        with dest.open("wb") as out:
-            shutil.copyfileobj(file.file, out, length=1024 * 1024)
-        return dest.stat().st_size
+        nonlocal temp_path
+        import os
 
-    size = await asyncio.to_thread(_save)
+        fd, raw_path = tempfile.mkstemp(prefix=f".{safe_name}.", suffix=".upload", dir=kb_dir)
+        os.close(fd)
+        temp_path = Path(raw_path)
+        size = _copy_upload_limited(file.file, temp_path, _MAX_KB_UPLOAD_BYTES)
+        temp_path.replace(dest)
+        temp_path = None
+        return size
+
+    try:
+        size = await asyncio.to_thread(_save)
+    except ValueError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
     return {"ok": True, "path": str(dest), "size": size}
 
 
@@ -534,12 +566,22 @@ async def upload_template(
     import core.project_store as ps
 
     suffix = Path(file.filename or "template.xlsx").suffix.lower() or ".xlsx"
-    content = await file.read()
+    if suffix not in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        raise HTTPException(400, "Template must be an Excel workbook")
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(content)
         tmp_path = Path(tmp.name)
-
     try:
+        try:
+            await asyncio.to_thread(
+                _copy_upload_limited,
+                file.file,
+                tmp_path,
+                _MAX_TEMPLATE_UPLOAD_BYTES,
+            )
+        except ValueError as exc:
+            raise HTTPException(413, str(exc)) from exc
+
+
         llm_mapping = None
         llm_header_row = None
         try:
