@@ -1,7 +1,7 @@
 {
-  "version": "2.19.1",
+  "version": "2.19.2",
   "ref": "main",
-  "generatedAt": "2026-07-12T18:26:01.545Z",
+  "generatedAt": "2026-07-12T18:40:24.352Z",
   "files": [
     {
       "path": ".env.enc",
@@ -21,7 +21,7 @@
     {
       "path": "ado/boards.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/ado/boards.py?ref=main",
-      "hash": "9a2cf8c51392e83650e62489ddedda5a3aa9d27b1463d5bfd2ff44d086f22349"
+      "hash": "41b0aaeaf3e26ba7b2a135d687299331ac8e0a712f92f2a80e4820604ccafd0a"
     },
     {
       "path": "ado/extract.py",
@@ -156,7 +156,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "c150cf9ec9dff043877b31082552e24be4d0e89e6f7eeeded8d6d88e9416d79a"
+      "hash": "88b8a1c4e77ba29276a6e0a4579cc31a4c88d1cbd3532bc6269caa11ef47ff50"
     },
     {
       "path": "automation/__init__.py",
@@ -381,7 +381,7 @@
     {
       "path": "jira/boards.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/jira/boards.py?ref=main",
-      "hash": "f143754a3e053cb2419da1ec3f95912d9908ef3c04e1b0d5771f0d9065a92fa3"
+      "hash": "325299ac803e74eec1d6b416ddc20ba32a531de9c0c5c614a4f8e3e17425947e"
     },
     {
       "path": "jira/testcase_creator.py",
@@ -482,6 +482,16 @@
       "path": "prompt.md",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/prompt.md?ref=main",
       "hash": "e1b25d04569ca6b5cb7c3f276a68926088203e331bdf6b73b3bacd71719b6fa3"
+    },
+    {
+      "path": "scripts/__init__.py",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/scripts/__init__.py?ref=main",
+      "hash": "67308bc4fadec3319a1ce4b0312043c508a1154de21319965da9476c5dc2b9ea"
+    },
+    {
+      "path": "scripts/discover_test_cases.py",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/scripts/discover_test_cases.py?ref=main",
+      "hash": "0e9a1279daf97c4c59c3eae6ebd6b36121b65639a3ddba9263cbab2f434243fc"
     },
     {
       "path": "testgen/__init__.py",
