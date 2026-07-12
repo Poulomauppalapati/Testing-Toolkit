@@ -736,55 +736,39 @@ try {
     $code = $LASTEXITCODE
     Pop-Location
   } else {
-    # Run the offline installer ASYNCHRONOUSLY and animate a live heartbeat while
-    # it works. The offline dependency install and agent self-test legitimately
-    # take several minutes; a blocking call with redirected output made the
-    # console look frozen. We tail the installer's own log so the user sees the
-    # CURRENT activity + an elapsed timer + an animated bar, and the trace log gets a
-    # [PROGRESS] line every 10s so support sees forward motion too.
+    # Run the offline installer ASYNCHRONOUSLY and show a single progress bar
+    # while it works. The offline dependency install and agent self-test
+    # legitimately take a couple of minutes; a blocking call with redirected
+    # output made the console look frozen. The bar (below) advances on an ETA so
+    # the user sees one clean, moving bar like every other step.
     $code = $null
     try {
       New-Item -ItemType File -Force -Path $pythonLog | Out-Null
       $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/c "' + $installCmd + '"') -WorkingDirectory $dest -NoNewWindow -PassThru -RedirectStandardOutput $pythonLog -RedirectStandardError $pythonErr
       $sw = [System.Diagnostics.Stopwatch]::StartNew()
-      # This step is an opaque child process with no knowable total, so we render
-      # an INDETERMINATE bar in the same [####] bracket style as the other steps:
-      # a block that sweeps across the track (like an activity/tqdm bar). Honest
-      # about progress while giving the visual bar users expect.
-      $barW = 28
-      $blk = 6
-      $pos = 0
-      $dir = 1
-      $step = 0
-      $lastTrace = -1
-      $lastActivity = 'starting offline installer'
+      # Render ONE progress bar in the exact same style as every other step
+      # (Show-StepBar: [####----] NN% label). This step is an opaque child
+      # process, so the fill is an ETA-based estimate (Est. ~2 min) that eases
+      # toward 99% and snaps to 100% on success - a single clean bar, not a
+      # flickering line of nested installer output. The child's real output
+      # still streams to $pythonLog for support.
+      $estSeconds = 120.0
+      $lastPct = -1
       while (-not $proc.HasExited) {
-        Start-Sleep -Milliseconds 250
-        try {
-          $tail = Get-Content -LiteralPath $pythonLog -Tail 1 -ErrorAction SilentlyContinue
-          if ($tail) { $t = ([string]$tail).Trim(); if ($t) { $lastActivity = $t } }
-        } catch {}
-        $elapsed = [int]$sw.Elapsed.TotalSeconds
-        # Advance the sweeping block and bounce it off both ends of the track.
-        $pos += $dir
-        if ($pos -le 0) { $pos = 0; $dir = 1 }
-        elseif ($pos -ge ($barW - $blk)) { $pos = $barW - $blk; $dir = -1 }
-        $bar = ('-' * $pos) + ('#' * $blk) + ('-' * ($barW - $blk - $pos))
-        $label = ($lastActivity -replace '\\s+', ' ')
-        if ($label.Length -gt 40) { $label = $label.Substring(0, 37) + '...' }
-        $mm = [int]($elapsed / 60); $ss = $elapsed % 60
-        Write-Host -NoNewline ("\`r    [{0}] {1:D2}:{2:D2} elapsed  {3,-42}" -f $bar, $mm, $ss, $label) -ForegroundColor Cyan
-        $step++
-        if ($elapsed -ne $lastTrace -and ($elapsed % 10) -eq 0) {
-          $lastTrace = $elapsed
-          Trace 'PROGRESS' ('installing/verifying agent - ' + $mm.ToString('00') + ':' + $ss.ToString('00') + ' elapsed - ' + $label)
+        Start-Sleep -Milliseconds 500
+        $elapsed = $sw.Elapsed.TotalSeconds
+        $pct = [int][Math]::Floor(($elapsed / $estSeconds) * 100)
+        if ($pct -gt 99) { $pct = 99 }
+        if ($pct -ne $lastPct) {
+          $lastPct = $pct
+          Show-StepBar $pct 'Installing and verifying the agent'
         }
       }
-      # Snap the bar to a full [############] on success so it reads as complete.
       if ($proc.ExitCode -eq 0) {
-        Write-Host -NoNewline ("\`r    [{0}] done  {1,-48}" -f ('#' * $barW), 'agent installed and verified') -ForegroundColor Cyan
+        Show-StepBar 100 'Agent installed and verified'
+      } else {
+        Write-Host ""
       }
-      Write-Host ""
       $code = $proc.ExitCode
     } catch {
       Trace 'WARN' ('async install heartbeat unavailable (' + $_.Exception.Message + '); falling back to blocking run')
