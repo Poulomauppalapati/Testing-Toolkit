@@ -48,7 +48,7 @@ def _values_from_vercel_env() -> dict[str, str]:
 def _metadata(path: Path) -> str:
     values = open_credentials(path.read_bytes())
     # Deliberately disclose no host, path, key prefix, lengths, or hashes.
-    return f"valid envelope v2; provider={values['LLM_PROVIDER_FORMAT']}; fields=3"
+    return f"valid envelope v3; provider={values['LLM_PROVIDER_FORMAT']}; fields=3"
 
 
 def _values_from_legacy_envelope(path: Path) -> dict[str, str]:

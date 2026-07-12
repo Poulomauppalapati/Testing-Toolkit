@@ -15,8 +15,11 @@ from typing import Final, Mapping
 from urllib.parse import urlsplit
 
 _FORMAT: Final[str] = "tt-credential-envelope"
-_VERSION: Final[int] = 2
-_AAD: Final[bytes] = b"TestingToolkit/GenAI/release-envelope/v2"
+_VERSION: Final[int] = 3
+_AAD_V2: Final[bytes] = b"TestingToolkit/GenAI/release-envelope/v2"
+_AAD_V3: Final[bytes] = b"TestingToolkit/GenAI/release-envelope/v3"
+_KDF_V2: Final[str] = "scrypt-n32768-r8-p1"
+_KDF_V3: Final[str] = "pbkdf2-sha256-i600000"
 _MAX_ENVELOPE_BYTES: Final[int] = 16_384
 _MAX_URL_CHARS: Final[int] = 2_048
 _MAX_KEY_CHARS: Final[int] = 8_192
@@ -49,13 +52,31 @@ def _b64d(value: object, *, field: str, expected: int | None = None) -> bytes:
     return raw
 
 
-def _derive_key(salt: bytes) -> bytes:
+def _derive_key(salt: bytes, kdf: str) -> bytes:
+    """Derive wrapping material using the envelope-declared algorithm.
+
+    Version 3 uses PBKDF2 because OpenSSL's platform-specific scrypt memory
+    ceiling can reject the valid v2 parameters on Windows while accepting the
+    same envelope on Linux. V2 remains readable only for release migration.
+    """
+    material = b"".join(_WRAP_PARTS)
     try:
-        from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+        if kdf == _KDF_V3:
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+            return PBKDF2HMAC(
+                algorithm=hashes.SHA256(), salt=salt, length=32, iterations=600_000
+            ).derive(material)
+        if kdf == _KDF_V2:
+            from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+
+            return Scrypt(salt=salt, length=32, n=2**15, r=8, p=1).derive(material)
     except ImportError as exc:
         raise CredentialEnvelopeError("credential cryptography unavailable") from exc
-    material = b"".join(_WRAP_PARTS)
-    return Scrypt(salt=salt, length=32, n=2**15, r=8, p=1).derive(material)
+    except Exception as exc:
+        raise CredentialEnvelopeError("credential key derivation failed") from exc
+    raise CredentialEnvelopeError("unsupported credential key derivation")
 
 
 def validate_credentials(values: Mapping[str, object]) -> dict[str, str]:
@@ -92,11 +113,11 @@ def seal_credentials(values: Mapping[str, object]) -> bytes:
     payload = validate_credentials(values)
     plaintext = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     salt, nonce = os.urandom(16), os.urandom(12)
-    ciphertext = AESGCM(_derive_key(salt)).encrypt(nonce, plaintext, _AAD)
+    ciphertext = AESGCM(_derive_key(salt, _KDF_V3)).encrypt(nonce, plaintext, _AAD_V3)
     envelope = {
         "format": _FORMAT,
         "version": _VERSION,
-        "kdf": "scrypt-n32768-r8-p1",
+        "kdf": _KDF_V3,
         "cipher": "aes-256-gcm",
         "salt": _b64e(salt),
         "nonce": _b64e(nonce),
@@ -120,19 +141,21 @@ def open_credentials(data: bytes) -> dict[str, str]:
         "format", "version", "kdf", "cipher", "salt", "nonce", "ciphertext"
     }:
         raise CredentialEnvelopeError("invalid credential envelope schema")
+    version = outer["version"]
+    kdf = outer["kdf"]
     if (
         outer["format"] != _FORMAT
-        or outer["version"] != _VERSION
-        or outer["kdf"] != "scrypt-n32768-r8-p1"
+        or (version, kdf) not in {(_VERSION, _KDF_V3), (2, _KDF_V2)}
         or outer["cipher"] != "aes-256-gcm"
     ):
         raise CredentialEnvelopeError("unsupported credential envelope")
+    aad = _AAD_V3 if version == _VERSION else _AAD_V2
     salt = _b64d(outer["salt"], field="salt", expected=16)
     nonce = _b64d(outer["nonce"], field="nonce", expected=12)
     ciphertext = _b64d(outer["ciphertext"], field="ciphertext")
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        plaintext = AESGCM(_derive_key(salt)).decrypt(nonce, ciphertext, _AAD)
+        plaintext = AESGCM(_derive_key(salt, kdf)).decrypt(nonce, ciphertext, aad)
         payload = json.loads(plaintext.decode("utf-8"))
     except CredentialEnvelopeError:
         raise

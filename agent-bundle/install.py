@@ -34,6 +34,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -202,19 +203,36 @@ def progress(phase: str, message: str, percent: float | None = None, **extra) ->
 
 
 def _run(cmd, **kwargs):
-    """subprocess.run wrapper that is windowless on Windows.
-
-    Traces the command and (when captured) its output + return code to the log
-    so pip/venv/schtasks failures are fully diagnosable even though the install
-    runs hidden.
-    """
+    """Run a child process with trace logging and optional visible heartbeat."""
+    progress_label = str(kwargs.pop("progress_label", "")).strip()
     kwargs.setdefault("creationflags", _CF)
     try:
         printable = cmd if isinstance(cmd, str) else " ".join(str(c) for c in cmd)
     except Exception:
         printable = str(cmd)
     trace(f"run: {printable}")
-    result = subprocess.run(cmd, **kwargs)
+
+    stopped = threading.Event()
+
+    def _heartbeat() -> None:
+        started = time.monotonic()
+        while not stopped.wait(10):
+            elapsed = int(time.monotonic() - started)
+            message = f"    ... {progress_label} ({elapsed}s elapsed)"
+            print(message, flush=True)
+            _log_line("PROGRESS", message.strip())
+
+    heartbeat = None
+    if progress_label:
+        print(f"    ... {progress_label}", flush=True)
+        heartbeat = threading.Thread(target=_heartbeat, name="install-progress", daemon=True)
+        heartbeat.start()
+    try:
+        result = subprocess.run(cmd, **kwargs)
+    finally:
+        stopped.set()
+        if heartbeat is not None:
+            heartbeat.join(timeout=1)
     try:
         rc = getattr(result, "returncode", None)
         if rc is not None:
@@ -736,7 +754,12 @@ def install_via_venv(base_python: str, online: bool = False) -> str | None:
     progress("installing_deps", "Installing packages (clean, no cached wheels)", 78)
     # Capture output so the real pip failure reason is written to the trace log
     # (the install runs hidden, so streamed stdout would otherwise be lost).
-    r = _run([str(venv_py), *args], text=True, capture_output=True)
+    r = _run(
+        [str(venv_py), *args],
+        text=True,
+        capture_output=True,
+        progress_label="Installing Python packages",
+    )
     if r.returncode != 0:
         warn("pip install (venv) failed; see the installer log for details.")
         return None
@@ -763,7 +786,12 @@ def install_via_target(python_exe: str, online: bool = False) -> str | None:
     args = pip_args_online(extra) if online else pip_args_offline(extra)
     progress("installing_deps", "Installing packages (clean, no cached wheels)", 78)
     # Capture output so the real pip failure reason lands in the trace log.
-    r = _run([python_exe, *args], text=True, capture_output=True)
+    r = _run(
+        [python_exe, *args],
+        text=True,
+        capture_output=True,
+        progress_label="Installing Python packages",
+    )
     if r.returncode != 0:
         warn("pip install (portable) failed; see the installer log for details.")
         return None
@@ -1359,8 +1387,12 @@ def _run_import_selftest(launch_python: str, env: dict, workdir: Path) -> str:
     try:
         res = _run(
             [launch_python, "-c", probe],
-            cwd=str(workdir), env=env,
-            capture_output=True, text=True, timeout=120,
+            cwd=str(workdir),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            progress_label="Authenticating managed AI configuration and importing agent",
         )
     except Exception as exc:  # noqa: BLE001
         return f"self-test could not run: {exc}"

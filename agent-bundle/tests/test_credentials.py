@@ -32,8 +32,8 @@ def test_envelope_roundtrip_is_random_and_contains_no_plaintext():
     assert open_credentials(first) == VALUES
     outer = json.loads(first)
     assert outer["cipher"] == "aes-256-gcm"
-    assert outer["kdf"] == "scrypt-n32768-r8-p1"
-    assert outer["version"] == 2
+    assert outer["kdf"] == "pbkdf2-sha256-i600000"
+    assert outer["version"] == 3
 
 
 @pytest.mark.parametrize("field", ["ciphertext", "nonce", "salt"])
