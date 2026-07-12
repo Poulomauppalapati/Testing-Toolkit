@@ -138,8 +138,8 @@ export function OnboardingScreen({
                 you add, replace or remove are indexed afterward.
               </li>
               <li>
-                The installer refreshes agent code and disposable runtime caches;
-                it does not reset your completed tour.
+                The installer refreshes agent code and disposable runtime
+                caches; your settings and data are preserved.
               </li>
             </ul>
           </div>

@@ -6,7 +6,6 @@ import { agent, type SettingsResponse } from "@/lib/agent-client";
 import { AppStateProvider } from "@/lib/app-state";
 import { OnboardingScreen } from "@/components/onboarding/OnboardingScreen";
 import { AppShell } from "@/components/layout/AppShell";
-import { FirstRunGate } from "@/components/onboarding/FirstRunGate";
 import { getPreferences, setPendingReinstallPref } from "@/lib/preferences";
 
 export default function Home() {
@@ -55,9 +54,7 @@ function ConnectedApp() {
 
   return (
     <AppStateProvider initialSettings={settings}>
-      <FirstRunGate>
-        <AppShell />
-      </FirstRunGate>
+      <AppShell />
     </AppStateProvider>
   );
 }

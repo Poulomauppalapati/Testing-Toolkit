@@ -750,14 +750,6 @@ export const agent = {
     });
   },
 
-  /** Persist guided-tour completion server-side (survives a localStorage wipe).
-   * Older agents without this route 404 ��� callers should ignore that. */
-  async setTourCompleted(completed: boolean): Promise<void> {
-    await agentFetch("/settings/tour", {
-      method: "POST",
-      body: JSON.stringify({ completed }),
-    });
-  },
 
   // -- System prompts (per project + phase scope) --
   async getSystemPrompt(

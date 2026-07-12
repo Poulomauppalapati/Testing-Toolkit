@@ -191,7 +191,7 @@ function ReinstallConfirm({
               <b className="text-foreground">onboarding again</b> — the app
               returns to Step 1 so you{" "}
               <b className="text-foreground">re-download and run the installer</b>
-              , then take the quick tour.
+              .
             </span>
           </li>
           <li className="flex gap-2">
@@ -224,8 +224,8 @@ function ReinstallConfirm({
             <li className="flex gap-2">
               <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
               <span className="text-muted-foreground">
-                Agent code and disposable runtime caches are refreshed without
-                resetting your completed tour.
+                Agent code and disposable runtime caches are refreshed while
+                your settings and data are preserved.
               </span>
             </li>
           <li className="flex gap-2">
