@@ -1,7 +1,7 @@
 {
-  "version": "2.19.2",
+  "version": "2.19.3",
   "ref": "main",
-  "generatedAt": "2026-07-12T18:40:24.352Z",
+  "generatedAt": "2026-07-13T12:29:26.351Z",
   "files": [
     {
       "path": ".env.enc",
@@ -27,6 +27,11 @@
       "path": "ado/extract.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/ado/extract.py?ref=main",
       "hash": "1889125823f4f3b1139cb5fb432c5c11344d1027b751e16a201c6262e197a3ce"
+    },
+    {
+      "path": "ado/test_steps.py",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/ado/test_steps.py?ref=main",
+      "hash": "f12757eb35989ebb86e9922950a4fc04aa6a6c9a07c499d02010eacfaadff949"
     },
     {
       "path": "ado/testcase_creator.py",
@@ -91,7 +96,7 @@
     {
       "path": "agent/routes/e2e.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/e2e.py?ref=main",
-      "hash": "c5bae6820c8b50c8f4446dea87da9b6e3d461ea94fd9fd51ae0d6e1673dce369"
+      "hash": "6c12e85050b0c299320a0c4bcc2c7f66c4bfcc470e7061aa4e26ec3754bf1997"
     },
     {
       "path": "agent/routes/generate.py",
@@ -156,7 +161,7 @@
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "88b8a1c4e77ba29276a6e0a4579cc31a4c88d1cbd3532bc6269caa11ef47ff50"
+      "hash": "a890cfacc66d08e3bb7e7289b229f3e9c355dcc57e0d9ebc375a027f557af58b"
     },
     {
       "path": "automation/__init__.py",
@@ -382,6 +387,11 @@
       "path": "jira/boards.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/jira/boards.py?ref=main",
       "hash": "325299ac803e74eec1d6b416ddc20ba32a531de9c0c5c614a4f8e3e17425947e"
+    },
+    {
+      "path": "jira/test_steps.py",
+      "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/jira/test_steps.py?ref=main",
+      "hash": "8f4509896b45fb452984919ddc7cb5667466b3b16c09b9ab113aa565716f13fb"
     },
     {
       "path": "jira/testcase_creator.py",
