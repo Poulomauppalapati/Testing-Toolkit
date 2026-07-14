@@ -68,3 +68,14 @@ agent-bundle/.venv/
 package-lock.json
 
 .vercel
+
+# AI/IDE workspace artifacts (Repowise, Claude, VS Code)
+.repowise/
+.repowise-workspace/
+.repowise-workspace.yaml
+.claude/
+.mcp.json
+.vscode/
+.augment-session.json
+centrality_cache.pkl
+duplication_cache.pkl
