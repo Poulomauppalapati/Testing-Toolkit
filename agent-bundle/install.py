@@ -1543,16 +1543,14 @@ def start_agent(launch_python: str, use_pythonpath: bool) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Optional playwright post-install (E2E browser automation)
+# Required playwright install (E2E browser automation)
 # --------------------------------------------------------------------------
-def _install_playwright_optional(launch_python: str, use_pythonpath: bool) -> None:
-    """Install playwright from PyPI as a non-fatal optional step.
+def _install_playwright(launch_python: str, use_pythonpath: bool) -> bool:
+    """Install playwright + Chromium from PyPI. Returns True on success.
 
-    Called after the core deps succeed. Any failure is logged and ignored so a
-    corporate proxy, air-gapped network, or platform restriction never breaks the
-    core install. The agent still boots without playwright; /e2e/* routes return
-    503 until it is available.
-    Skipped entirely when playwright>=1.44 is already present and up-to-date.
+    Called after the core deps succeed. Playwright is required for E2E
+    automation. If installation fails the caller should abort the install.
+    Skipped (returns True) when playwright>=1.44 is already present.
     """
     # Determine the pip executable for the installed environment.
     if os.name == "nt":
@@ -1566,10 +1564,10 @@ def _install_playwright_optional(launch_python: str, use_pythonpath: bool) -> No
 
     if _pkg_satisfies(str(pip_exe), "playwright>=1.44"):
         ok("playwright>=1.44 already installed -- skipping.")
-        return
+        return True
 
-    info("Installing playwright (optional, E2E automation)...")
-    progress("installing_deps", "Installing playwright (optional)", 92)
+    info("Installing playwright (E2E automation)...")
+    progress("installing_deps", "Installing playwright", 92)
 
     try:
         r = _run(
@@ -1578,15 +1576,15 @@ def _install_playwright_optional(launch_python: str, use_pythonpath: bool) -> No
             capture_output=True, text=True, timeout=180,
         )
         if r.returncode != 0:
-            warn("Optional playwright install from PyPI failed (non-fatal).")
-            warn("E2E routes will return 503 until you run: pip install playwright && playwright install chromium")
-            return
+            error("Playwright install from PyPI failed.")
+            error("Ensure network/proxy access to PyPI is available.")
+            return False
         ok("playwright installed.")
     except Exception as exc:  # noqa: BLE001
-        warn(f"Optional playwright install raised an exception (non-fatal): {exc}")
-        return
+        error(f"Playwright install raised an exception: {exc}")
+        return False
 
-    # Install the Chromium browser binary (also optional/non-fatal).
+    # Install the Chromium browser binary.
     try:
         r = _run(
             [str(pip_exe), "-m", "playwright", "install", "chromium"],
@@ -1595,9 +1593,14 @@ def _install_playwright_optional(launch_python: str, use_pythonpath: bool) -> No
         if r.returncode == 0:
             ok("Playwright Chromium browser installed.")
         else:
-            warn("Playwright browser install failed (non-fatal). Run `playwright install chromium` manually.")
+            error("Playwright Chromium browser install failed.")
+            error("Run `playwright install chromium` manually after fixing network access.")
+            return False
     except Exception as exc:  # noqa: BLE001
-        warn(f"Playwright browser install raised an exception (non-fatal): {exc}")
+        error(f"Playwright browser install raised an exception: {exc}")
+        return False
+
+    return True
 
 
 def _install_cryptography_optional(launch_python: str, use_pythonpath: bool) -> None:
@@ -2263,18 +2266,19 @@ def main() -> int:
     # stale bundle wheelhouse never blocks the core install (2.10.1 regression).
     _install_cryptography_optional(launch_python, use_pythonpath)
 
-    # --- Optional: playwright (E2E browser automation) -------------------
+    # --- Required: playwright (E2E browser automation) --------------------
     # playwright is NOT in requirements.txt because it ships no Windows wheel
     # in the bundled wheelhouse and its browsers (~200 MB) can't be bundled.
-    # We try to install it here from PyPI as a best-effort post-install step so
-    # the E2E routes work out of the box. The main install already succeeded by
-    # this point, so ANY failure here is logged but non-fatal: the agent starts
-    # cleanly and all non-E2E routes work; only /e2e/* endpoints return 503
-    # until the user manually runs `playwright install chromium`.
-    if not offline_only:
-        _install_playwright_optional(launch_python, use_pythonpath)
-    else:
-        info("Skipping optional playwright install (TT_OFFLINE_ONLY=1).")
+    # It is installed from PyPI as a required post-step; failure aborts.
+    if offline_only:
+        error("Playwright requires internet access but TT_OFFLINE_ONLY=1 is set.")
+        error("Unset TT_OFFLINE_ONLY or manually run: pip install playwright && playwright install chromium")
+        return 1
+    if not _install_playwright(launch_python, use_pythonpath):
+        error("Playwright installation failed. E2E automation requires playwright + Chromium.")
+        error("Check network/proxy access to PyPI and re-run the installer.")
+        progress("error", "Playwright installation failed", None)
+        return 1
 
     # --- Optional: mcp Python SDK from bundled wheelhouse ------------------
     # Wheels ship in agent-bundle/wheelhouse/ so this is always offline.

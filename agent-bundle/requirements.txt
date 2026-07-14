@@ -34,11 +34,10 @@ keyring>=24.0
 # offline install (the 2.10.1 source/binary-drift regression).
 
 # --- E2E browser automation (Playwright over CDP attach) ---
-# NOT in this file: playwright is installed as a SEPARATE optional step by
+# NOT in this file: playwright is installed as a SEPARATE required step by
 # install.py after the core deps succeed (it ships no Windows wheel in the
-# bundled wheelhouse, and its browsers must be downloaded anyway).
-# If the optional install fails or is skipped, the agent still boots and all
-# non-E2E routes work; only the /e2e/* endpoints raise 503.
+# bundled wheelhouse, and its browsers must be downloaded from PyPI).
+# If the install fails, the installer aborts with a clear error message.
 
 # --- Document extraction (KB + PDF packaging) ---
 openpyxl>=3.1
