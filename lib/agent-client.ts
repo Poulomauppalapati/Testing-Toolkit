@@ -696,6 +696,58 @@ function rewriteHtmlMedia(html: string, project: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// SSE stream reader utility
+// ---------------------------------------------------------------------------
+async function readSSE(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (payload: string) => void | boolean,
+  opts?: { onChunkArrived?: () => void },
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      opts?.onChunkArrived?.();
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        for (const line of frame.split("\n")) {
+          const prefix = line.startsWith("data: ")
+            ? 6
+            : line.startsWith("data:")
+              ? 5
+              : -1;
+          if (prefix < 0) continue;
+          const payload = line.slice(prefix).trim();
+          if (!payload) continue;
+          const stop = onEvent(payload);
+          if (stop === true) return;
+        }
+      }
+    }
+    if (buffer.trim()) {
+      for (const line of buffer.split("\n")) {
+        const prefix = line.startsWith("data: ")
+          ? 6
+          : line.startsWith("data:")
+            ? 5
+            : -1;
+        if (prefix < 0) continue;
+        const payload = line.slice(prefix).trim();
+        if (payload) onEvent(payload);
+      }
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* already released */ }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 export const agent = {
@@ -925,63 +977,37 @@ export const agent = {
     const rows: WorkItemRow[] = [];
     let columns: BoardColumn[] = [];
     let streamError: string | null = null;
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    const handleEvent = (raw: string) => {
-      const line = raw.trim();
-      if (!line.startsWith("data:")) return;
-      const payload = line.slice(5).trim();
-      if (!payload) return;
-      let evt: {
-        type?: string;
-        items?: WorkItemRow[];
-        sofar?: number;
-        total?: number;
-        columns?: string[];
-        message?: string;
-      };
-      try {
-        evt = JSON.parse(payload);
-      } catch {
-        return;
-      }
-      if (evt.type === "batch" && evt.items) {
-        for (const item of evt.items) {
-          rows.push({
-            ...item,
-            board_column: item.board_column || "",
-          });
-        }
-        onProgress([...rows], evt.sofar ?? rows.length, evt.total ?? 0);
-      } else if (evt.type === "done") {
-        columns = (evt.columns ?? []).map((name) => ({
-          id: name,
-          name,
-          column_type: "",
-        }));
-      } else if (evt.type === "error") {
-        // Record and stop; do not throw from inside the read loop (that would
-        // leak the reader). The loop cancels the reader on the next check.
-        streamError = evt.message || "Streaming board load failed";
-      }
-    };
 
     try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        armStall(); // bytes arrived; reset the inactivity watchdog
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() ?? "";
-        for (const chunk of chunks) handleEvent(chunk);
-        if (streamError) break;
-      }
-      if (!streamError && buffer.trim()) handleEvent(buffer);
+      await readSSE(res.body, (payload) => {
+        let evt: {
+          type?: string;
+          items?: WorkItemRow[];
+          sofar?: number;
+          total?: number;
+          columns?: string[];
+          message?: string;
+        };
+        try {
+          evt = JSON.parse(payload);
+        } catch {
+          return;
+        }
+        if (evt.type === "batch" && evt.items) {
+          for (const item of evt.items) {
+            rows.push({ ...item, board_column: item.board_column || "" });
+          }
+          onProgress([...rows], evt.sofar ?? rows.length, evt.total ?? 0);
+        } else if (evt.type === "done") {
+          columns = (evt.columns ?? []).map((name) => ({
+            id: name, name, column_type: "",
+          }));
+        } else if (evt.type === "error") {
+          streamError = evt.message || "Streaming board load failed";
+          return true;
+        }
+      }, { onChunkArrived: armStall });
     } catch (e) {
-      await reader.cancel().catch(() => {});
       throw ctrl.signal.aborted
         ? new Error("Board stream stalled; falling back")
         : (e as Error);
@@ -989,10 +1015,7 @@ export const agent = {
       if (stallTimer) clearTimeout(stallTimer);
       signal?.removeEventListener("abort", onAbort);
     }
-    if (streamError) {
-      await reader.cancel().catch(() => {});
-      throw new Error(streamError);
-    }
+    if (streamError) throw new Error(streamError);
 
     // Fallback: if no columns arrived (older/edge case), derive from rows.
     if (columns.length === 0) {
@@ -1197,52 +1220,28 @@ export const agent = {
       throw new Error(humanizeError(res.status, body));
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        // SSE frames are separated by a blank line.
-        let sep: number;
-        while ((sep = buffer.indexOf("\n\n")) !== -1) {
-          const frame = buffer.slice(0, sep);
-          buffer = buffer.slice(sep + 2);
-          for (const line of frame.split("\n")) {
-            if (!line.startsWith("data: ")) continue;
-            const payload = line.slice(6);
-            let evt: {
-              type: string;
-              text?: string;
-              name?: string;
-              phase?: "start" | "done";
-              message?: string;
-              stop_reason?: string;
-            };
-            try {
-              evt = JSON.parse(payload);
-            } catch {
-              continue;
-            }
-            if (evt.type === "text" && evt.text) handlers.onText?.(evt.text);
-            else if (evt.type === "tool" && evt.name)
-              handlers.onTool?.(evt.name, evt.phase ?? "start");
-            else if (evt.type === "error")
-              handlers.onError?.(evt.message ?? "Unknown error");
-            else if (evt.type === "done")
-              handlers.onDone?.(evt.stop_reason ?? "");
-          }
-        }
-      }
-    } finally {
+    await readSSE(res.body, (payload) => {
+      let evt: {
+        type: string;
+        text?: string;
+        name?: string;
+        phase?: "start" | "done";
+        message?: string;
+        stop_reason?: string;
+      };
       try {
-        reader.releaseLock();
+        evt = JSON.parse(payload);
       } catch {
-        /* already released */
+        return;
       }
-    }
+      if (evt.type === "text" && evt.text) handlers.onText?.(evt.text);
+      else if (evt.type === "tool" && evt.name)
+        handlers.onTool?.(evt.name, evt.phase ?? "start");
+      else if (evt.type === "error")
+        handlers.onError?.(evt.message ?? "Unknown error");
+      else if (evt.type === "done")
+        handlers.onDone?.(evt.stop_reason ?? "");
+    });
   },
 
   /**

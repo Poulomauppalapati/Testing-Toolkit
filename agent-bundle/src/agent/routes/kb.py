@@ -122,25 +122,39 @@ class IndexRequest(BaseModel):
     force: bool = False
 
 
+def _job_callbacks(job: "Job") -> tuple["Any", "Any", "Any"]:
+    """Standard (on_log, on_sub_progress, should_stop) adapters for a Job."""
+    def _on_log(msg: str) -> None:
+        if msg:
+            job.log(msg)
+
+    def _on_sub_progress(phase: str, current: int, total: int) -> None:
+        job.set_progress(phase.lower().replace(" ", "-"), int(current), int(total))
+
+    def _should_stop() -> bool:
+        return job.stopped
+
+    return _on_log, _on_sub_progress, _should_stop
+
+
+def _fmt_duration(secs: float) -> str:
+    s = int(max(0.0, secs))
+    if s < 60:
+        return f"{s}s"
+    m, s = divmod(s, 60)
+    return f"{m}m {s:02d}s"
+
+
 def _run_kb_index(job: "Job", project: str, force: bool = False) -> None:
-    """Worker body mirroring MainWindow._kick_kb_index in the desktop app:
-    build/refresh the resumable KB index while streaming per-file progress and
-    log lines into the Job so the browser can render the same
-    'KB indexing 3/10 | 12s / 30s - 30%' status the desktop footer shows."""
+    """Worker body: build/refresh the resumable KB index while streaming
+    per-file progress and log lines into the Job."""
     import time as _time
     import core.project_store as ps
 
     start = _time.monotonic()
-
-    def _fmt_duration(secs: float) -> str:
-        s = int(max(0.0, secs))
-        if s < 60:
-            return f"{s}s"
-        m, s = divmod(s, 60)
-        return f"{m}m {s:02d}s"
+    _on_log, _on_sub_progress, _should_stop = _job_callbacks(job)
 
     def _on_progress(done: int, total: int, _elapsed: float, name: str = "") -> None:
-        # Carry the current filename in the stage slot for per-file display.
         job.set_progress(name or "indexing", int(done), int(total))
         if total > 0 and 0 < done < total:
             elapsed = _time.monotonic() - start
@@ -152,16 +166,6 @@ def _run_kb_index(job: "Job", project: str, force: bool = False) -> None:
                 timing = f"{_fmt_duration(elapsed)} / -- - {pct}%"
             label = f" ({name})" if name else ""
             job.log(f"[INFO] KB indexing {done}/{total}{label} | {timing}")
-
-    def _on_sub_progress(phase: str, current: int, total: int) -> None:
-        job.set_progress(phase.lower().replace(" ", "-"), int(current), int(total))
-
-    def _on_log(msg: str) -> None:
-        if msg:
-            job.log(msg)
-
-    def _should_stop() -> bool:
-        return job.stopped
 
     # Build an LLM client for contextual retrieval (situating prefixes), using
     # the fast model for cost efficiency. Degrades gracefully if unavailable.
@@ -245,9 +249,7 @@ def _run_context_job(
     """Map project context independently so retrieval is never blocked."""
     import core.project_store as ps
 
-    def _log(message: str) -> None:
-        if message:
-            job.log(message)
+    _log, _, _ = _job_callbacks(job)
 
     def _progress(phase: str, current: int, total: int) -> None:
         job.set_progress(phase, int(current), int(total))

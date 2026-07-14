@@ -180,22 +180,47 @@ def _client(cfg: RuntimeConfig) -> httpx.AsyncClient:
     )
 
 
-async def _get_json(
-    client: httpx.AsyncClient, url: str, cfg: RuntimeConfig,
-) -> dict[str, Any]:
+async def _retry_request(
+    client: httpx.AsyncClient, method: str, url: str,
+    cfg: RuntimeConfig, *, body: dict[str, Any] | None = None,
+    label: str = "",
+) -> httpx.Response:
+    """Single retry loop for all ADO HTTP calls. Returns the successful response."""
     last_exc: Exception | None = None
+    kwargs: dict[str, Any] = {}
+    if body is not None:
+        kwargs["json"] = body
+        kwargs["headers"] = {"Content-Type": "application/json"}
     for attempt in range(cfg.retry_count):
         try:
-            r = await client.get(url)
+            r = await (client.post(url, **kwargs) if method == "POST"
+                       else client.get(url))
             if r.status_code in (429, 503):
                 await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
                 continue
             r.raise_for_status()
-            return r.json()
+            return r
         except (httpx.HTTPError, _ssl.SSLError) as e:
             last_exc = e
             await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
-    raise RuntimeError(f"GET failed after retries: {url} ({last_exc!r})")
+    raise RuntimeError(
+        f"{method} failed after retries: {label or url} ({last_exc!r})"
+    )
+
+
+async def _get_json(
+    client: httpx.AsyncClient, url: str, cfg: RuntimeConfig,
+) -> dict[str, Any]:
+    r = await _retry_request(client, "GET", url, cfg)
+    return r.json()
+
+
+async def _post_json(
+    client: httpx.AsyncClient, url: str, body: dict[str, Any],
+    cfg: RuntimeConfig, *, label: str = "",
+) -> dict[str, Any]:
+    r = await _retry_request(client, "POST", url, cfg, body=body, label=label)
+    return r.json()
 
 
 def _wiql_escape(value: str) -> str:
@@ -358,23 +383,37 @@ async def _run_wiql(
         f"https://dev.azure.com/{org}/{project}/_apis/wit/wiql"
         f"?api-version={API_VER_WIQL}&$top=2000"
     )
-    last_exc: Exception | None = None
-    for attempt in range(cfg.retry_count):
-        try:
-            r = await client.post(
-                url, json={"query": query},
-                headers={"Content-Type": "application/json"},
-            )
-            if r.status_code in (429, 503):
-                await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
-                continue
-            r.raise_for_status()
-            payload = r.json()
-            return [int(it["id"]) for it in payload.get("workItems", []) or []]
-        except (httpx.HTTPError, _ssl.SSLError) as e:
-            last_exc = e
-            await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
-    raise RuntimeError(f"WIQL failed after retries: {last_exc!r}")
+    data = await _post_json(client, url, {"query": query}, cfg, label="WIQL")
+    return [int(it["id"]) for it in data.get("workItems", []) or []]
+
+
+def _parse_row(
+    wi: dict[str, Any], counts: dict[int, int] | None = None,
+    intern_fn: Callable[[str], str] | None = None,
+) -> WorkItemRow:
+    """Parse a single ADO work-item payload into a WorkItemRow."""
+    _i = intern_fn or (lambda s: s)
+    f = wi.get("fields", {}) or {}
+    assigned = f.get("System.AssignedTo") or {}
+    assigned_name = (
+        assigned.get("displayName", "")
+        if isinstance(assigned, dict) else str(assigned)
+    )
+    tags_raw = str(f.get("System.Tags", "") or "")
+    wid = int(wi.get("id", 0) or 0)
+    return WorkItemRow(
+        wi_id=wid,
+        test_case_count=(counts or {}).get(wid, 0),
+        title=str(f.get("System.Title", "")).strip(),
+        wi_type=_i(str(f.get("System.WorkItemType", "")).strip()),
+        state=_i(str(f.get("System.State", "")).strip()),
+        board_column=_i(str(f.get("System.BoardColumn", "")).strip()),
+        board_lane=_i(str(f.get("System.BoardLane", "") or "").strip()),
+        assigned_to=assigned_name,
+        tags=[t.strip() for t in tags_raw.split(";") if t.strip()],
+        iteration_path=_i(str(f.get("System.IterationPath", "") or "").strip()),
+        area_path=_i(str(f.get("System.AreaPath", "") or "").strip()),
+    )
 
 
 async def _fetch_rows(
@@ -388,49 +427,11 @@ async def _fetch_rows(
     )
     for start in range(0, len(ids), _BATCH_LIMIT):
         batch_ids = ids[start:start + _BATCH_LIMIT]
-        body = {"ids": batch_ids, "fields": _GRID_FIELDS}
-        last_exc: Exception | None = None
-        for attempt in range(cfg.retry_count):
-            try:
-                r = await client.post(
-                    url, json=body,
-                    headers={"Content-Type": "application/json"},
-                )
-                if r.status_code in (429, 503):
-                    await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
-                    continue
-                r.raise_for_status()
-                for wi in r.json().get("value", []) or []:
-                    f = wi.get("fields", {}) or {}
-                    assigned = f.get("System.AssignedTo") or {}
-                    assigned_name = (
-                        assigned.get("displayName", "")
-                        if isinstance(assigned, dict) else str(assigned)
-                    )
-                    tags_raw = str(f.get("System.Tags", "") or "")
-                    tags = [t.strip() for t in tags_raw.split(";") if t.strip()]
-                    rows.append(WorkItemRow(
-                        wi_id=int(wi.get("id", 0) or 0),
-                        title=str(f.get("System.Title", "")).strip(),
-                        wi_type=str(f.get("System.WorkItemType", "")).strip(),
-                        state=str(f.get("System.State", "")).strip(),
-                        board_column=str(f.get("System.BoardColumn", "")).strip(),
-                        board_lane=str(f.get("System.BoardLane", "") or "").strip(),
-                        assigned_to=assigned_name,
-                        tags=tags,
-                        iteration_path=str(
-                            f.get("System.IterationPath", "") or ""
-                        ).strip(),
-                        area_path=str(
-                            f.get("System.AreaPath", "") or ""
-                        ).strip(),
-                    ))
-                break
-            except (httpx.HTTPError, _ssl.SSLError) as e:
-                last_exc = e
-                await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
-        else:
-            raise RuntimeError(f"workitemsbatch failed: {last_exc!r}")
+        data = await _post_json(
+            client, url, {"ids": batch_ids, "fields": _GRID_FIELDS},
+            cfg, label="workitemsbatch",
+        )
+        rows.extend(_parse_row(wi) for wi in data.get("value", []) or [])
     return rows
 
 
@@ -474,78 +475,30 @@ async def _fetch_rows_streaming(
     counts: dict[int, int] | None = None,
 ) -> list[WorkItemRow]:
     """Fetch work items in batches, emitting each batch via callback as it
-    arrives. Enables progressive UI rendering without waiting for all data.
-    Uses sys.intern() on repeated low-cardinality strings (type, state,
-    column) to reduce memory via pointer dedup. ``counts`` (linked test-case
-    counts keyed by work-item id) is stamped onto each row before emission so
-    the streamed batches carry the "Generated Tests" count immediately."""
+    arrives. Uses sys.intern() on repeated low-cardinality strings to reduce
+    memory via pointer dedup."""
     from sys import intern as _intern
 
     counts = counts or {}
-
     rows: list[WorkItemRow] = []
     url = (
         f"https://dev.azure.com/{org}/{project}/_apis/wit/workitemsbatch"
         f"?api-version={API_VER_WI}"
     )
     total_batches = (len(ids) + _BATCH_LIMIT - 1) // _BATCH_LIMIT
-    batch_idx = 0
-    for start in range(0, len(ids), _BATCH_LIMIT):
+    for batch_idx, start in enumerate(range(0, len(ids), _BATCH_LIMIT)):
         batch_ids = ids[start:start + _BATCH_LIMIT]
-        body = {"ids": batch_ids, "fields": _GRID_FIELDS}
-        last_exc: Exception | None = None
-        for attempt in range(cfg.retry_count):
-            try:
-                r = await client.post(
-                    url, json=body,
-                    headers={"Content-Type": "application/json"},
-                )
-                if r.status_code in (429, 503):
-                    await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
-                    continue
-                r.raise_for_status()
-                batch_rows: list[WorkItemRow] = []
-                for wi in r.json().get("value", []) or []:
-                    f = wi.get("fields", {}) or {}
-                    assigned = f.get("System.AssignedTo") or {}
-                    assigned_name = (
-                        assigned.get("displayName", "")
-                        if isinstance(assigned, dict) else str(assigned)
-                    )
-                    tags_raw = str(f.get("System.Tags", "") or "")
-                    tags = [t.strip() for t in tags_raw.split(";") if t.strip()]
-                    _wid = int(wi.get("id", 0) or 0)
-                    # intern low-cardinality fields: saves ~40 bytes per dupe
-                    batch_rows.append(WorkItemRow(
-                        wi_id=_wid,
-                        test_case_count=counts.get(_wid, 0),
-                        title=str(f.get("System.Title", "")).strip(),
-                        wi_type=_intern(
-                            str(f.get("System.WorkItemType", "")).strip()),
-                        state=_intern(
-                            str(f.get("System.State", "")).strip()),
-                        board_column=_intern(
-                            str(f.get("System.BoardColumn", "")).strip()),
-                        board_lane=_intern(
-                            str(f.get("System.BoardLane", "") or "").strip()),
-                        assigned_to=assigned_name,
-                        tags=tags,
-                        iteration_path=_intern(
-                            str(f.get("System.IterationPath", "") or ""
-                                ).strip()),
-                        area_path=_intern(
-                            str(f.get("System.AreaPath", "") or "").strip()),
-                    ))
-                rows.extend(batch_rows)
-                if on_batch and batch_rows:
-                    on_batch(batch_rows, batch_idx, total_batches)
-                batch_idx += 1
-                break
-            except (httpx.HTTPError, _ssl.SSLError) as e:
-                last_exc = e
-                await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
-        else:
-            raise RuntimeError(f"workitemsbatch failed: {last_exc!r}")
+        data = await _post_json(
+            client, url, {"ids": batch_ids, "fields": _GRID_FIELDS},
+            cfg, label="workitemsbatch",
+        )
+        batch_rows = [
+            _parse_row(wi, counts, _intern)
+            for wi in data.get("value", []) or []
+        ]
+        rows.extend(batch_rows)
+        if on_batch and batch_rows:
+            on_batch(batch_rows, batch_idx, total_batches)
     return rows
 
 
@@ -605,8 +558,7 @@ async def _fetch_relations_per_item(
     ids: list[int], cfg: RuntimeConfig,
 ) -> dict[int, list[dict[str, Any]]]:
     """Fetch relations one work item at a time via the single-item GET
-    (?$expand=relations), which is honored even when the batch endpoint ignores
-    $expand. Bounded concurrency keeps this from hammering ADO."""
+    (?$expand=relations). Bounded concurrency keeps this from hammering ADO."""
     out: dict[int, list[dict[str, Any]]] = {}
     if not ids:
         return out
@@ -618,19 +570,11 @@ async def _fetch_relations_per_item(
             f"?$expand=relations&api-version={API_VER_WI}"
         )
         async with sem:
-            for attempt in range(cfg.retry_count):
-                try:
-                    r = await client.get(url)
-                    if r.status_code in (429, 503):
-                        await asyncio.sleep(
-                            cfg.retry_backoff_sec * (attempt + 1)
-                        )
-                        continue
-                    r.raise_for_status()
-                    out[wid] = r.json().get("relations") or []
-                    return
-                except (httpx.HTTPError, _ssl.SSLError):
-                    await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
+            try:
+                data = await _get_json(client, url, cfg)
+                out[wid] = data.get("relations") or []
+            except RuntimeError:
+                pass
 
     await asyncio.gather(*(_one(w) for w in ids))
     return out
@@ -640,12 +584,9 @@ async def _fetch_relations(
     client: httpx.AsyncClient, org: str, project: str,
     ids: list[int], cfg: RuntimeConfig,
 ) -> dict[int, list[dict[str, Any]]]:
-    """Return {work_item_id: relations[]}. Primary path is a workitemsbatch pass
-    with ``$expand: "Relations"`` (the batch body MUST use the CAPITALIZED enum
-    name -- lowercase "relations" is silently ignored by ADO, which is why the
-    count was always 0). If a batch responds with NO relations on ANY item (an
-    org that ignores batch $expand), fall back to the per-item GET which is
-    always honored. Best-effort."""
+    """Return {work_item_id: relations[]}. Primary path uses workitemsbatch
+    with $expand: "Relations" (CAPITALIZED -- lowercase is ignored by ADO).
+    Falls back to per-item GET when batch returns no relations. Best-effort."""
     out: dict[int, list[dict[str, Any]]] = {}
     if not ids:
         return out
@@ -655,30 +596,22 @@ async def _fetch_relations(
     )
     for start in range(0, len(ids), _BATCH_LIMIT):
         batch_ids = ids[start:start + _BATCH_LIMIT]
-        got_response = False
         saw_relations = False
-        for attempt in range(cfg.retry_count):
-            try:
-                r = await client.post(
-                    url, json={"ids": batch_ids, "$expand": "Relations"},
-                    headers={"Content-Type": "application/json"},
-                )
-                if r.status_code in (429, 503):
-                    await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
-                    continue
-                r.raise_for_status()
-                got_response = True
-                for wi in r.json().get("value", []) or []:
-                    wid = int(wi.get("id", 0) or 0)
-                    rels = wi.get("relations") or []
-                    if rels:
-                        saw_relations = True
-                    if wid:
-                        out[wid] = rels
-                break
-            except (httpx.HTTPError, _ssl.SSLError):
-                await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
-        if got_response and not saw_relations:
+        try:
+            data = await _post_json(
+                client, url, {"ids": batch_ids, "$expand": "Relations"},
+                cfg, label="relations-batch",
+            )
+            for wi in data.get("value", []) or []:
+                wid = int(wi.get("id", 0) or 0)
+                rels = wi.get("relations") or []
+                if rels:
+                    saw_relations = True
+                if wid:
+                    out[wid] = rels
+        except RuntimeError:
+            pass
+        if not saw_relations:
             out.update(
                 await _fetch_relations_per_item(
                     client, org, project, batch_ids, cfg
@@ -691,8 +624,7 @@ async def _fetch_work_item_types(
     client: httpx.AsyncClient, org: str, project: str,
     ids: list[int], cfg: RuntimeConfig,
 ) -> dict[int, str]:
-    """Return {work_item_id: System.WorkItemType} for the given ids via a
-    workitemsbatch fields pass. Best-effort."""
+    """Return {work_item_id: System.WorkItemType} for the given ids. Best-effort."""
     types: dict[int, str] = {}
     if not ids:
         return types
@@ -702,27 +634,21 @@ async def _fetch_work_item_types(
     )
     for start in range(0, len(ids), _BATCH_LIMIT):
         batch_ids = ids[start:start + _BATCH_LIMIT]
-        for attempt in range(cfg.retry_count):
-            try:
-                r = await client.post(
-                    url,
-                    json={"ids": batch_ids, "fields": ["System.WorkItemType"]},
-                    headers={"Content-Type": "application/json"},
+        try:
+            data = await _post_json(
+                client, url,
+                {"ids": batch_ids, "fields": ["System.WorkItemType"]},
+                cfg, label="wit-types",
+            )
+            for wi in data.get("value", []) or []:
+                wid = int(wi.get("id", 0) or 0)
+                wtype = str(
+                    (wi.get("fields") or {}).get("System.WorkItemType", "")
                 )
-                if r.status_code in (429, 503):
-                    await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
-                    continue
-                r.raise_for_status()
-                for wi in r.json().get("value", []) or []:
-                    wid = int(wi.get("id", 0) or 0)
-                    wtype = str(
-                        (wi.get("fields") or {}).get("System.WorkItemType", "")
-                    )
-                    if wid:
-                        types[wid] = wtype
-                break
-            except (httpx.HTTPError, _ssl.SSLError):
-                await asyncio.sleep(cfg.retry_backoff_sec * (attempt + 1))
+                if wid:
+                    types[wid] = wtype
+        except RuntimeError:
+            pass
     return types
 
 

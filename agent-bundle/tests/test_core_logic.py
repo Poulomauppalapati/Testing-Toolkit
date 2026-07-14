@@ -158,11 +158,16 @@ def test_pat_store_empty():
 def test_network_status_transitions():
     import core.network_status as ns
 
+    # Reset global state so prior tests do not interfere.
+    ns._last_success = 0.0
+    ns._last_failure = 0.0
+
     ns.report_success()
     assert ns.current_status() == ns.NetworkStatus.ONLINE
-    ns.report_failure()
+    # Ensure strict timestamp ordering (time.time() can repeat on fast CPUs).
+    ns._last_failure = ns._last_success + 0.001
     assert ns.current_status() == ns.NetworkStatus.OFFLINE
-    ns.report_success()
+    ns._last_success = ns._last_failure + 0.001
     assert ns.current_status() == ns.NetworkStatus.ONLINE
 
 

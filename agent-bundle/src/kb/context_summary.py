@@ -12,21 +12,72 @@ from pathlib import Path
 from typing import Any, Callable, Final
 
 LogFn = Callable[[str], None]
-SCHEMA_VERSION: Final[int] = 2
+SCHEMA_VERSION: Final[int] = 3
 _MAX_WINDOW_CHARS: Final[int] = 36000
 _WINDOW_OVERLAP_CHARS: Final[int] = 2000
-_MAX_TOKENS: Final[int] = 4096
+_MAX_TOKENS: Final[int] = 8192
 _MAX_CONCURRENCY: Final[int] = 3
 CATEGORIES: Final[tuple[str, ...]] = (
-    "actors", "entities", "workflows", "integrations", "business_rules",
-    "screens", "test_data_needs", "edge_cases", "non_functional",
-    "dependencies", "glossary",
+    "actors",
+    "entities",
+    "data_models",
+    "workflows",
+    "system_architecture",
+    "integrations",
+    "business_rules",
+    "screens",
+    "inputs_outputs",
+    "state_machines",
+    "test_data_needs",
+    "edge_cases",
+    "non_functional",
+    "dependencies",
+    "security_constraints",
+    "glossary",
 )
 _SYSTEM: Final[str] = (
-    "You are a Principal QA architect. Extract only facts supported by the supplied "
-    "single-document window. Return valid JSON only, with exactly the requested 11 "
-    "category keys. Each value is a list of objects with name and description. Be "
-    "specific and preserve exact limits, states, field names, and conditions."
+    "You are a Principal QA architect and systems analyst performing exhaustive "
+    "knowledge extraction. Extract EVERY fact supported by the supplied document "
+    "window. Return valid JSON only, with exactly the requested 16 category keys. "
+    "Each value is a list of objects with name and description.\n\n"
+    "EXTRACTION DEPTH -- be maximally thorough:\n"
+    "- actors: every user role, persona, system actor, API consumer, admin type, "
+    "service account, external system identity\n"
+    "- entities: every business object, domain entity, data record type with all "
+    "known fields, constraints, cardinality, lifecycle states\n"
+    "- data_models: ER relationships, class hierarchies, inheritance chains, "
+    "composition/aggregation, foreign keys, indexes, enums, lookup tables\n"
+    "- workflows: every process flow, sequence of steps, approval chains, "
+    "branching logic, parallel paths, error/retry/timeout paths, happy + unhappy paths\n"
+    "- system_architecture: technology stacks, deployment topology, services, "
+    "containers, databases, queues, caches, CDNs, load balancers, regions, "
+    "scaling policies, failover strategies\n"
+    "- integrations: every API endpoint, webhook, event bus, file transfer, "
+    "protocol (REST/gRPC/SOAP/GraphQL), auth mechanism, rate limits, SLAs\n"
+    "- business_rules: every validation rule, calculation formula, threshold, "
+    "conditional logic, priority ordering, conflict resolution, date/time rules\n"
+    "- screens: every UI page, dialog, modal, panel, tab, form, table, chart, "
+    "navigation flow, responsive breakpoints, accessibility requirements\n"
+    "- inputs_outputs: every input field (type, format, min/max, required/optional, "
+    "default), every output (reports, exports, notifications, emails, PDFs, logs)\n"
+    "- state_machines: every entity state, valid transitions, guards/conditions, "
+    "actions on entry/exit, event triggers, terminal states\n"
+    "- test_data_needs: specific test data configurations, boundary values, "
+    "prerequisite states, seed data, environment requirements\n"
+    "- edge_cases: boundary conditions, off-by-one scenarios, concurrency conflicts, "
+    "race conditions, null/empty handling, overflow, timezone/locale issues\n"
+    "- non_functional: performance targets (latency, throughput, concurrency), "
+    "availability (SLA, RPO, RTO), scalability limits, data retention, compliance "
+    "(GDPR, HIPAA, SOC2), browser/device support matrix\n"
+    "- dependencies: upstream/downstream services, data flows, shared libraries, "
+    "third-party SDKs, version constraints, deprecation timelines\n"
+    "- security_constraints: authentication methods, authorization models (RBAC/ABAC), "
+    "encryption requirements, audit logging, PII handling, session management, "
+    "CORS/CSP policies, vulnerability mitigations\n"
+    "- glossary: domain-specific terminology, abbreviations, acronyms with "
+    "precise definitions\n\n"
+    "Be specific: preserve exact limits, states, field names, conditions, URLs, "
+    "version numbers. Omit categories with no evidence rather than guessing."
 )
 
 
@@ -41,14 +92,19 @@ class ContextItem:
 class ProjectContext:
     actors: list[ContextItem] = field(default_factory=list)
     entities: list[ContextItem] = field(default_factory=list)
+    data_models: list[ContextItem] = field(default_factory=list)
     workflows: list[ContextItem] = field(default_factory=list)
+    system_architecture: list[ContextItem] = field(default_factory=list)
     integrations: list[ContextItem] = field(default_factory=list)
     business_rules: list[ContextItem] = field(default_factory=list)
     screens: list[ContextItem] = field(default_factory=list)
+    inputs_outputs: list[ContextItem] = field(default_factory=list)
+    state_machines: list[ContextItem] = field(default_factory=list)
     test_data_needs: list[ContextItem] = field(default_factory=list)
     edge_cases: list[ContextItem] = field(default_factory=list)
     non_functional: list[ContextItem] = field(default_factory=list)
     dependencies: list[ContextItem] = field(default_factory=list)
+    security_constraints: list[ContextItem] = field(default_factory=list)
     glossary: list[ContextItem] = field(default_factory=list)
     extracted_at: float = 0.0
     kb_fingerprint: str = ""
@@ -74,12 +130,22 @@ class ProjectContext:
         if self.is_empty():
             return ""
         titles = {
-            "actors": "ACTORS/ROLES", "entities": "BUSINESS ENTITIES",
-            "workflows": "WORKFLOWS", "integrations": "INTEGRATION POINTS",
-            "business_rules": "BUSINESS RULES", "screens": "SCREENS/PAGES",
-            "test_data_needs": "TEST DATA NEEDS", "edge_cases": "EDGE CASES / NEGATIVE PATHS",
-            "non_functional": "NON-FUNCTIONAL REQUIREMENTS",
-            "dependencies": "DEPENDENCIES / DATA FLOWS", "glossary": "GLOSSARY / TERMINOLOGY",
+            "actors": "ACTORS / ROLES / PERSONAS",
+            "entities": "BUSINESS ENTITIES / DOMAIN OBJECTS",
+            "data_models": "DATA MODELS / ER RELATIONSHIPS / CLASS DIAGRAMS",
+            "workflows": "WORKFLOWS / PROCESS FLOWS / SEQUENCE DIAGRAMS",
+            "system_architecture": "SYSTEM ARCHITECTURE / STACKS / TOPOLOGY",
+            "integrations": "INTEGRATION POINTS / APIs / PROTOCOLS",
+            "business_rules": "BUSINESS RULES / VALIDATIONS / FORMULAS",
+            "screens": "SCREENS / PAGES / UI COMPONENTS",
+            "inputs_outputs": "INPUTS / OUTPUTS / REPORTS / NOTIFICATIONS",
+            "state_machines": "STATE MACHINES / TRANSITIONS / LIFECYCLE",
+            "test_data_needs": "TEST DATA NEEDS / BOUNDARY VALUES",
+            "edge_cases": "EDGE CASES / NEGATIVE PATHS / RACE CONDITIONS",
+            "non_functional": "NON-FUNCTIONAL REQUIREMENTS / SLAs / COMPLIANCE",
+            "dependencies": "DEPENDENCIES / DATA FLOWS / SHARED LIBRARIES",
+            "security_constraints": "SECURITY / AUTH / ENCRYPTION / AUDIT",
+            "glossary": "GLOSSARY / TERMINOLOGY / ACRONYMS",
         }
         parts = ["PROJECT CONTEXT SUMMARY", "=" * 40]
         if self.status == "partial":
@@ -231,7 +297,8 @@ def merge_context_maps(maps: list[ProjectContext], fingerprint: str) -> ProjectC
 
 async def _extract_window(client: Any, model: str, source: str, text: str) -> ProjectContext:
     prompt = (
-        f"Source document: {source}\nReturn exactly these keys: {', '.join(CATEGORIES)}.\n"
+        f"Source document: {source}\n"
+        f"Return exactly these {len(CATEGORIES)} keys: {', '.join(CATEGORIES)}.\n"
         f"<document>\n{text}\n</document>"
     )
     last_error: Exception | None = None

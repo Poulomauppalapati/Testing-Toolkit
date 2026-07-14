@@ -23,6 +23,7 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
       }
     >
       <div className="flex gap-4">
+        {/* eslint-disable-next-line @next/next/no-img-element -- static icon, no optimization needed */}
         <img
           src="/icons/app_icon_64.png"
           alt=""

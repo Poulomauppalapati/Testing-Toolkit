@@ -30,7 +30,6 @@ export function guardAdoWrites(page: Page): { blocked: () => string[] } {
       ADO_WRITE_PATHS.some((p) => url.includes(p));
     if (isWrite) {
       blocked.push(`${method} ${url}`);
-      // eslint-disable-next-line no-console
       console.warn(`[e2e] BLOCKED ADO-write attempt: ${method} ${url}`);
       return route.abort("blockedbyclient");
     }

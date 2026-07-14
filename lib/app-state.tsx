@@ -827,6 +827,8 @@ export function AppStateProvider({
       uploadKbFiles,
       clearKbUploads,
       navVisible,
+      setNavVisible,
+      setLogVisible,
       dialog,
       openDialog,
       closeDialog,

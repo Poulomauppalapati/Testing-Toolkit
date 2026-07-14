@@ -105,8 +105,8 @@ export function BoardGrid() {
   const [fSprint, setFSprint] = useState(ALL);
   const [fColumn, setFColumn] = useState(ALL);
 
-  const rows = boardView?.rows ?? [];
-  const columns = boardView?.columns ?? [];
+  const rows = useMemo(() => boardView?.rows ?? [], [boardView?.rows]);
+  const columns = useMemo(() => boardView?.columns ?? [], [boardView?.columns]);
 
   // Generated Tests + Last Run data (desktop parity: cols 6 & 7).
   // This is generation traceability, not implementation or execution coverage.

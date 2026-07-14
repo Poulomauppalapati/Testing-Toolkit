@@ -47,6 +47,7 @@ export function PackageDialog({ onClose }: { onClose: () => void }) {
     setDownloads([]);
     // Epoch seconds just before the run, so we can list only the PDFs this
     // packaging produced (artifact.modified is epoch seconds).
+    // eslint-disable-next-line react-hooks/purity -- event handler, not render
     const startedAt = Date.now() / 1000 - 5;
     setStatus(`Packaging ${ids.length} work item(s)...`);
     pushLog("INFO", `Packaging ${ids.length} work item(s) into PDFs...`);

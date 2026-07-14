@@ -349,14 +349,108 @@ def _maybe_extract_context(
             )
 
 
+def _resolve_dense_flags(enable_dense: bool) -> tuple[bool, bool, bool]:
+    """Return (enable_dense, enforced, want_dense) after applying TT_ENFORCE_DENSE."""
+    from kb.embeddings import dense_enforced
+
+    enforced = dense_enforced()
+    if enforced:
+        enable_dense = True
+    want_dense = False
+    if enable_dense:
+        if enforced:
+            want_dense = True
+        else:
+            try:
+                from kb.embeddings import embedding_backend_available
+                want_dense = bool(embedding_backend_available())
+            except Exception:
+                pass
+    return enable_dense, enforced, want_dense
+
+
+def _hybrid_is_current(
+    p: ProjectPaths, n_chunks: int, built_at: "Any",
+    want_dense: bool, force: bool,
+) -> bool:
+    """Cheap manifest check: skip rebuilding when the index already reflects
+    the current chunk set."""
+    if force:
+        return False
+    try:
+        from kb.retrieval import hybrid_index_is_current
+
+        want_model, want_dim = "", 0
+        if want_dense:
+            try:
+                from core.app_config import EMBED_DIM, EMBED_MODEL
+                want_model = f"api:{EMBED_MODEL}"
+                want_dim = int(EMBED_DIM)
+            except Exception:
+                pass
+        return hybrid_index_is_current(
+            p.hybrid_dir, n_chunks, built_at,
+            want_dense=want_dense, want_model=want_model, want_dim=want_dim,
+        )
+    except Exception:
+        return False
+
+
+def _resolve_embedder(
+    enable_dense: bool, enforced: bool, on_log: "Any | None",
+) -> "Any | None":
+    """Construct the embedder (strict when enforced, best-effort otherwise)."""
+    if enable_dense and enforced:
+        from kb.embeddings import get_text_embedder_strict
+        embedder = get_text_embedder_strict()
+        if on_log:
+            try:
+                backend = getattr(embedder, "name", "local")
+                on_log(f"[SUCCESS] Dense indexing enforced: embedder "
+                       f"({backend}) ready; adding vectors alongside BM25.")
+            except Exception:
+                pass
+        return embedder
+    if enable_dense:
+        try:
+            from kb.embeddings import get_text_embedder
+            embedder = get_text_embedder()
+        except Exception:
+            embedder = None
+        if on_log:
+            try:
+                if embedder is not None:
+                    backend = getattr(embedder, "name", "local")
+                    on_log(f"[SUCCESS] Dense embedding enabled ({backend}); "
+                           f"adding vectors alongside BM25.")
+                else:
+                    from kb.embeddings import (
+                        embedding_backend_status,
+                        last_build_error,
+                    )
+                    avail, reason = embedding_backend_status()
+                    if avail:
+                        be = last_build_error() or "model could not be built"
+                        on_log("[WARN] Dense backend is installed but could "
+                               f"not be initialized: {be}. Using lexical "
+                               "retrieval. (A blocked model download is the "
+                               "usual cause; pre-bundle the model files.)")
+                    else:
+                        on_log(f"[INFO] Dense inactive: {reason} Using "
+                               "lexical (BM25) retrieval.")
+            except Exception:
+                pass
+        return embedder
+    return None
+
+
 def _build_hybrid_from_index(
     p: ProjectPaths, index: KbIndex, on_log: "Any | None" = None,
     should_stop: "Any | None" = None, enable_dense: bool = True,
     force: bool = False,
 ) -> None:
     """Convert KB chunks to the hybrid index. Lexical (BM25) is always built.
-    A local dense embedder is constructed ONLY when enable_dense is True (it
-    may download a model on first use)."""
+    A local dense embedder is constructed ONLY when enable_dense is True."""
     from kb.retrieval import build_hybrid_index, densify_chunks
 
     coarse = [
@@ -369,129 +463,29 @@ def _build_hybrid_from_index(
     ]
     if not coarse:
         return
-    # Densify: split the coarse RLM chunks into fine retrieval windows so
-    # lexical/dense retrieval is precise.
     chunks = densify_chunks(coarse, p.root)
-    # Dense indexing is ENFORCED by default (TT_ENFORCE_DENSE): we must build
-    # dense vectors with the bundled local model and must NOT silently fall back
-    # to lexical-only. Enforcement overrides any caller request to disable dense.
-    from kb.embeddings import dense_enforced
 
-    enforced = dense_enforced()
-    if enforced:
-        enable_dense = True
-    # Whether dense vectors can actually be added now (cheap import check;
-    # does not load the model). If dense is wanted and achievable but the
-    # existing index is lexical-only, the currency check below returns False
-    # and we rebuild with vectors. When enforced we always want dense.
-    want_dense = False
-    if enable_dense:
-        if enforced:
-            want_dense = True
-        else:
+    enable_dense, enforced, want_dense = _resolve_dense_flags(enable_dense)
+
+    if _hybrid_is_current(p, len(chunks), index.built_at, want_dense, force):
+        if on_log:
             try:
-                from kb.embeddings import embedding_backend_available
-
-                want_dense = bool(embedding_backend_available())
-            except Exception:
-                want_dense = False
-    # Skip rebuilding when the hybrid index already reflects this chunk set
-    # (cheap manifest-only check); avoids redundant CPU on every reselect.
-    # A forced rebuild bypasses this shortcut entirely.
-    try:
-        from kb.retrieval import hybrid_index_is_current
-
-        # Configured embedding identity (cheap constants, no model load) so a
-        # model/dim upgrade forces exactly one rebuild.
-        want_model = ""
-        want_dim = 0
-        if want_dense:
-            try:
-                from core.app_config import EMBED_DIM, EMBED_MODEL
-
-                # The API embedder names itself "api:<model>" (see
-                # kb.embeddings._APIEmbedder.name); match that so the manifest
-                # comparison in hybrid_index_is_current is consistent.
-                want_model = f"api:{EMBED_MODEL}"
-                want_dim = int(EMBED_DIM)
-            except Exception:
-                want_model, want_dim = "", 0
-
-        if not force and hybrid_index_is_current(p.hybrid_dir, len(chunks),
-                                                  index.built_at,
-                                                  want_dense=want_dense,
-                                                  want_model=want_model,
-                                                  want_dim=want_dim):
-            if on_log is not None:
-                try:
-                    on_log("[INFO] Hybrid index already current; reused.")
-                except Exception:
-                    pass
-            return
-    except Exception:
-        pass
-    embedder = None
-    if enable_dense and enforced:
-        # ENFORCED path: verify the dense embedder API backend strictly. Any
-        # failure raises and is surfaced as a visible index-job error instead
-        # of a silent downgrade to lexical-only. Reranking is a retrieval-time
-        # gateway API call (kb.reranker.native_rerank), so nothing to verify
-        # here.
-        from kb.embeddings import get_text_embedder_strict
-
-        embedder = get_text_embedder_strict()
-        if on_log is not None:
-            try:
-                backend = getattr(embedder, "name", "local")
-                on_log(f"[SUCCESS] Dense indexing enforced: embedder "
-                       f"({backend}) ready; adding vectors alongside BM25.")
+                on_log("[INFO] Hybrid index already current; reused.")
             except Exception:
                 pass
-    elif enable_dense:
-        try:
-            from kb.embeddings import get_text_embedder
+        return
 
-            embedder = get_text_embedder()
-        except Exception:
-            embedder = None
-        if on_log is not None:
-            try:
-                if embedder is not None:
-                    backend = getattr(embedder, "name", "local")
-                    on_log(f"[SUCCESS] Dense embedding enabled ({backend}); "
-                           f"adding vectors alongside BM25.")
-                else:
-                    from kb.embeddings import (
-                        embedding_backend_status,
-                        last_build_error,
-                    )
+    embedder = _resolve_embedder(enable_dense, enforced, on_log)
 
-                    avail, reason = embedding_backend_status()
-                    if avail:
-                        # Importable but construction failed (e.g. blocked
-                        # first-run model download).
-                        be = last_build_error() or "model could not be built"
-                        on_log("[WARN] Dense backend is installed but could "
-                               f"not be initialized: {be}. Using lexical "
-                               "retrieval. (A blocked model download is the "
-                               "usual cause; pre-bundle the model files.)")
-                    else:
-                        on_log(f"[INFO] Dense inactive: {reason} Using "
-                               "lexical (BM25) retrieval.")
-            except Exception:
-                pass
     ok = build_hybrid_index(
         p.hybrid_dir, chunks, embedder=embedder, on_log=on_log,
         should_stop=should_stop, enforce_dense=(enable_dense and enforced),
     )
     if not ok and not (should_stop and should_stop()):
         raise RuntimeError("Hybrid KB generation could not be published")
-    # When enforced, confirm dense vectors actually landed in the manifest;
-    # otherwise raise so the failure is loud rather than a lexical-only index.
     if ok and enable_dense and enforced and not (should_stop and should_stop()):
         try:
             from kb.retrieval import hybrid_has_dense
-
             if not hybrid_has_dense(p.hybrid_dir):
                 raise RuntimeError(
                     "Dense indexing is enforced but no dense vectors were "

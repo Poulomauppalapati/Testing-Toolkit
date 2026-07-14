@@ -11,7 +11,7 @@ dead-ends.
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 _INSTALL_PY = Path(__file__).resolve().parent.parent / "install.py"
 
@@ -284,9 +284,11 @@ def test_python_progress_is_log_only(monkeypatch):
 
 
 def test_macos_autostart_escapes_xml_paths():
+    # Use PurePosixPath to keep forward slashes on Windows (this function
+    # only runs on macOS in production).
     plist = inst._macos_plist(
         "/Users/A & B/Python <3>/python",
-        Path("/Users/A & B/Testing <Toolkit>"),
+        PurePosixPath("/Users/A & B/Testing <Toolkit>"),
     )
     assert "/Users/A &amp; B/Python &lt;3&gt;/python" in plist
     assert "/Users/A &amp; B/Testing &lt;Toolkit&gt;" in plist
@@ -294,9 +296,11 @@ def test_macos_autostart_escapes_xml_paths():
 
 
 def test_linux_autostart_quotes_paths_and_metacharacters():
+    # Use PurePosixPath to keep forward slashes on Windows (this function
+    # only runs on Linux in production).
     unit = inst._linux_unit(
         "/home/a user/python;false",
-        Path("/home/a user/Testing Toolkit;false"),
+        PurePosixPath("/home/a user/Testing Toolkit;false"),
     )
     assert "ExecStart='/home/a user/python;false' -m agent" in unit
     assert "WorkingDirectory='/home/a user/Testing Toolkit;false'" in unit
