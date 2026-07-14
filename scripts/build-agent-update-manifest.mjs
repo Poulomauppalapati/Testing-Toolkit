@@ -30,6 +30,7 @@ import {
   statSync,
   existsSync,
 } from "node:fs";
+import { execSync } from "node:child_process";
 import { join, relative } from "node:path";
 
 const REPO = "nrcharanvignesh/Testing-Toolkit";
@@ -55,6 +56,13 @@ function readVersion() {
   return m[1];
 }
 
+function gitContent(repoRelPath) {
+  // Hash what git stores (LF-normalized), not the working-tree copy (CRLF on
+  // Windows). The overlay fetches raw content from GitHub which matches git's
+  // internal representation, so the manifest must hash the same bytes.
+  return execSync(`git show HEAD:${repoRelPath}`, { encoding: "buffer", maxBuffer: 10 * 1024 * 1024 });
+}
+
 function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
@@ -75,19 +83,19 @@ function main() {
   const files = walk(SRC_DIR).sort();
 
   const entries = files.map((full) => {
-    const content = readFileSync(full);
-    const hash = createHash("sha256").update(content).digest("hex");
     // installed-relative path (relative to src/), forward slashes
     const installedRel = relative(SRC_DIR, full).split("\\").join("/");
     // repo path for the GitHub contents API
     const repoPath = `agent-bundle/src/${installedRel}`;
+    const content = gitContent(repoPath);
+    const hash = createHash("sha256").update(content).digest("hex");
     return { path: installedRel, url: contentsUrl(repoPath), hash };
   });
 
   const installer = existsSync(INSTALLER_FILE)
     ? {
         url: contentsUrl("agent-bundle/install.py"),
-        hash: sha256File(INSTALLER_FILE),
+        hash: createHash("sha256").update(gitContent("agent-bundle/install.py")).digest("hex"),
       }
     : null;
   if (!installer) throw new Error("agent-bundle/install.py is missing");
@@ -97,13 +105,15 @@ function main() {
   const requirements = existsSync(REQUIREMENTS_FILE)
     ? {
         url: contentsUrl("agent-bundle/requirements.txt"),
-        hash: sha256File(REQUIREMENTS_FILE),
+        hash: createHash("sha256").update(gitContent("agent-bundle/requirements.txt")).digest("hex"),
       }
     : null;
   if (!requirements) throw new Error("agent-bundle/requirements.txt is missing");
 
   // Wheels added after the bundle was built. Every binary is hashed so staging
   // fails closed before a corrupted or wrong-architecture wheel can be promoted.
+  // Wheels are binary (.whl = zip); git never applies line-ending conversion to
+  // them so readFileSync is safe here.
   const extraWheels = existsSync(EXTRA_WHEELS_DIR)
     ? readdirSync(EXTRA_WHEELS_DIR)
         .filter((n) => n.endsWith(".whl"))
@@ -133,11 +143,12 @@ function main() {
     ? walk(MCP_DIR, [])
         .sort()
         .map((full) => {
-          const content = readFileSync(full);
           const name = relative(MCP_DIR, full).split("\\").join("/");
+          const repoPath = `agent-bundle/mcp_servers/${name}`;
+          const content = gitContent(repoPath);
           return {
             name,
-            url: contentsUrl(`agent-bundle/mcp_servers/${name}`),
+            url: contentsUrl(repoPath),
             hash: createHash("sha256").update(content).digest("hex"),
             ...(platformParts.has(name)
               ? { platforms: platformParts.get(name) }

@@ -66,3 +66,5 @@ agent-bundle/.venv/
 
 # npm lockfile — this project uses pnpm exclusively.
 package-lock.json
+
+.vercel
