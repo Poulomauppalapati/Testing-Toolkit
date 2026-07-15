@@ -41,6 +41,9 @@ _SYSTEM: Final[str] = (
     "fields. Use these to understand the INTENT of the test -- they inform which assertions "
     "and expected outcomes matter. Derive assertions from acceptance criteria when the human "
     "steps omit explicit expected results.\n\n"
+    "When page_snapshot is provided, use ONLY locators that match elements visible in the "
+    "snapshot. The snapshot shows the accessibility tree with role:name pairs. Pick the most "
+    "specific match.\n\n"
     "STEP SCHEMA (every step is an object with these fields):\n"
     "  action  - one of: navigate, fill, click, type, select, check, uncheck, hover, "
     "double_click, press_key, scroll, wait, wait_for_text, wait_for_url, assert_text, "
@@ -59,6 +62,56 @@ _SYSTEM: Final[str] = (
     "on async page loads. Add screenshot steps after key interactions for evidence. "
     "Prefer exact matches over partial when the text is known."
 )
+
+
+_SNAPSHOT_MAX_CHARS: Final[int] = 8000
+
+
+def _scrub_snapshot_node(node: dict[str, Any]) -> dict[str, Any]:
+    """Recursively strip values from password-like textbox nodes."""
+    role = str(node.get("role", ""))
+    name = str(node.get("name", ""))
+    scrubbed: dict[str, Any] = dict(node)
+    if role == "textbox" and "password" in name.lower():
+        scrubbed.pop("value", None)
+        scrubbed.pop("description", None)
+    children = scrubbed.get("children")
+    if isinstance(children, list):
+        scrubbed["children"] = [_scrub_snapshot_node(c) for c in children if isinstance(c, dict)]
+    return scrubbed
+
+
+def _render_node(node: dict[str, Any], depth: int = 0) -> str:
+    """Render a single accessibility node as an indented role:name line."""
+    role = node.get("role", "")
+    name = node.get("name", "")
+    value = node.get("value", "")
+    parts: list[str] = []
+    indent = "  " * depth
+    label = f"{role}:{name}" if name else role
+    if value:
+        label += f" [{value}]"
+    parts.append(f"{indent}{label}")
+    for child in node.get("children", []):
+        if isinstance(child, dict):
+            parts.append(_render_node(child, depth + 1))
+    return "\n".join(parts)
+
+
+def _format_snapshot(snapshot: dict[str, Any] | None) -> str:
+    """Format a Playwright accessibility snapshot into a compact role tree.
+
+    Security: strips values from textbox nodes whose name contains 'password'.
+    Bounded to 8000 chars to avoid dominating LLM context.
+    Returns empty string for None input.
+    """
+    if snapshot is None:
+        return ""
+    scrubbed = _scrub_snapshot_node(snapshot)
+    rendered = _render_node(scrubbed)
+    if len(rendered) > _SNAPSHOT_MAX_CHARS:
+        rendered = rendered[:_SNAPSHOT_MAX_CHARS - 3] + "..."
+    return rendered
 
 
 class PlanValidationError(ValueError):
@@ -206,6 +259,7 @@ def _write_cache(path: Path, data: dict[str, Any]) -> None:
 async def compile_test_case(
     tc: dict[str, Any], *, login_url: str, username: str, ai_instructions: str,
     cache_dir: Path, client: Any | None, model: str, on_log: LogFn | None = None,
+    dom_snapshot: str = "",
 ) -> CompiledPlan:
     """Return a validated plan. Passwords are intentionally not accepted."""
     log = on_log or (lambda _msg: None)
@@ -242,6 +296,8 @@ async def compile_test_case(
             "step": {"action": "", "target": "", "value": "", "expected": "", "locator": "role"},
         },
     }
+    if dom_snapshot:
+        source["page_snapshot"] = dom_snapshot
     # Inject rich WI context (acceptance criteria, description, repro steps)
     # so the compiler produces deterministic plans grounded in actual requirements.
     if tc.get("description"):
@@ -278,3 +334,65 @@ async def compile_test_case(
     _write_cache(cache_path, plan)
     log(f"[INFO] E2E plan compiled with {model}: {len(plan['steps'])} executable step(s)")
     return CompiledPlan(plan, cache_hit=False, model=model)
+
+
+_RECOMPILE_SYSTEM: Final[str] = (
+    "You are a Senior QA Engineer fixing a broken Playwright test step. "
+    "Return a single JSON step object (not an array, not wrapped). "
+    "Use ONLY locators visible in the provided page snapshot. "
+    "The snapshot shows the accessibility tree with role:name pairs."
+)
+
+
+async def recompile_failed_step(
+    step: dict[str, Any],
+    error_message: str,
+    dom_snapshot: str,
+    *,
+    login_url: str,
+    username: str,
+    client: Any | None,
+    model: str,
+    on_log: LogFn | None = None,
+) -> dict[str, Any] | None:
+    """Recompile a single failed step using error context and current DOM state.
+
+    Returns a corrected step dict, or None if recompilation fails.
+    """
+    log = on_log or (lambda _msg: None)
+    if client is None or not model:
+        return None
+    prompt = json.dumps({
+        "failed_step": step,
+        "error": error_message[:500],
+        "page_snapshot": dom_snapshot,
+        "login_url": login_url,
+        "username_placeholder": "{{username}}" if username else "",
+        "instruction": (
+            "This step failed with the error above. Here is the current page state. "
+            "Rewrite ONLY this one step to fix the locator/action. "
+            "Return a single step object with fields: action, locator, target, value, expected."
+        ),
+    }, ensure_ascii=True)
+    try:
+        result = await client.complete_async(
+            model=model, system=_RECOMPILE_SYSTEM, user=prompt,
+            max_tokens=1024, temperature=0.0,
+        )
+        raw = str(getattr(result, "text", "") or "").strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+        data = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        log("[WARN] Recompile LLM call failed")
+        return None
+    if not isinstance(data, dict):
+        log("[WARN] Recompile returned non-object")
+        return None
+    try:
+        validated = _validate_step(data, 0)
+    except PlanValidationError as exc:
+        log(f"[WARN] Recompiled step invalid: {exc}")
+        return None
+    log(f"[INFO] Step recompiled: {validated['action']} -> {validated['target']}")
+    return validated

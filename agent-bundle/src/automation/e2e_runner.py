@@ -56,6 +56,7 @@ except ImportError:
     PwTimeout = Exception  # type: ignore[assignment,misc]
 
 from .artifact_collector import ArtifactCollector
+from .e2e_plan import _format_snapshot, recompile_failed_step
 from .playwright_bridge import BrowserProfile, browser_session
 from .screenshot_annotator import annotate_screenshot
 from .script_generator import generate_playwright_script
@@ -274,6 +275,9 @@ async def _execute_step(
     step_num: int,
     *,
     stop_fn: Callable[[], bool] | None = None,
+    client: Any | None = None,
+    model: str = "",
+    login_url: str = "",
 ) -> StepResult:
     """Execute a single test step with auto-retry and self-healing locators.
 
@@ -536,6 +540,32 @@ async def _execute_step(
             status = "error"
             actual = f"Error: {err_msg}"
 
+    # -- Feedback loop: recompile failed step via LLM if element not found --
+    if status == "error" and client and model:
+        try:
+            snapshot_raw = await page.accessibility.snapshot()
+            snapshot_str = _format_snapshot(snapshot_raw)
+            corrected = await recompile_failed_step(
+                step=step,
+                error_message=actual[:500],
+                dom_snapshot=snapshot_str,
+                login_url=login_url,
+                username=username,
+                client=client,
+                model=model,
+            )
+            if corrected is not None:
+                # Single retry with corrected step (no further recompile)
+                retry_result = await _execute_step(
+                    page, corrected, username, password, screenshot_dir,
+                    step_num, stop_fn=stop_fn,
+                )
+                if retry_result.status != "error":
+                    retry_result.locator_strategy = "recompiled"
+                    return retry_result
+        except Exception:
+            pass
+
     # Always capture a screenshot with bounding box annotation at every step
     # for full traceability (Senior QA mode). The annotator draws the element
     # highlight and step/status badges.
@@ -578,6 +608,8 @@ async def run_e2e_tests(
     on_log: Callable[[str], None] | None = None,
     on_screenshot: Callable[[Path, int, str], None] | None = None,
     on_tc_done: Callable[[str, str], None] | None = None,
+    client: Any | None = None,
+    model: str = "",
 ) -> list[TestCaseResult]:
     """Execute a validated suite through one reused CDP/browser session."""
     del headless, ai_instructions
@@ -592,6 +624,19 @@ async def run_e2e_tests(
 
     try:
         async with browser_session(profile=profile, output_dir=video_dir) as (_browser, page):
+            # Capture initial DOM snapshot for plan recompilation feedback.
+            # Only navigate early when an LLM client is available (avoids
+            # an extra goto in runs that never use the snapshot).
+            _initial_snapshot: str = ""
+            if client and model:
+                try:
+                    await page.goto(login_url, wait_until="domcontentloaded",
+                                    timeout=NAVIGATE_TIMEOUT_MS)
+                    _snap_raw = await page.accessibility.snapshot()
+                    _initial_snapshot = _format_snapshot(_snap_raw)
+                except Exception:
+                    pass
+
             for tc_index, tc in enumerate(test_cases):
                 if stop_fn and stop_fn():
                     _log("[WARN] Stop signal received. Aborting remaining test cases.")
@@ -622,6 +667,7 @@ async def run_e2e_tests(
                         step_result = await _execute_step(
                             page, step, username, password, collector.screenshot_dir,
                             step_num, stop_fn=stop_fn,
+                            client=client, model=model, login_url=login_url,
                         )
                         if stop_fn and stop_fn():
                             break

@@ -346,3 +346,120 @@ def test_execution_store_roundtrip(tmp_install):
     assert latest is not None and latest.run_id == "r1"
     assert "TC-2" in failed_tc_ids("Proj")
     assert "TC-1" not in failed_tc_ids("Proj")
+
+
+# --------------------------------------------------------------------------
+# DOM-aware planning: _format_snapshot
+# --------------------------------------------------------------------------
+def test_format_snapshot_scrubs_passwords():
+    """Password textbox values must be stripped from the snapshot."""
+    from automation.e2e_plan import _format_snapshot
+
+    snapshot = {
+        "role": "WebArea",
+        "name": "Login",
+        "children": [
+            {"role": "textbox", "name": "Username", "value": "alice"},
+            {"role": "textbox", "name": "Password", "value": "hunter2"},
+            {"role": "textbox", "name": "Confirm password", "value": "hunter2"},
+            {"role": "button", "name": "Sign In"},
+        ],
+    }
+    result = _format_snapshot(snapshot)
+    # Password values must be gone
+    assert "hunter2" not in result
+    # Username value is fine
+    assert "alice" in result
+    # Structure still present
+    assert "Password" in result
+    assert "button" in result
+
+
+def test_format_snapshot_truncates_large_trees():
+    """Output must be bounded to 8000 chars max."""
+    from automation.e2e_plan import _format_snapshot
+
+    # Build a tree that would exceed 8000 chars
+    children = [
+        {"role": "listitem", "name": f"Item number {i:04d} with some extra text padding"}
+        for i in range(500)
+    ]
+    snapshot = {"role": "list", "name": "Big List", "children": children}
+    result = _format_snapshot(snapshot)
+    assert len(result) <= 8000
+    assert result.endswith("...")
+
+
+def test_format_snapshot_none_returns_empty():
+    """None input returns empty string."""
+    from automation.e2e_plan import _format_snapshot
+
+    assert _format_snapshot(None) == ""
+
+
+# --------------------------------------------------------------------------
+# Feedback loop: recompile_failed_step
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_recompile_failed_step_returns_valid_step():
+    """Mock LLM returns a valid corrected step."""
+    from types import SimpleNamespace
+    from automation.e2e_plan import recompile_failed_step
+
+    class MockClient:
+        async def complete_async(self, **_kwargs):
+            return SimpleNamespace(text='{"action":"click","locator":"role","target":"button:Submit","value":"","expected":""}')
+
+    failed_step = {"action": "click", "locator": "role", "target": "button:Login", "value": "", "expected": ""}
+    result = await recompile_failed_step(
+        step=failed_step,
+        error_message="Element not found: [role:button:Login]",
+        dom_snapshot="WebArea:Login\n  button:Submit",
+        login_url="https://example.test",
+        username="tester",
+        client=MockClient(),
+        model="test-model",
+    )
+    assert result is not None
+    assert result["action"] == "click"
+    assert result["target"] == "button:Submit"
+    assert result["locator"] == "role"
+
+
+@pytest.mark.asyncio
+async def test_recompile_failed_step_returns_none_on_invalid_response():
+    """Graceful None on invalid/unparseable LLM response."""
+    from types import SimpleNamespace
+    from automation.e2e_plan import recompile_failed_step
+
+    class BadClient:
+        async def complete_async(self, **_kwargs):
+            return SimpleNamespace(text="not valid json at all {{{")
+
+    result = await recompile_failed_step(
+        step={"action": "click", "locator": "role", "target": "button:X", "value": "", "expected": ""},
+        error_message="Element not found",
+        dom_snapshot="WebArea:Page",
+        login_url="https://example.test",
+        username="tester",
+        client=BadClient(),
+        model="test-model",
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_recompile_failed_step_returns_none_without_client():
+    """Returns None when client is None."""
+    from automation.e2e_plan import recompile_failed_step
+
+    result = await recompile_failed_step(
+        step={"action": "click", "locator": "role", "target": "button:X", "value": "", "expected": ""},
+        error_message="Element not found",
+        dom_snapshot="WebArea:Page",
+        login_url="https://example.test",
+        username="tester",
+        client=None,
+        model="test-model",
+    )
+    assert result is None
