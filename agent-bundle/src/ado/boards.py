@@ -596,7 +596,7 @@ async def _fetch_relations(
     )
     for start in range(0, len(ids), _BATCH_LIMIT):
         batch_ids = ids[start:start + _BATCH_LIMIT]
-        saw_relations = False
+        batch_returned_field = False
         try:
             data = await _post_json(
                 client, url, {"ids": batch_ids, "$expand": "Relations"},
@@ -604,14 +604,17 @@ async def _fetch_relations(
             )
             for wi in data.get("value", []) or []:
                 wid = int(wi.get("id", 0) or 0)
+                # Distinguish "field present but empty" from "field absent"
+                if "relations" in wi:
+                    batch_returned_field = True
                 rels = wi.get("relations") or []
-                if rels:
-                    saw_relations = True
                 if wid:
                     out[wid] = rels
         except RuntimeError:
             pass
-        if not saw_relations:
+        # Only fall back to per-item when the batch endpoint genuinely
+        # omitted the relations field (not merely returned empty arrays)
+        if not batch_returned_field:
             out.update(
                 await _fetch_relations_per_item(
                     client, org, project, batch_ids, cfg
@@ -843,26 +846,25 @@ def build_kanban_model(
     if need_extra:
         columns_out.append(_NO_COLUMN_LABEL)
 
-    # Order iterations: by path, with the empty iteration last.
-    iters: list[str] = []
-    seen: set[str] = set()
-    for r in sorted(rows, key=lambda x: (x.iteration_path == "",
-                                         x.iteration_path.lower(), x.wi_id)):
+    # Single-pass: group rows by iteration, then by column within each group
+    grouped: dict[str, list[WorkItemRow]] = {}
+    for r in rows:
         key = r.iteration_path or _NO_ITERATION_LABEL
-        if key not in seen:
-            seen.add(key)
-            iters.append(key)
+        grouped.setdefault(key, []).append(r)
+
+    # Order iterations: by path, with the empty iteration last.
+    iter_keys = sorted(
+        grouped.keys(),
+        key=lambda k: (k == _NO_ITERATION_LABEL, k.lower()),
+    )
 
     lanes: list[tuple[str, dict[str, list[WorkItemRow]]]] = []
-    for it in iters:
+    for it in iter_keys:
         cells: dict[str, list[WorkItemRow]] = {c: [] for c in columns_out}
-        for r in sorted(rows, key=lambda x: x.wi_id):
-            r_it = r.iteration_path or _NO_ITERATION_LABEL
-            if r_it != it:
-                continue
+        for r in sorted(grouped[it], key=lambda x: x.wi_id):
             col = (r.board_column if r.board_column in known
                    else _NO_COLUMN_LABEL)
-            cells.setdefault(col, []).append(r)
+            cells[col].append(r)
         label = (
             it if it == _NO_ITERATION_LABEL
             else it.replace("/", "\\").split("\\")[-1].strip() or it
@@ -981,7 +983,7 @@ async def _hydrate_inline_images(
 ) -> None:
     """Download inline <img> sources (http(s) and data URIs) into media_dir
     and record url -> local path on the detail. Best-effort; a failed image
-    is simply left un-rewritten."""
+    is simply left un-rewritten. Downloads concurrently (sem=6)."""
     urls: list[str] = []
     for html in (detail.description_html, detail.acceptance_html,
                  *[h for _, _, h in detail.comments_html]):
@@ -991,7 +993,9 @@ async def _hydrate_inline_images(
     if not unique:
         return
     media_dir.mkdir(parents=True, exist_ok=True)
-    for i, url in enumerate(unique):
+    sem = asyncio.Semaphore(6)
+
+    async def _download_one(i: int, url: str) -> None:
         try:
             m = _INLINE_DATA_URI_RE.match(url)
             if m:
@@ -1002,15 +1006,18 @@ async def _hydrate_inline_images(
                 dest = media_dir / f"inline_{detail.wi_id}_{i:03d}.{ext}"
                 dest.write_bytes(base64.b64decode(m.group(2)))
                 detail.inline_images[url] = str(dest)
-                continue
+                return
             base = url.split("?")[0].split("/")[-1] or "img"
             dest = media_dir / f"inline_{detail.wi_id}_{i:03d}_{_safe_name(base)}"
             if not dest.suffix:
                 dest = dest.with_suffix(".png")
-            await download_attachment(client, dcfg, url, dest)
+            async with sem:
+                await download_attachment(client, dcfg, url, dest)
             detail.inline_images[url] = str(dest)
         except Exception:  # noqa: BLE001
-            continue
+            pass
+
+    await asyncio.gather(*(_download_one(i, url) for i, url in enumerate(unique)))
 
 
 async def fetch_work_item_detail_async(

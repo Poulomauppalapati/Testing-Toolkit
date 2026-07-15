@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,12 @@ from agent.version import AGENT_VERSION
 
 DEFAULT_REPO = "nrcharanvignesh/Testing-Toolkit"
 DEFAULT_REF = "parts"
+
+_CACHE_TTL_SEC: int = 300
+_cached_config: dict[str, Any] | None = None
+_cached_config_mtime: float = 0.0
+_cached_result: dict[str, Any] | None = None
+_cached_result_time: float = 0.0
 
 
 def install_dir() -> Path:
@@ -34,9 +42,17 @@ def _config_path() -> Path:
 
 
 def _load_config() -> dict[str, Any]:
+    global _cached_config, _cached_config_mtime
+    path = _config_path()
     try:
-        data = json.loads(_config_path().read_text())
-        return data if isinstance(data, dict) else {}
+        mtime = path.stat().st_mtime
+        if _cached_config is not None and mtime == _cached_config_mtime:
+            return _cached_config
+        data = json.loads(path.read_text(encoding="utf-8"))
+        result = data if isinstance(data, dict) else {}
+        _cached_config = result
+        _cached_config_mtime = mtime
+        return result
     except Exception:
         return {}
 
@@ -101,10 +117,8 @@ def _fetch_manifest(url: str) -> dict[str, Any] | None:
 def _version_tuple(v: str) -> tuple[int, ...]:
     parts: list[int] = []
     for chunk in str(v).strip().split("."):
-        try:
-            parts.append(int(chunk))
-        except ValueError:
-            parts.append(0)
+        m = re.match(r"\d+", chunk)
+        parts.append(int(m.group()) if m else 0)
     return tuple(parts) or (0,)
 
 
@@ -123,12 +137,27 @@ def _is_newer(latest: str, current: str) -> bool:
     return a > b
 
 
+def _invalidate_update_cache() -> None:
+    """Clear the cached update check result. Called by tests."""
+    global _cached_result, _cached_result_time
+    _cached_result = None
+    _cached_result_time = 0.0
+
+
 def check_for_update() -> dict[str, Any]:
-    """Report current vs. available version without mutating the installation."""
+    """Report current vs. available version without mutating the installation.
+
+    Results are cached for _CACHE_TTL_SEC to avoid hammering GitHub API on
+    repeated UI polls.
+    """
+    global _cached_result, _cached_result_time
+    now = time.monotonic()
+    if _cached_result is not None and (now - _cached_result_time) < _CACHE_TTL_SEC:
+        return _cached_result
     manifest_url = resolve_manifest_url()
     manifest = _fetch_manifest(manifest_url) if manifest_url else None
     latest = str(manifest.get("version", "")).strip() if manifest else ""
-    return {
+    result = {
         "current": AGENT_VERSION,
         "latest": latest or None,
         "update_available": bool(latest and _is_newer(latest, AGENT_VERSION)),
@@ -136,3 +165,6 @@ def check_for_update() -> dict[str, Any]:
         "reachable": manifest is not None,
         "install_dir": str(install_dir()),
     }
+    _cached_result = result
+    _cached_result_time = now
+    return result

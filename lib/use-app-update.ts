@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { agent, type UpdateStatus } from "./agent-client";
 
 type Pushed = (
@@ -28,13 +28,20 @@ export function announceAgentUpdateRequired(status: UpdateStatus) {
  * presents the single supported upgrade path: reinstalling the agent while
  * preserving user data and completed onboarding.
  */
-export function useAppUpdate(pushLog?: Pushed) {
+export function useAppUpdate(pushLog?: Pushed): {
+  phase: "checking" | "idle";
+  status: UpdateStatus | null;
+  check: () => Promise<UpdateStatus | null>;
+  busy: boolean;
+} {
   const [checking, setChecking] = useState(false);
   const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const pushLogRef = useRef(pushLog);
+  pushLogRef.current = pushLog;
 
   const log: Pushed = useCallback(
-    (level, text) => pushLog?.(level, text),
-    [pushLog]
+    (level, text) => pushLogRef.current?.(level, text),
+    []
   );
 
   const check = useCallback(async (): Promise<UpdateStatus | null> => {
@@ -55,10 +62,8 @@ export function useAppUpdate(pushLog?: Pushed) {
       }
       return next;
     } catch (error) {
-      log(
-        "WARN",
-        `Could not check for agent updates: ${(error as Error).message}`
-      );
+      const msg = error instanceof Error ? error.message : String(error);
+      log("WARN", `Could not check for agent updates: ${msg}`);
       return null;
     } finally {
       setChecking(false);

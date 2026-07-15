@@ -244,6 +244,18 @@ async def _wait_for_stable(locator: Any, *, checks: int = 2) -> None:
             return
 
 
+async def _get_bbox(locator: Any) -> tuple[int, int, int, int] | None:
+    """Get element bounding box as (x, y, width, height) integers."""
+    try:
+        box = await locator.bounding_box()
+        if box:
+            return (int(box["x"]), int(box["y"]),
+                    int(box["width"]), int(box["height"]))
+    except Exception:
+        pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Single step executor
 # ---------------------------------------------------------------------------
@@ -287,6 +299,8 @@ async def _execute_step(
             locator_strategy="", duration_ms=0,
         )
 
+    last_bbox: tuple[int, int, int, int] | None = None
+
     for attempt in range(1, MAX_STEP_RETRIES + 1):
         try:
             if action == "navigate":
@@ -304,6 +318,7 @@ async def _execute_step(
                     page, target, preferred_strategy
                 )
                 await _wait_for_stable(loc)
+                last_bbox = await _get_bbox(loc)
                 # Determine fill value
                 if _is_password_target(target) or value.lower() == "{{password}}":
                     fill_value = password
@@ -323,6 +338,7 @@ async def _execute_step(
                     page, target, preferred_strategy
                 )
                 await _wait_for_stable(loc)
+                last_bbox = await _get_bbox(loc)
                 # Detect navigation intent from element attributes
                 tag = await loc.evaluate("el => el.tagName.toLowerCase()")
                 el_type = await loc.evaluate(
@@ -343,6 +359,7 @@ async def _execute_step(
                     page, target, preferred_strategy
                 )
                 await _wait_for_stable(loc)
+                last_bbox = await _get_bbox(loc)
                 fill_value = (
                     password if (_is_password_target(target) or value.lower() == "{{password}}")
                     else (username if value.lower() == "{{username}}" else value)
@@ -354,6 +371,7 @@ async def _execute_step(
                 loc, winning_strategy = await _find_element(
                     page, target, preferred_strategy
                 )
+                last_bbox = await _get_bbox(loc)
                 await loc.select_option(value, timeout=ELEMENT_TIMEOUT_MS)
                 actual = f"Selected [{value}] in [{target}] via [{winning_strategy}]"
 
@@ -361,6 +379,7 @@ async def _execute_step(
                 loc, winning_strategy = await _find_element(
                     page, target, preferred_strategy
                 )
+                last_bbox = await _get_bbox(loc)
                 await loc.check(timeout=ELEMENT_TIMEOUT_MS)
                 actual = f"Checked [{target}] via [{winning_strategy}]"
 
@@ -368,6 +387,7 @@ async def _execute_step(
                 loc, winning_strategy = await _find_element(
                     page, target, preferred_strategy
                 )
+                last_bbox = await _get_bbox(loc)
                 await loc.uncheck(timeout=ELEMENT_TIMEOUT_MS)
                 actual = f"Unchecked [{target}] via [{winning_strategy}]"
 
@@ -376,6 +396,7 @@ async def _execute_step(
                     page, target, preferred_strategy
                 )
                 await _wait_for_stable(loc)
+                last_bbox = await _get_bbox(loc)
                 await loc.hover(timeout=ELEMENT_TIMEOUT_MS)
                 actual = f"Hovered [{target}] via [{winning_strategy}]"
 
@@ -384,6 +405,7 @@ async def _execute_step(
                     page, target, preferred_strategy
                 )
                 await _wait_for_stable(loc)
+                last_bbox = await _get_bbox(loc)
                 await loc.dblclick(timeout=ELEMENT_TIMEOUT_MS)
                 actual = f"Double-clicked [{target}] via [{winning_strategy}]"
 
@@ -448,6 +470,7 @@ async def _execute_step(
                     loc, winning_strategy = await _find_element(
                         page, target, preferred_strategy, timeout_ms=ELEMENT_TIMEOUT_MS
                     )
+                    last_bbox = await _get_bbox(loc)
                     actual = f"Element visible: [{target}] via [{winning_strategy}]"
                 except RuntimeError:
                     status = "fail"
@@ -476,6 +499,7 @@ async def _execute_step(
                 loc, winning_strategy = await _find_element(
                     page, target, preferred_strategy
                 )
+                last_bbox = await _get_bbox(loc)
                 await loc.clear()
                 actual = f"Cleared [{target}] via [{winning_strategy}]"
 
@@ -512,20 +536,21 @@ async def _execute_step(
             status = "error"
             actual = f"Error: {err_msg}"
 
-    # Failure evidence is captured here. A final TC screenshot is captured by
-    # the suite orchestrator; routine successful steps do not add disk I/O.
-    if status in ("fail", "error"):
-        try:
-            raw_path = screenshot_dir / f"step_{step_num:03d}.png"
-            await page.screenshot(path=str(raw_path), full_page=False)
-            screenshot_path = annotate_screenshot(
-                screenshot_path=raw_path,
-                step_num=step_num,
-                status=status,
-                label=f"{action}: {target}"[:60],
-            )
-        except Exception:
-            pass
+    # Always capture a screenshot with bounding box annotation at every step
+    # for full traceability (Senior QA mode). The annotator draws the element
+    # highlight and step/status badges.
+    try:
+        raw_path = screenshot_dir / f"step_{step_num:03d}.png"
+        await page.screenshot(path=str(raw_path), full_page=False)
+        screenshot_path = annotate_screenshot(
+            screenshot_path=raw_path,
+            step_num=step_num,
+            status=status,
+            bounding_box=last_bbox,
+            label=f"{action}: {target}"[:60],
+        )
+    except Exception:
+        pass
 
     elapsed_ms = int((time.perf_counter_ns() - t0) / 1_000_000)
     return StepResult(

@@ -199,7 +199,7 @@ function DocumentsSection({
       }
     };
     void poll();
-    const timer = window.setInterval(poll, 500);
+    const timer = window.setInterval(poll, 2000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -213,11 +213,13 @@ function DocumentsSection({
   const docs = Array.isArray(status?.documents) ? status.documents : [];
 
   // Refresh the persisted document list as each upload completes so files show
-  // up ASAP (instead of only after the whole batch finishes). Re-fetch whenever
-  // the number of finished uploads changes.
+  // up ASAP (instead of only after the whole batch finishes). Debounced so rapid
+  // consecutive completions do not fire N separate GETs.
   const doneCount = uploads.filter((u) => u.status === "done").length;
   useEffect(() => {
-    if (doneCount > 0) refresh();
+    if (doneCount <= 0) return;
+    const t = window.setTimeout(refresh, 300);
+    return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneCount]);
 
@@ -253,27 +255,33 @@ function DocumentsSection({
     );
     if (!ok) return;
     setBusy(true);
+    // Concurrent deletion with concurrency limit of 6
+    const CONCURRENCY = 6;
     let okCount = 0;
-    for (const name of names) {
-      try {
-        await agent.deleteKbDocument(project, name);
-        okCount += 1;
-      } catch (e) {
-        const msg = (e as Error).message || "";
-        // A generic 404 ("Not Found") means the running agent predates the
-        // remove route. Stop hammering 70+ doomed requests and tell the user
-        // exactly how to fix it (one clear message instead of a wall of errors).
-        if (/40[34]/.test(msg) && /not found/i.test(msg)) {
-          pushLog(
-            "ERROR",
-            "Remove failed: your local Testing Toolkit agent is out of date " +
-              "and doesn't support removing KB documents yet. Update/restart " +
-              "the agent (pull the latest build, then relaunch) and try again."
-          );
-          setBusy(false);
-          return;
+    let aborted = false;
+    for (let i = 0; i < names.length && !aborted; i += CONCURRENCY) {
+      const batch = names.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(
+        batch.map((name) => agent.deleteKbDocument(project, name))
+      );
+      for (let j = 0; j < results.length; j++) {
+        const r = results[j];
+        if (r.status === "fulfilled") {
+          okCount += 1;
+        } else {
+          const msg = (r.reason as Error)?.message || "";
+          if (/40[34]/.test(msg) && /not found/i.test(msg)) {
+            pushLog(
+              "ERROR",
+              "Remove failed: your local Testing Toolkit agent is out of date " +
+                "and doesn't support removing KB documents yet. Update/restart " +
+                "the agent (pull the latest build, then relaunch) and try again."
+            );
+            aborted = true;
+            break;
+          }
+          pushLog("ERROR", `Could not remove ${batch[j]}: ${msg}`);
         }
-        pushLog("ERROR", `Could not remove ${name}: ${msg}`);
       }
     }
     setSelectedDocs(new Set());

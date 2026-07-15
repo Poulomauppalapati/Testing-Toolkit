@@ -46,6 +46,7 @@ def test_is_newer(latest: str, current: str, expected: bool) -> None:
 def test_check_for_update_equal_version_not_available(monkeypatch) -> None:
     from agent.version import AGENT_VERSION
 
+    updater._invalidate_update_cache()
     monkeypatch.setattr(updater, "resolve_manifest_url", lambda: "http://x/m.json")
     monkeypatch.setattr(updater, "_fetch_manifest", lambda url: {"version": AGENT_VERSION})
     out = updater.check_for_update()
@@ -54,6 +55,7 @@ def test_check_for_update_equal_version_not_available(monkeypatch) -> None:
 
 
 def test_check_for_update_newer_version_available(monkeypatch) -> None:
+    updater._invalidate_update_cache()
     monkeypatch.setattr(updater, "resolve_manifest_url", lambda: "http://x/m.json")
     monkeypatch.setattr(updater, "_fetch_manifest", lambda url: {"version": "99.0.0"})
     assert updater.check_for_update()["update_available"] is True

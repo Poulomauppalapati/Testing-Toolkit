@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 # Machine-locked encryption (DPAPI on Windows, derived-key elsewhere)
 # ---------------------------------------------------------------------
 
-def _dpapi_encrypt(data: bytes) -> bytes | None:
-    """Encrypt with Windows DPAPI (CurrentUser scope). Non-portable."""
+def _dpapi_call(func_name: str, data: bytes) -> bytes | None:
+    """Call a Windows DPAPI function (CryptProtectData or CryptUnprotectData)."""
     try:
         import ctypes
         import ctypes.wintypes
@@ -38,40 +38,24 @@ def _dpapi_encrypt(data: bytes) -> bytes | None:
 
         p_in = DATA_BLOB(len(data), ctypes.create_string_buffer(data, len(data)))
         p_out = DATA_BLOB()
-        if ctypes.windll.crypt32.CryptProtectData(
-            ctypes.byref(p_in), None, None, None, None, 0,
-            ctypes.byref(p_out)
-        ):
-            enc = ctypes.string_at(p_out.pbData, p_out.cbData)
+        fn = getattr(ctypes.windll.crypt32, func_name)
+        if fn(ctypes.byref(p_in), None, None, None, None, 0, ctypes.byref(p_out)):
+            result = ctypes.string_at(p_out.pbData, p_out.cbData)
             ctypes.windll.kernel32.LocalFree(p_out.pbData)
-            return enc
+            return result
     except Exception:
         pass
     return None
+
+
+def _dpapi_encrypt(data: bytes) -> bytes | None:
+    """Encrypt with Windows DPAPI (CurrentUser scope). Non-portable."""
+    return _dpapi_call("CryptProtectData", data)
 
 
 def _dpapi_decrypt(data: bytes) -> bytes | None:
     """Decrypt with Windows DPAPI (CurrentUser scope)."""
-    try:
-        import ctypes
-        import ctypes.wintypes
-
-        class DATA_BLOB(ctypes.Structure):
-            _fields_ = [("cbData", ctypes.wintypes.DWORD),
-                        ("pbData", ctypes.POINTER(ctypes.c_char))]
-
-        p_in = DATA_BLOB(len(data), ctypes.create_string_buffer(data, len(data)))
-        p_out = DATA_BLOB()
-        if ctypes.windll.crypt32.CryptUnprotectData(
-            ctypes.byref(p_in), None, None, None, None, 0,
-            ctypes.byref(p_out)
-        ):
-            dec = ctypes.string_at(p_out.pbData, p_out.cbData)
-            ctypes.windll.kernel32.LocalFree(p_out.pbData)
-            return dec
-    except Exception:
-        pass
-    return None
+    return _dpapi_call("CryptUnprotectData", data)
 
 
 def _machine_key() -> bytes:
@@ -185,11 +169,13 @@ def _file_set(path: Path, value: str) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         encrypted = _encrypt_value(value)
-        path.write_text(encrypted, encoding="ascii")
+        tmp = path.with_suffix(f".tmp.{os.getpid()}")
+        tmp.write_text(encrypted, encoding="ascii")
         try:
-            os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+            os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
         except Exception:
             pass
+        os.replace(tmp, path)
         return True
     except Exception:
         return False
@@ -244,26 +230,42 @@ def _migrate_legacy_settings() -> None:
         pass
 
 
+_settings_cache: dict[str, str] | None = None
+_settings_cache_mtime: float = 0.0
+
+
 def _load_all() -> dict[str, str]:
+    global _settings_cache, _settings_cache_mtime
     if not SETTINGS_PATH.exists():
         _migrate_legacy_settings()
     if not SETTINGS_PATH.exists():
         return {}
     try:
+        mtime = SETTINGS_PATH.stat().st_mtime
+        if _settings_cache is not None and mtime == _settings_cache_mtime:
+            return _settings_cache
         data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
         if isinstance(data, dict):
-            return {str(k): str(v) for k, v in data.items()}
+            result = {str(k): str(v) for k, v in data.items()}
+            _settings_cache = result
+            _settings_cache_mtime = mtime
+            return result
     except Exception:
         pass
     return {}
 
 
 def _write_all(data: dict[str, str]) -> bool:
+    global _settings_cache, _settings_cache_mtime
     try:
         SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        SETTINGS_PATH.write_text(
+        tmp = SETTINGS_PATH.with_suffix(f".tmp.{os.getpid()}")
+        tmp.write_text(
             json.dumps(data, indent=2, ensure_ascii=True), encoding="utf-8"
         )
+        os.replace(tmp, SETTINGS_PATH)
+        _settings_cache = data
+        _settings_cache_mtime = SETTINGS_PATH.stat().st_mtime
         return True
     except Exception:
         return False

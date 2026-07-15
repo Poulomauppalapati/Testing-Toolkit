@@ -11,7 +11,7 @@ from typing import Any, Callable, Final
 from urllib.parse import urlparse
 
 LogFn = Callable[[str], None]
-SCHEMA_VERSION: Final[int] = 2
+SCHEMA_VERSION: Final[int] = 3
 _ALLOWED_ACTIONS: Final[frozenset[str]] = frozenset({
     "navigate", "fill", "click", "type", "select", "check", "uncheck",
     "hover", "double_click", "press_key", "scroll", "wait",
@@ -32,10 +32,15 @@ _VALUE_ACTIONS: Final[frozenset[str]] = frozenset({
 _SECRET_TOKENS: Final[frozenset[str]] = frozenset({"{{password}}", "{{username}}"})
 
 _SYSTEM: Final[str] = (
-    "You compile human QA steps into a deterministic Playwright DSL. Return JSON only.\n"
+    "You are a Senior QA Engineer compiling human test steps into a deterministic "
+    "Playwright DSL. Return JSON only.\n"
     "Never emit credentials: use {{username}} and {{password}} placeholders. Do not invent "
     "steps, selectors, or expected outcomes. If a step cannot be represented, return an "
     "errors array describing it.\n\n"
+    "CONTEXT: You may receive description, acceptance_criteria, repro_steps, and environment "
+    "fields. Use these to understand the INTENT of the test -- they inform which assertions "
+    "and expected outcomes matter. Derive assertions from acceptance criteria when the human "
+    "steps omit explicit expected results.\n\n"
     "STEP SCHEMA (every step is an object with these fields):\n"
     "  action  - one of: navigate, fill, click, type, select, check, uncheck, hover, "
     "double_click, press_key, scroll, wait, wait_for_text, wait_for_url, assert_text, "
@@ -49,7 +54,10 @@ _SYSTEM: Final[str] = (
     "  expected - assertion text or URL fragment\n\n"
     "CRITICAL: 'locator' is ALWAYS a single word from the list above. Never put brackets, "
     "colons, or role names in the locator field. The role name and accessible name go in 'target'.\n"
-    "Prefer locator strategy: role > label > placeholder > text > test_id > css."
+    "Prefer locator strategy: role > label > placeholder > text > test_id > css.\n\n"
+    "RELIABILITY: Add a wait_for_text or wait_for_url step before assertions that depend "
+    "on async page loads. Add screenshot steps after key interactions for evidence. "
+    "Prefer exact matches over partial when the text is known."
 )
 
 
@@ -220,7 +228,7 @@ async def compile_test_case(
     if client is None or not model:
         raise PlanValidationError("Human-readable steps require the configured LLM plan compiler")
 
-    source = {
+    source: dict[str, Any] = {
         "title": str(tc.get("title", "Untitled")),
         "preconditions": tc.get("preconditions", ""),
         "steps": tc.get("steps", []),
@@ -234,6 +242,16 @@ async def compile_test_case(
             "step": {"action": "", "target": "", "value": "", "expected": "", "locator": "role"},
         },
     }
+    # Inject rich WI context (acceptance criteria, description, repro steps)
+    # so the compiler produces deterministic plans grounded in actual requirements.
+    if tc.get("description"):
+        source["description"] = str(tc["description"])[:3000]
+    if tc.get("acceptance_criteria"):
+        source["acceptance_criteria"] = str(tc["acceptance_criteria"])[:3000]
+    if tc.get("repro_steps"):
+        source["repro_steps"] = str(tc["repro_steps"])[:2000]
+    if tc.get("environment"):
+        source["environment"] = str(tc["environment"])[:500]
     try:
         result = await client.complete_async(
             model=model, system=_SYSTEM, user=json.dumps(source, ensure_ascii=True),
