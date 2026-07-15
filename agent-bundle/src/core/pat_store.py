@@ -217,13 +217,17 @@ def load_pat() -> str | None:
 
 
 def save_pat(token: str) -> bool:
-    """Persist PAT. Returns True if any backend succeeded."""
+    """Persist PAT to both keyring and encrypted file for redundancy.
+
+    The encrypted file in ~/.testing_toolkit/ survives reinstalls even if the
+    OS keyring entry is lost (e.g. credential manager reset, profile migration).
+    """
     if not token or not token.strip():
         return False
     token = token.strip()
-    if _try_keyring_set(token):
-        return True
-    return _file_set(token)
+    keyring_ok = _try_keyring_set(token)
+    file_ok = _file_set(token)
+    return keyring_ok or file_ok
 
 
 def clear_pat() -> bool:

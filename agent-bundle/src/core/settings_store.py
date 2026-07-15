@@ -366,13 +366,13 @@ def load_jira_pat() -> str:
 
 
 def save_jira_pat(pat: str) -> bool:
-    """Persist the JIRA PAT. Returns True if any backend took it."""
+    """Persist the JIRA PAT to both keyring and encrypted file for redundancy."""
     if not pat or not pat.strip():
         return False
     pat = pat.strip()
-    if _keyring_set(_JIRA_SERVICE, _JIRA_USERNAME, pat):
-        return True
-    return _file_set(_JIRA_FALLBACK_PATH, pat)
+    keyring_ok = _keyring_set(_JIRA_SERVICE, _JIRA_USERNAME, pat)
+    file_ok = _file_set(_JIRA_FALLBACK_PATH, pat)
+    return keyring_ok or file_ok
 
 
 def clear_jira_pat() -> bool:
