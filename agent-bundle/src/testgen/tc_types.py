@@ -26,7 +26,10 @@ from __future__ import annotations
 
 from typing import Final
 
-from ado.testcase_creator import SYSTEM_PROMPT as _CANONICAL_PROMPT
+def _canonical_prompt() -> str:
+    # ponytail: lazy import breaks testgen->ado->core cycle; inline if perf matters
+    from ado.testcase_creator import SYSTEM_PROMPT
+    return SYSTEM_PROMPT
 
 # Stable keys (also used as filename infixes and prompt file suffixes).
 TC_IMPLEMENTATION: Final[str] = "implementation"
@@ -354,6 +357,7 @@ def default_prompt(tc_type: str) -> str:
     by the canonical strict TC contract (schema + determinism + step
     rules), so generated JSON stays schema-valid for every phase."""
     preamble = _PREAMBLES.get(tc_type)
+    canonical = _canonical_prompt()
     if not preamble:
-        return _CANONICAL_PROMPT
-    return f"{preamble}\n\n{_CANONICAL_PROMPT}"
+        return canonical
+    return f"{preamble}\n\n{canonical}"
