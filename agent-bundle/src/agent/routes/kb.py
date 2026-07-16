@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.app_config import PROJECTS_DIR
+from core.trace import trace
 from agent.jobs import Job
 
 router = APIRouter()
@@ -49,6 +50,7 @@ class RetrieveResponse(BaseModel):
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
+@trace
 async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     """Run hybrid BM25 + dense + reranker search on the project KB."""
     from kb.retrieval import HybridRetriever
@@ -83,6 +85,7 @@ class EmbedRequest(BaseModel):
 
 
 @router.post("/embed")
+@trace
 async def embed(req: EmbedRequest) -> dict:
     """Embed texts using the local ONNX model."""
     from agent.model_loader import get_cached_embedder

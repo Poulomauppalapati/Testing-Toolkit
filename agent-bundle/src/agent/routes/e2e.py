@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from agent.jobs import JOBS, Job
 from automation.credential_vault import CredentialVault
 from core.app_config import OUTPUTS_DIR
+from core.trace import trace
 from core.project_store import ensure_project
 
 router = APIRouter()
@@ -476,6 +477,7 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
 
 
 @router.post("/start")
+@trace
 async def start_e2e(req: E2EStartRequest) -> dict[str, str]:
     if not req.project:
         raise HTTPException(400, "No project specified")

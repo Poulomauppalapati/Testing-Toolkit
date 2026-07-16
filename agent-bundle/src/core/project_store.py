@@ -187,16 +187,6 @@ def reset_system_prompt(full_name: str, tc_type: str | None = None) -> bool:
     return write_system_prompt(full_name, _default_prompt(tc_type), tc_type)
 
 
-def list_kb_files(full_name: str) -> list[Path]:
-    p = ProjectPaths.for_name(full_name)
-    if not p.kb_dir.exists():
-        return []
-    return [
-        f for f in sorted(p.kb_dir.rglob("*"), key=lambda x: str(x).lower())
-        if f.is_file() and not f.name.startswith(".")
-    ]
-
-
 def get_index(full_name: str) -> KbIndex:
     """Load (or rebuild if stale) the project's KB chunk index."""
     p = ensure_project(full_name)
@@ -510,39 +500,6 @@ def open_project_retriever(full_name: str) -> "Any | None":
 
     p = ProjectPaths.for_name(full_name)
     return open_retriever(p.hybrid_dir)
-
-
-def kb_dedup_summary(full_name: str) -> "tuple[int, int]":
-    """(total_files_in_kb_folder, pdf_twins_skipped). Lets the UI explain why
-    the indexed document count is lower than the uploaded file count."""
-    from kb.store import _raw_scan, dedup_twins
-
-    p = ProjectPaths.for_name(full_name)
-    raw = _raw_scan(p.kb_dir)
-    _kept, dropped = dedup_twins(raw)
-    return len(raw), len(dropped)
-
-
-def kb_file_count(full_name: str) -> int:
-    """Cheap count of KB source files for a project (lists the kb dir; does
-    NOT parse the index). Used to decide the 'no files' footer state."""
-    from kb.store import _scan_sources
-
-    try:
-        p = ProjectPaths.for_name(full_name)
-        return len(_scan_sources(p.kb_dir))
-    except Exception as e:
-        _log.debug("kb_file_count failed for %r: %s", full_name, e)
-        return 0
-
-
-def project_index_status(full_name: str) -> "Any":
-    """Cheap status (is_current / n_files / has_partial) for deciding
-    whether to kick off indexing."""
-    from kb.indexer import index_status
-
-    p = ProjectPaths.for_name(full_name)
-    return index_status(p.kb_dir, p.index_path)
 
 
 def save_template(

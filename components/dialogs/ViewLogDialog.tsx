@@ -47,8 +47,17 @@ export function ViewLogDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const openFolder = () => {
-    pushLog("INFO", dir ? `Log folder: ${dir}` : `Log file: ${path}`);
+  const openFolder = async () => {
+    try {
+      const res = await agent.openLogFolder();
+      if (res.ok) {
+        pushLog("INFO", `Opened log folder: ${res.detail}`);
+      } else {
+        pushLog("WARN", `Could not open log folder: ${res.detail}`);
+      }
+    } catch (e) {
+      pushLog("WARN", `Could not open log folder: ${(e as Error).message}`);
+    }
   };
 
   return (

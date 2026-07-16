@@ -91,18 +91,6 @@ def load_latest_run(project_full: str) -> ExecutionRun | None:
     return runs[0] if runs else None
 
 
-def get_tc_history(project_full: str, tc_id: str) -> list[TestResult]:
-    """Return results for a single test case across all stored runs,
-    ordered newest first."""
-    runs = load_runs(project_full, limit=100)
-    out: list[TestResult] = []
-    for run in runs:
-        for r in run.results:
-            if r.tc_id == tc_id:
-                out.append(r)
-                break
-    return out
-
 
 def failed_tc_ids(project_full: str) -> set[str]:
     """Return tc_ids that failed or errored in the latest run."""

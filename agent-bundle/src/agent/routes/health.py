@@ -145,6 +145,32 @@ async def doctor_route() -> dict:
         }
 
 
+@router.post("/open-log-folder")
+async def open_log_folder() -> dict:
+    """Best-effort: open the log directory in the OS file explorer."""
+    import subprocess
+    import sys
+
+    try:
+        from core.app_logging import log_dir
+
+        target = log_dir()
+        if target is None:
+            return {"ok": False, "detail": "log directory not available"}
+
+        folder = str(target)
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", folder])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", folder])
+        else:
+            subprocess.Popen(["xdg-open", folder])
+
+        return {"ok": True, "detail": folder}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "detail": f"{type(e).__name__}: {e}"}
+
+
 @router.get("/version")
 async def version() -> dict:
     import sys

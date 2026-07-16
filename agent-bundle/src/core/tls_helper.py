@@ -96,14 +96,6 @@ def build_combined_ca_bundle(force_rebuild: bool = False) -> str:
     return str(_CACHE_PATH)
 
 
-def clear_combined_ca_cache() -> bool:
-    try:
-        if _CACHE_PATH.exists():
-            _CACHE_PATH.unlink()
-        return True
-    except Exception:
-        return False
-
 
 def cache_path() -> Path:
     return _CACHE_PATH

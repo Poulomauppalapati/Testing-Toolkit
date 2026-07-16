@@ -20,22 +20,12 @@ from __future__ import annotations
 import json
 import re
 import ssl as _ssl
-from typing import Any, Final, Protocol
+from typing import Any, Final
 
 import httpx
 
-_INT_RE: Final[re.Pattern[str]] = re.compile(r"\d+")
 _RERANK_PATH: Final[str] = "/rerank"
 
-
-class Reranker(Protocol):
-    name: str
-
-    def rerank(
-        self, query: str, candidates: list[tuple[str, str]], top_k: int,
-    ) -> list[tuple[str, str]]:
-        """candidates: list of (id, text). Returns (id, score) best-first."""
-        ...
 
 
 # ---------------------------------------------------------------------

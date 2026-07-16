@@ -189,21 +189,6 @@ _PROVIDER_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 
-def provider_of(model_id: str) -> str:
-    s = (model_id or "").strip().lower()
-    if not s:
-        return "Other"
-    if "/" in s:
-        slug = s.split("/", 1)[0]
-        if slug in _PROVIDER_SLUGS:
-            return _PROVIDER_SLUGS[slug]
-        # fall through to hint detection on the remainder
-        s = s.split("/", 1)[1]
-    for keys, name in _PROVIDER_HINTS:
-        if any(k in s for k in keys):
-            return name
-    return "Other"
-
 
 # ---------------------------------------------------------------------
 # Client

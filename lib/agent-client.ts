@@ -10,6 +10,7 @@
  */
 
 import sanitizeHtml from "sanitize-html";
+import { trackEvent } from "./event-bus";
 
 const AGENT_URL = "http://127.0.0.1:7842";
 
@@ -499,6 +500,7 @@ export type AgentStatus = "connected" | "offline" | "connecting";
 // Low-level fetch helpers
 // ---------------------------------------------------------------------------
 async function agentFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const t0 = performance.now();
   const res = await fetch(`${AGENT_URL}${path}`, {
     ...options,
     headers: {
@@ -506,6 +508,8 @@ async function agentFetch<T>(path: string, options?: RequestInit): Promise<T> {
       ...options?.headers,
     },
   });
+  const elapsed = performance.now() - t0;
+  trackEvent("system_event", "agentFetch", path, { durationMs: elapsed, metadata: { status: res.status } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(humanizeError(res.status, body));
@@ -538,6 +542,7 @@ export function agentLogLevel(
 
 /** Poll a background job until it reaches a terminal state. */
 async function pollJob(jobId: string, h: JobHandlers = {}): Promise<JobSnapshot> {
+  trackEvent("system_event", "agentClient", "poll_job", { metadata: { jobId } });
   let offset = 0;
   const interval = h.intervalMs ?? 700;
   for (;;) {
@@ -929,6 +934,7 @@ export const agent = {
     signal?: AbortSignal,
     stallMs = 75_000
   ): Promise<BoardView> {
+    trackEvent("system_event", "agentClient", "stream_start", { metadata: { path: "/sources/workitems/stream" } });
     // Inactivity watchdog: if no bytes arrive for stallMs, abort so the caller
     // can fall back to the blocking loader instead of hanging the spinner
     // forever. The timer resets on every chunk. An external signal (caller
@@ -1202,6 +1208,7 @@ export const agent = {
     },
     signal?: AbortSignal
   ): Promise<void> {
+    trackEvent("system_event", "agentClient", "stream_start", { metadata: { path: "/chat/stream" } });
     const res = await fetch(`${AGENT_URL}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1757,6 +1764,13 @@ export const agent = {
 
   async recentLog(maxBytes = 60000): Promise<RecentLog> {
     return agentFetch<RecentLog>(`/tools/log?max_bytes=${maxBytes}`);
+  },
+
+  /** Ask the agent to open the log folder in the OS file explorer. */
+  async openLogFolder(): Promise<{ ok: boolean; detail: string }> {
+    return agentFetch<{ ok: boolean; detail: string }>("/open-log-folder", {
+      method: "POST",
+    });
   },
 
   // -- Updates --

@@ -26,6 +26,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
+from core.trace import trace
+
 router = APIRouter()
 
 _MAX_TOOL_ROUNDS: int = 10
@@ -71,6 +73,7 @@ def _base_system_prompt(project: str) -> str:
     )
 
 
+@trace
 def _kb_context(project: str, query: str) -> str:
     """Retrieve the top KB chunks for the query. Best-effort: returns an
     empty string if the project has no index or retrieval fails."""

@@ -32,6 +32,7 @@ import {
   setLastProjectPref,
   setLastBoardPref,
 } from "./preferences";
+import { trackEvent } from "./event-bus";
 
 export type KbState = "none" | "indexing" | "context" | "ready" | "error";
 
@@ -246,6 +247,7 @@ export function AppStateProvider({
   const prefix = settings?.project_prefix ?? "";
 
   const pushLog = useCallback((level: LogLine["level"], text: string) => {
+    trackEvent("state_change", "AppState", "push_log", { metadata: { level } });
     setLog((prev) => {
       const next = [
         ...prev,
@@ -384,7 +386,10 @@ export function AppStateProvider({
 
   const selectBoard = useCallback(
     (b: Board) => {
-      if (currentProject) selectBoardInternal(b, currentProject);
+      if (currentProject) {
+        trackEvent("user_action", "AppState", "select_board", { metadata: { boardId: b.id } });
+        selectBoardInternal(b, currentProject);
+      }
     },
     [currentProject, selectBoardInternal]
   );
@@ -703,6 +708,7 @@ export function AppStateProvider({
   const selectProject = useCallback(
     (full: string, preferredBoardLabel?: string) => {
       if (!full) return;
+      trackEvent("user_action", "AppState", "select_project", { userContext: displayName(full) });
       setCurrentProject(full);
       setCurrentBoard(null);
       setBoardView(null);
@@ -737,12 +743,19 @@ export function AppStateProvider({
       const next = new Set(prev);
       if (on) next.add(id);
       else next.delete(id);
+      trackEvent("user_action", "AppState", "toggle_selection", { metadata: { count: next.size } });
       return next;
     });
   }, []);
 
-  const openDialog = useCallback((d: DialogId) => setDialog(d), []);
-  const closeDialog = useCallback(() => setDialog(null), []);
+  const openDialog = useCallback((d: DialogId) => {
+    trackEvent("user_action", "AppState", "open_dialog", { metadata: { dialog: d } });
+    setDialog(d);
+  }, []);
+  const closeDialog = useCallback(() => {
+    trackEvent("user_action", "AppState", "close_dialog");
+    setDialog(null);
+  }, []);
 
   const value = useMemo<AppStateValue>(
     () => ({

@@ -1191,14 +1191,6 @@ async def fetch_details_async(
 # ---------------------------------------------------------------------
 # Sync wrappers (for callers not already on an event loop)
 # ---------------------------------------------------------------------
-def load_boards_for_project(org: str, project: str, cfg: RuntimeConfig,
-                            on_log: LogFn | None = None) -> list[Board]:
-    """Sync convenience wrapper. Must not be called from within a running event
-    loop (asyncio.run() starts a fresh loop; use the async variant instead)."""
-    return asyncio.run(
-        list_boards_for_project_async(org, project, cfg, on_log)
-    )
-
 
 def load_board_view(org: str, project: str, board: Board, cfg: RuntimeConfig,
                     on_log: LogFn | None = None) -> BoardView:

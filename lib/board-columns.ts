@@ -132,7 +132,7 @@ export function columnWidth(state: ColumnState, id: BoardColumnId): number {
 }
 
 /** Non-hook setter for a column width. Pass write=false during a live drag. */
-export function setColumnWidth(id: BoardColumnId, px: number, write = true) {
+function setColumnWidth(id: BoardColumnId, px: number, write = true) {
   ensureLoaded();
   const min = META_BY_ID.get(id)?.min ?? 60;
   const clamped = Math.max(min, Math.round(px));
@@ -143,7 +143,7 @@ export function setColumnWidth(id: BoardColumnId, px: number, write = true) {
 }
 
 /** Non-hook toggle for a column's collapsed flag (always persisted). */
-export function toggleColumnCollapsed(id: BoardColumnId) {
+function toggleColumnCollapsed(id: BoardColumnId) {
   ensureLoaded();
   const next = !cache.collapsed[id];
   persist({

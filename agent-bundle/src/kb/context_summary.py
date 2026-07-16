@@ -421,17 +421,6 @@ async def build_context_incremental_async(
     return aggregate
 
 
-async def extract_project_context_async(
-    kb_index: Any, client: Any, model: str, kb_fingerprint: str = "",
-    on_log: LogFn | None = None,
-) -> ProjectContext:
-    """Backward-compatible in-memory map/merge entry point."""
-    import tempfile
-    with tempfile.TemporaryDirectory(prefix="tt_context_") as tmp:
-        return await build_context_incremental_async(
-            kb_index, client, model, Path(tmp), kb_fingerprint, on_log,
-        )
-
 
 def save_context_summary(path: Path, ctx: ProjectContext) -> bool:
     try:

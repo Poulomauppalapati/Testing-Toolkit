@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from automation.credential_vault import CredentialVault, TestCredential
+from core.trace import trace
 
 router = APIRouter()
 _VAULT = CredentialVault()
@@ -47,6 +48,7 @@ def _mask(cred: TestCredential) -> dict[str, Any]:
 
 
 @router.get("/{project}")
+@trace
 def list_credentials(project: str) -> dict[str, Any]:
     """List masked credentials for a project (no passwords)."""
     creds = _VAULT.load(project)
@@ -54,6 +56,7 @@ def list_credentials(project: str) -> dict[str, Any]:
 
 
 @router.post("/{project}")
+@trace
 def upsert_credential(project: str, body: CredIn) -> dict[str, Any]:
     """Add or update a credential (keyed by env, case-insensitive).
 

@@ -380,6 +380,9 @@ class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
 # Added AFTER CORS so it wraps it (outermost) and can answer the PNA preflight.
 app.add_middleware(PrivateNetworkAccessMiddleware)
 
+from agent.middleware_trace import TraceRequestMiddleware
+app.add_middleware(TraceRequestMiddleware)
+
 # -- Register route modules --
 from agent.routes.health import router as health_router
 from agent.routes.settings import router as settings_router
@@ -397,6 +400,7 @@ from agent.routes.jobs import router as jobs_router
 from agent.routes.tools import router as tools_router
 from agent.routes.artifacts import router as artifacts_router
 from agent.routes.update import router as update_router
+from agent.routes.events import router as events_router
 
 app.include_router(health_router)
 app.include_router(settings_router, prefix="/settings")
@@ -414,6 +418,7 @@ app.include_router(jobs_router, prefix="/jobs")
 app.include_router(tools_router, prefix="/tools")
 app.include_router(artifacts_router, prefix="/artifacts")
 app.include_router(update_router, prefix="/update")
+app.include_router(events_router, prefix="/events")
 
 
 def _install_dir() -> Path:

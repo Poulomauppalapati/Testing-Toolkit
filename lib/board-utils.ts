@@ -97,16 +97,6 @@ export const COLOR_WARN = "#f59e0b";
 export const COLOR_INFO = "#3b82f6";
 export const COLOR_MUTED = "#94a3b8";
 
-/** board_grid.py _type_color */
-export function typeColor(wiType: string): string | null {
-  const t = (wiType || "").toLowerCase();
-  if (t.includes("bug") || t.includes("defect")) return "#f87171";
-  if (t.includes("user story") || t.includes("enhancement") || t.includes("story"))
-    return "#4ade80";
-  if (t.includes("test case") || t.includes("case")) return "#60a5fa";
-  return null;
-}
-
 function areaLeaf(areaPath: string): string {
   if (!areaPath) return "";
   return areaPath.replace(/\//g, "\\").split("\\").pop()?.trim() ?? "";

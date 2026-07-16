@@ -24,12 +24,32 @@ async def request_with_retry(
     client: httpx.AsyncClient, method: str, url: str, **kwargs: Any
 ) -> httpx.Response:
     """Execute an HTTP request with retry-after handling for rate limits."""
+    import time as _time
+    from core.trace import trace_dependency
+
     backoff: float = 1.0
+    t0 = _time.perf_counter()
     for attempt in range(MAX_RETRIES + 1):
         resp = await client.request(method, url, **kwargs)
         if resp.status_code not in _RETRYABLE_STATUSES:
+            elapsed = round((_time.perf_counter() - t0) * 1000, 2)
+            trace_dependency(
+                "http", url, f"{method} {resp.status_code}",
+                duration_ms=elapsed,
+                success=resp.status_code < 400,
+                status_code=resp.status_code,
+                metadata={"attempts": attempt + 1},
+            )
             return resp
         if attempt == MAX_RETRIES:
+            elapsed = round((_time.perf_counter() - t0) * 1000, 2)
+            trace_dependency(
+                "http", url, f"{method} {resp.status_code}",
+                duration_ms=elapsed,
+                success=False,
+                status_code=resp.status_code,
+                metadata={"attempts": attempt + 1, "exhausted": True},
+            )
             resp.raise_for_status()
         wait: float = backoff
         retry_after: str | None = resp.headers.get("Retry-After")

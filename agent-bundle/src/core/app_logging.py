@@ -146,6 +146,21 @@ def init_logging() -> Path | None:
         _initialized = True
         return None
 
+    # Structured trace log (JSONL, TRACE-only) for machine parsing.
+    # Separate from the human-readable log so traces do not pollute it.
+    try:
+        trace_path = log_dir / "trace.jsonl"
+        trace_handler = RotatingFileHandler(
+            str(trace_path), maxBytes=_MAX_BYTES,
+            backupCount=3, encoding="utf-8",
+        )
+        trace_handler.setLevel(5)  # TRACE
+        trace_handler.addFilter(lambda r: r.levelno == 5)
+        trace_handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(trace_handler)
+    except Exception:
+        pass
+
     _initialized = True
 
     # Native-crash capture: write low-level tracebacks (incl. segfaults) to a

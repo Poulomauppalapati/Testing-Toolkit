@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from agent.jobs import JOBS, Job
+from core.trace import trace
 
 router = APIRouter()
 
@@ -39,6 +40,7 @@ def _build_cfg(project: str):
     return cfg
 
 
+@trace
 async def _fetch_work_item_dump(
     project: str,
     wi_ids: list[int],
