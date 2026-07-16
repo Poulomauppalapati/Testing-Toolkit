@@ -7,6 +7,7 @@ Otherwise creates standard issues with steps in description (Markdown table).
 
 from __future__ import annotations
 
+import asyncio
 import gc
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -249,30 +250,35 @@ async def _create_one_xray(
             on_log(f"[ERROR] '{title}': {res.error}")
         return res
 
-    # Step 2: add Xray test steps via Xray REST API
+    # Step 2: add Xray test steps concurrently (semaphore-bounded)
     if steps and res.created_key:
         xray_steps = _build_xray_steps(steps)
         steps_endpoint = (
             f"/rest/raven/1.0/api/test/{res.created_key}/step"
         )
-        for xstep in xray_steps:
-            try:
-                await request_with_retry(
-                    client, "POST", steps_endpoint,
-                    json={
-                        "action": xstep["action"],
-                        "result": xstep["result"],
-                        "data": xstep["data"],
-                    },
-                    headers={"Content-Type": "application/json"},
-                )
-            except Exception:
-                # Best-effort step creation; log but don't fail the TC
-                if on_log:
-                    on_log(
-                        f"[WARN] Failed to add step {xstep['index']} to "
-                        f"{res.created_key}"
+        sem = asyncio.Semaphore(4)
+
+        async def _post_step(xstep: dict[str, Any]) -> None:
+            async with sem:
+                try:
+                    await request_with_retry(
+                        client, "POST", steps_endpoint,
+                        json={
+                            "action": xstep["action"],
+                            "result": xstep["result"],
+                            "data": xstep["data"],
+                        },
+                        headers={"Content-Type": "application/json"},
                     )
+                except Exception:
+                    # Best-effort step creation; log but don't fail the TC
+                    if on_log:
+                        on_log(
+                            f"[WARN] Failed to add step {xstep['index']} to "
+                            f"{res.created_key}"
+                        )
+
+        await asyncio.gather(*[_post_step(s) for s in xray_steps])
 
     if on_log and res.ok:
         on_log(

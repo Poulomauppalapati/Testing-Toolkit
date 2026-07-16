@@ -760,24 +760,49 @@ async def create_test_cases_async(
     verify_arg = cfg.build_ssl()
     parent_cache: dict[int, dict[str, Any]] = {}
 
+    sem = asyncio.Semaphore(max(1, cfg.concurrency))
+    progress = {"n": 0}
+
     async with httpx.AsyncClient(
         headers=headers, verify=verify_arg,
         timeout=httpx.Timeout(cfg.http_timeout_sec),
     ) as client:
+        # Pre-populate parent_cache for all unique parent IDs so
+        # concurrent tasks never race on the same cache miss.
+        if inherit_paths and (not area_override or not iteration_override):
+            unique_parents: set[int] = set()
+            for story in stories:
+                pid = int(story.get("parent_work_item_id") or 0)
+                if pid:
+                    unique_parents.add(pid)
+            for pid in unique_parents:
+                pinfo = await _get_parent(client, org, pid)
+                if pinfo and "fields" in pinfo:
+                    parent_cache[pid] = pinfo["fields"]
+                else:
+                    parent_cache[pid] = {}
+
+        # Build flat task list preserving order
+        tasks: list[tuple[int, dict[str, Any], str]] = []
         for story in stories:
             parent_id = int(story.get("parent_work_item_id") or 0)
             parent_title = (story.get("parent_title") or "").strip()
             if on_log and parent_title:
                 on_log(f"[INFO] Parent #{parent_id}: {parent_title}")
             for tc in story.get("test_cases") or []:
-                if on_progress:
-                    on_progress("create", done, total)
-                # Inject category into custom_fields if requested
                 tc_local = dict(tc)
                 if test_category_field:
                     cf = dict(tc_local.get("custom_fields") or {})
                     cf.setdefault(test_category_field, tc_local.get("category"))
                     tc_local["custom_fields"] = cf
+                tasks.append((parent_id, tc_local, parent_title))
+
+        async def _run_one(
+            parent_id: int, tc_local: dict[str, Any], _title: str,
+        ) -> CreateOneResult:
+            async with sem:
+                if on_progress:
+                    on_progress("create", progress["n"], total)
                 r = await _create_one(
                     client=client, org=org, project=project,
                     parent_id=parent_id,
@@ -788,12 +813,18 @@ async def create_test_cases_async(
                     parent_cache=parent_cache,
                     on_log=on_log,
                 )
-                batch.files.append(r)
-                if r.ok:
-                    batch.n_ok += 1
-                else:
-                    batch.n_failed += 1
-                done += 1
+                progress["n"] += 1
+                return r
+
+        results = await asyncio.gather(
+            *(_run_one(pid, tc, pt) for pid, tc, pt in tasks)
+        )
+        for r in results:
+            batch.files.append(r)
+            if r.ok:
+                batch.n_ok += 1
+            else:
+                batch.n_failed += 1
 
     if on_progress:
         on_progress("create", total, total)
