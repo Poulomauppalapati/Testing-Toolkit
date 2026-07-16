@@ -197,10 +197,6 @@ export function BoardGrid() {
     setSelected(next);
   };
 
-  // Header shows the selected board by its team name (e.g. "Abbott 2026
-  // Enhancements"), NOT the board kind ("Stories"). Boards usually repeat the
-  // project name as a prefix, so strip it here alone to avoid "Abbott - Abbott
-  // 2026 Enhancements" — leaving "Abbott - 2026 Enhancements Work Items".
   const headerLabel = (() => {
     if (!currentProject) return "Work Items";
     const project = displayName(currentProject);
@@ -210,9 +206,10 @@ export function BoardGrid() {
       const stripped = board.slice(project.length).replace(/^[\s\-–—:]+/, "");
       if (stripped) board = stripped;
     }
-    return board
+    const base = board
       ? `${project} - ${board} Work Items`
       : `${project} Work Items`;
+    return rows.length ? `${base} (${rows.length})` : base;
   })();
 
   return (

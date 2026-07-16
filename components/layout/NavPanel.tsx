@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { RefreshCw, LayoutDashboard, KanbanSquare } from "lucide-react";
+import { RefreshCw, LayoutDashboard } from "lucide-react";
 
 import { useAppState } from "@/lib/app-state";
 import { useTheme } from "@/lib/theme";
@@ -155,28 +155,7 @@ export function NavPanel() {
                     className="tt-list-item flex items-center gap-2 text-sm"
                     title={b.label}
                   >
-                    <KanbanSquare
-                      className="h-3.5 w-3.5 shrink-0"
-                      style={{
-                        color: isSelected
-                          ? "white"
-                          : "var(--tt-text-muted)",
-                      }}
-                    />
                     <span className="min-w-0 flex-1 truncate">{b.team_name}</span>
-                    {/* Show WI count only for the currently loaded board */}
-                    {isSelected && boardView && (
-                      <span
-                        className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold tabular-nums"
-                        style={{
-                          background: "rgba(255,255,255,0.18)",
-                          color: "rgba(255,255,255,0.85)",
-                        }}
-                        title={`${boardView.rows.length} work items`}
-                      >
-                        {boardView.rows.length}
-                      </span>
-                    )}
                   </div>
                 );
               })

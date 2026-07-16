@@ -82,3 +82,7 @@ duplication_cache.pkl
 
 # Internal documentation (not for distribution)
 GenAI Documentation.pdf
+
+# Workspace artifacts (monorepo root level only)
+pnpm-workspace.yaml
+testing-toolkit-enhanced.zip
