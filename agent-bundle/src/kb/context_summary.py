@@ -117,11 +117,112 @@ class ProjectContext:
     # User-edited context text. When set, it is injected verbatim instead of the
     # auto-rendered category sections (set via the KB dialog "Edit" action).
     override_summary: str = ""
+    # Lazy-built lookup indexes for O(1) retrieval (not serialized).
+    _idx_name: dict[str, list[tuple[str, ContextItem]]] = field(
+        default_factory=dict, init=False, repr=False, compare=False,
+    )
+    _idx_source: dict[str, list[tuple[str, ContextItem]]] = field(
+        default_factory=dict, init=False, repr=False, compare=False,
+    )
+    _idx_category: dict[str, dict[str, ContextItem]] = field(
+        default_factory=dict, init=False, repr=False, compare=False,
+    )
+
+    def _ensure_indexes(self) -> None:
+        if self._idx_name:
+            return
+        for category in CATEGORIES:
+            cat_map: dict[str, ContextItem] = {}
+            for item in getattr(self, category):
+                key = _normalize_name(item.name)
+                if not key:
+                    continue
+                cat_map[key] = item
+                self._idx_name.setdefault(key, []).append((category, item))
+                for src in item.sources:
+                    self._idx_source.setdefault(src, []).append((category, item))
+            if cat_map:
+                self._idx_category[category] = cat_map
+
+    def lookup_by_name(self, name: str) -> list[tuple[str, ContextItem]]:
+        """O(1) lookup: returns [(category, item), ...] for items matching name."""
+        self._ensure_indexes()
+        return self._idx_name.get(_normalize_name(name), [])
+
+    def lookup_by_source(self, source: str) -> list[tuple[str, ContextItem]]:
+        """O(1) lookup: returns [(category, item), ...] contributed by source doc."""
+        self._ensure_indexes()
+        return self._idx_source.get(source, [])
+
+    def lookup_in_category(self, category: str, name: str) -> ContextItem | None:
+        """O(1) lookup within a specific category."""
+        self._ensure_indexes()
+        cat_map = self._idx_category.get(category)
+        if cat_map is None:
+            return None
+        return cat_map.get(_normalize_name(name))
+
+    def all_names(self) -> frozenset[str]:
+        """All normalized item names across all categories."""
+        self._ensure_indexes()
+        return frozenset(self._idx_name.keys())
+
+    def sources_index(self) -> dict[str, list[tuple[str, ContextItem]]]:
+        """Full source->items map for batch operations."""
+        self._ensure_indexes()
+        return self._idx_source
 
     def is_empty(self) -> bool:
         if self.override_summary.strip():
             return False
         return not any(getattr(self, category) for category in CATEGORIES)
+
+    def to_prompt_section_for_sources(self, sources: list[str]) -> str:
+        """Targeted prompt section: only items contributed by the given sources."""
+        if not self.enabled or not sources:
+            return self.to_prompt_section()
+        if self.override_summary.strip():
+            return self.override_summary.strip()
+        self._ensure_indexes()
+        relevant: dict[str, list[ContextItem]] = {}
+        for src in sources:
+            for category, item in self._idx_source.get(src, []):
+                relevant.setdefault(category, []).append(item)
+        if not relevant:
+            return self.to_prompt_section()
+        titles = {
+            "actors": "ACTORS / ROLES / PERSONAS",
+            "entities": "BUSINESS ENTITIES / DOMAIN OBJECTS",
+            "data_models": "DATA MODELS / ER RELATIONSHIPS / CLASS DIAGRAMS",
+            "workflows": "WORKFLOWS / PROCESS FLOWS / SEQUENCE DIAGRAMS",
+            "system_architecture": "SYSTEM ARCHITECTURE / STACKS / TOPOLOGY",
+            "integrations": "INTEGRATION POINTS / APIs / PROTOCOLS",
+            "business_rules": "BUSINESS RULES / VALIDATIONS / FORMULAS",
+            "screens": "SCREENS / PAGES / UI COMPONENTS",
+            "inputs_outputs": "INPUTS / OUTPUTS / REPORTS / NOTIFICATIONS",
+            "state_machines": "STATE MACHINES / TRANSITIONS / LIFECYCLE",
+            "test_data_needs": "TEST DATA NEEDS / BOUNDARY VALUES",
+            "edge_cases": "EDGE CASES / NEGATIVE PATHS / RACE CONDITIONS",
+            "non_functional": "NON-FUNCTIONAL REQUIREMENTS / SLAs / COMPLIANCE",
+            "dependencies": "DEPENDENCIES / DATA FLOWS / SHARED LIBRARIES",
+            "security_constraints": "SECURITY / AUTH / ENCRYPTION / AUDIT",
+            "glossary": "GLOSSARY / TERMINOLOGY / ACRONYMS",
+        }
+        parts = ["PROJECT CONTEXT (targeted)", "=" * 40]
+        for category in CATEGORIES:
+            items = relevant.get(category)
+            if not items:
+                continue
+            parts.append(f"\n{titles[category]}:")
+            seen: set[str] = set()
+            for item in items:
+                key = _normalize_name(item.name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                parts.append(f"  - {item.name}: {item.description}")
+        parts.append("")
+        return "\n".join(parts)
 
     def to_prompt_section(self) -> str:
         if not self.enabled:
@@ -166,7 +267,11 @@ class ProjectContext:
         return "\n".join(parts)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d.pop("_idx_name", None)
+        d.pop("_idx_source", None)
+        d.pop("_idx_category", None)
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ProjectContext":

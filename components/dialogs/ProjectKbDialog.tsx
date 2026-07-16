@@ -172,6 +172,19 @@ function DocumentsSection({
 
   useEffect(refresh, [project]);
 
+  // Detect an already-running context job on mount so progress bars show even
+  // if the dialog was opened after indexing (or a regenerate) already started.
+  useEffect(() => {
+    if (!project || contextRunning) return;
+    agent
+      .activeContextJob(project)
+      .then((r) => {
+        if (r.job_id) setContextRunning(true);
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project]);
+
   useEffect(() => {
     if (!project || !contextRunning) return;
     let cancelled = false;

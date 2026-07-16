@@ -313,7 +313,9 @@ def _maybe_extract_context(
         h.update((getattr(chunk, "text", "") or "").encode("utf-8", errors="replace"))
     fingerprint = h.hexdigest()[:16]
     if not force and fingerprint == context_summary_fingerprint(p.full_name):
-        return
+        existing = load_context_summary(p.context_summary_path)
+        if existing is None or existing.status != "partial":
+            return
     model = llm_model
     if not model:
         from core.model_router import Task, route
