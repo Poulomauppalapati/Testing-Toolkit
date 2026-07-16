@@ -27,10 +27,15 @@ from typing import Any, Final
 _log = logging.getLogger(__name__)
 
 from core.app_config import PROJECTS_DIR
-from ado.testcase_creator import SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT
 from kb.store import KbIndex, load_or_build_index
 from testgen.tc_types import default_prompt as _default_prompt_for_type
 from testgen.tc_types import is_valid as _is_valid_tc_type
+
+
+def _get_default_system_prompt() -> str:
+    # ponytail: lazy import breaks core->ado package cycle; inline if perf matters
+    from ado.testcase_creator import SYSTEM_PROMPT
+    return SYSTEM_PROMPT
 
 _BAD_CHARS: Final[str] = '<>:"/\\|?*'
 
@@ -124,7 +129,7 @@ def _default_prompt(tc_type: str | None) -> str:
     prompt_md = _load_prompt_md()
     if prompt_md:
         return prompt_md
-    return DEFAULT_SYSTEM_PROMPT
+    return _get_default_system_prompt()
 
 
 def ensure_project(full_name: str) -> ProjectPaths:
@@ -142,7 +147,7 @@ def ensure_project(full_name: str) -> ProjectPaths:
     if not p.system_prompt_path.exists():
         try:
             p.system_prompt_path.write_text(
-                DEFAULT_SYSTEM_PROMPT, encoding="utf-8"
+                _get_default_system_prompt(), encoding="utf-8"
             )
         except OSError:
             pass
