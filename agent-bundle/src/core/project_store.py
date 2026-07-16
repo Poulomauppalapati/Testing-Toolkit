@@ -241,7 +241,8 @@ def index_project_resumable(
     try:
         _build_hybrid_from_index(p, index, on_log=on_log,
                                  should_stop=should_stop,
-                                 enable_dense=enable_dense, force=force)
+                                 enable_dense=enable_dense, force=force,
+                                 on_progress=on_progress)
     except Exception as e:  # noqa: BLE001 - hybrid build never blocks
         if on_log is not None:
             try:
@@ -449,7 +450,7 @@ def _resolve_embedder(
 def _build_hybrid_from_index(
     p: ProjectPaths, index: KbIndex, on_log: "Any | None" = None,
     should_stop: "Any | None" = None, enable_dense: bool = True,
-    force: bool = False,
+    force: bool = False, on_progress: "Any | None" = None,
 ) -> None:
     """Convert KB chunks to the hybrid index. Lexical (BM25) is always built.
     A local dense embedder is constructed ONLY when enable_dense is True."""
@@ -479,9 +480,19 @@ def _build_hybrid_from_index(
 
     embedder = _resolve_embedder(enable_dense, enforced, on_log)
 
+    # Bridge: on_progress from callers uses (done, total, elapsed, name="")
+    # but build_hybrid_index emits (stage, current, total). Adapt here.
+    def _hybrid_progress(stage: str, current: int, total: int) -> None:
+        if on_progress is not None:
+            try:
+                on_progress(current, total, 0.0, stage)
+            except Exception:
+                pass
+
     ok = build_hybrid_index(
         p.hybrid_dir, chunks, embedder=embedder, on_log=on_log,
         should_stop=should_stop, enforce_dense=(enable_dense and enforced),
+        on_progress=_hybrid_progress,
     )
     if not ok and not (should_stop and should_stop()):
         raise RuntimeError("Hybrid KB generation could not be published")

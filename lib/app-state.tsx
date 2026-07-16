@@ -399,9 +399,9 @@ export function AppStateProvider({
   const kbJobHandlers = useCallback(
     () => ({
       onLog: (line: string) => pushLog(agentLogLevel(line), line),
-      onProgress: (p: { current: number; total: number }) => {
-        const { current: done, total } = p;
-        setKbMessage("Indexing");
+      onProgress: (p: { stage?: string; current: number; total: number }) => {
+        const { stage, current: done, total } = p;
+        setKbMessage(stage === "embedding" ? "Embedding" : "Indexing");
         if (!total || total <= 0) {
           setKbProgress(null);
           return;

@@ -36,6 +36,7 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Final
@@ -62,6 +63,9 @@ def _compute_embed_batch() -> int:
     return 32
 
 _EMBED_BATCH: Final[int] = _compute_embed_batch()
+# ponytail: 4 workers saturates the API without overloading RAM; scale up
+# if the proxy supports higher concurrency per client.
+_EMBED_WORKERS: Final[int] = 4
 _SCHEMA: Final[int] = 2
 
 _CHUNKS_FILE: Final[str] = "chunks.jsonl"
@@ -189,6 +193,9 @@ def _drop_stale_vectors(
 # ---------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------
+ProgressFn = Callable[[str, int, int], None]
+
+
 def build_hybrid_index(
     index_dir: Path | str,
     chunks: list[dict[str, Any]],
@@ -196,6 +203,7 @@ def build_hybrid_index(
     on_log: LogFn | None = None,
     should_stop: StopFn | None = None,
     enforce_dense: bool = False,
+    on_progress: ProgressFn | None = None,
 ) -> bool:
     """Build (or refresh) the hybrid index from chunk dicts. Each chunk dict
     needs keys: chunk_id, doc, title, text, and optional context.
@@ -265,21 +273,43 @@ def build_hybrid_index(
             store = open_vector_store(index_dir, dim or 384)
             already = store.count()
             if already < len(ids):
-                _log(on_log, f"[INFO] Embedding {len(ids) - already} chunk(s) "
-                             f"with {model_name} (CPU)...")
+                remaining = len(ids) - already
+                _log(on_log, f"[INFO] Embedding {remaining} chunk(s) "
+                             f"with {model_name} "
+                             f"({_EMBED_WORKERS} workers)...")
+                if on_progress is not None:
+                    on_progress("embedding", already, len(ids))
                 i = already
                 while i < len(ids):
                     if should_stop is not None and should_stop():
                         store.save()
                         _log(on_log, "[WARN] Embedding paused; will resume.")
                         return True
-                    batch_ids = ids[i:i + _EMBED_BATCH]
-                    batch_txt = texts[i:i + _EMBED_BATCH]
-                    vecs = _embed_texts(embedder, batch_txt)
-                    store.add(batch_ids, vecs)
+                    # Prefetch multiple batches in parallel, write serially.
+                    window_end = min(i + _EMBED_BATCH * _EMBED_WORKERS, len(ids))
+                    batches = [
+                        (ids[b:b + _EMBED_BATCH], texts[b:b + _EMBED_BATCH])
+                        for b in range(i, window_end, _EMBED_BATCH)
+                    ]
+                    with ThreadPoolExecutor(
+                        max_workers=_EMBED_WORKERS
+                    ) as pool:
+                        futures = {
+                            pool.submit(_embed_texts, embedder, bt): bi
+                            for bi, (_, bt) in enumerate(batches)
+                        }
+                        results: list[Any] = [None] * len(batches)
+                        for fut in as_completed(futures):
+                            results[futures[fut]] = fut.result()
+                    # Write results in order (store is not thread-safe).
+                    for bi, (b_ids, _) in enumerate(batches):
+                        vecs = results[bi]
+                        store.add(b_ids, vecs)
+                        del vecs
                     store.save()
-                    i += _EMBED_BATCH
-                    del vecs
+                    i = window_end
+                    if on_progress is not None:
+                        on_progress("embedding", min(i, len(ids)), len(ids))
                     gc.collect()
             dim = int(getattr(store, "dim", dim) or dim)
             _log(on_log, f"[SUCCESS] Dense vectors ready ({store.count()}).")

@@ -79,3 +79,6 @@ package-lock.json
 .augment-session.json
 centrality_cache.pkl
 duplication_cache.pkl
+
+# Internal documentation (not for distribution)
+GenAI Documentation.pdf
