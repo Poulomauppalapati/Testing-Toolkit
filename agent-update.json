@@ -156,7 +156,7 @@
     {
       "path": "agent/routes/update.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/update.py?ref=main",
-      "hash": "18cde0b709d704f9b0d19212a8831034d878779c7d9832998d3e53de5e17a499"
+      "hash": "038b5fcd0d79d15dfb133892476859c24df5288ec444bcabfea005e1cc3d0809"
     },
     {
       "path": "agent/server.py",
@@ -166,7 +166,7 @@
     {
       "path": "agent/updater.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/updater.py?ref=main",
-      "hash": "fc873b7bb0ed7e6ddd482c9dd089557719f2153effbe6fdc3517d3c9ebb7a0ee"
+      "hash": "eb120d3ed1ce409933ac464b921b9b3f8b2d1c4603a2d502a360922482186b84"
     },
     {
       "path": "agent/version.py",
