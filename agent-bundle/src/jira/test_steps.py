@@ -22,6 +22,7 @@ parsers below are what the unit tests pin down.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from html import unescape
 from typing import Any
@@ -202,38 +203,62 @@ async def fetch_linked_test_cases(
 ) -> list[dict[str, Any]]:
     """Return runnable linked test cases for the given parent issue keys.
 
-    Best-effort: any error yields fewer results rather than raising."""
+    Best-effort: any error yields fewer results rather than raising.
+    Fetches parent issues and linked test steps concurrently."""
     if not issue_keys:
         return []
     ssl_errors = ssl_exception_types()
-    out: list[dict[str, Any]] = []
+    sem = asyncio.Semaphore(8)
+
     async with httpx.AsyncClient(
         headers=build_auth_header(user, pat),
         timeout=httpx.Timeout(cfg.http_timeout_sec),
         verify=cfg.build_ssl(),
         base_url=url.rstrip("/"),
     ) as client:
-        for parent in issue_keys:
-            try:
-                r = await client.get(
-                    f"/rest/api/2/issue/{parent}",
-                    params={"fields": "issuelinks,subtasks"},
+
+        async def _fetch_parent(parent: str) -> list[str]:
+            async with sem:
+                try:
+                    r = await client.get(
+                        f"/rest/api/2/issue/{parent}",
+                        params={"fields": "issuelinks,subtasks"},
+                    )
+                    if r.status_code != 200:
+                        return []
+                    fields = r.json().get("fields") or {}
+                    return _linked_test_keys(fields)
+                except (httpx.HTTPError, *ssl_errors):
+                    return []
+
+        parent_results = await asyncio.gather(
+            *(_fetch_parent(k) for k in issue_keys)
+        )
+
+        # Collect (parent_key, test_key) pairs
+        test_pairs: list[tuple[str, str]] = []
+        for parent_key, test_keys in zip(issue_keys, parent_results):
+            for tk in test_keys:
+                test_pairs.append((parent_key, tk))
+
+        async def _fetch_test(pair: tuple[str, str]) -> dict[str, Any] | None:
+            parent_key, test_key = pair
+            async with sem:
+                title, steps = await _fetch_steps_for_test(
+                    client, test_key, cfg
                 )
-                if r.status_code != 200:
-                    continue
-                fields = r.json().get("fields") or {}
-            except (httpx.HTTPError, *ssl_errors):
-                continue
-            for test_key in _linked_test_keys(fields):
-                title, steps = await _fetch_steps_for_test(client, test_key, cfg)
                 if not steps:
-                    continue
-                out.append({
-                    "id": str(parent),
+                    return None
+                return {
+                    "id": str(parent_key),
                     "tc_id": test_key,
                     "title": title,
                     "steps": steps,
                     "category": "linked",
                     "source": "jira",
-                })
-    return out
+                }
+
+        results = await asyncio.gather(
+            *(_fetch_test(p) for p in test_pairs)
+        )
+    return [r for r in results if r is not None]

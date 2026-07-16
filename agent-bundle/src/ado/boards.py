@@ -661,29 +661,16 @@ async def _fetch_work_item_types(
     return types
 
 
-async def _fetch_test_case_counts(
-    client: httpx.AsyncClient, org: str, project: str,
-    ids: list[int], cfg: RuntimeConfig,
-) -> dict[int, int]:
-    """Versatile linked-test-case discovery per work item, designed to work
-    across any team's SDLC conventions. Counts DISTINCT test cases reached from
-    each work item via EITHER:
-      (a) a TEST RELATION -- Tested By / Tests / a renamed custom test link, OR
-      (b) a parent/child/related/dependency link whose TARGET work item is
-          itself a test-type item (type name contains "test": Test Case, Test).
-    This covers the VSTS TestedBy relation, requirement->child Test Case
-    hierarchies, and custom link types alike. De-duplicated by target id.
-    Best-effort: returns {} on error so the board still loads."""
-    counts: dict[int, int] = {}
-    if not ids:
-        return counts
-    relations_by_wi = await _fetch_relations(client, org, project, ids, cfg)
-    if not relations_by_wi:
-        return counts
+def _classify_relations(
+    relations_by_wi: dict[int, list[dict[str, Any]]],
+) -> tuple[dict[int, set[int]], dict[int, int], dict[int, set[int]], set[int]]:
+    """Classify relations into direct test links vs candidates needing type-check.
 
-    direct: dict[int, set[int]] = {}      # test-relation target ids (dedup)
-    direct_noid: dict[int, int] = {}      # test relations with no parseable id
-    candidates: dict[int, set[int]] = {}  # link-target ids to type-check
+    Returns (direct, direct_noid, candidates, all_candidate_ids).
+    """
+    direct: dict[int, set[int]] = {}
+    direct_noid: dict[int, int] = {}
+    candidates: dict[int, set[int]] = {}
     all_candidate_ids: set[int] = set()
     for wid, rels in relations_by_wi.items():
         d: set[int] = set()
@@ -698,24 +685,25 @@ async def _fetch_test_case_counts(
                     noid += 1
             elif _is_link_relation(rel) and tid:
                 c.add(tid)
-        c -= d  # a target already counted as a test relation is not re-checked
+        c -= d
         direct[wid] = d
         if noid:
             direct_noid[wid] = noid
         if c:
             candidates[wid] = c
             all_candidate_ids |= c
+    return direct, direct_noid, candidates, all_candidate_ids
 
-    type_map = (
-        await _fetch_work_item_types(
-            client, org, project, sorted(all_candidate_ids), cfg
-        )
-        if all_candidate_ids else {}
-    )
-    test_typed = {
-        tid for tid, t in type_map.items() if _TEST_TYPE_TOKEN in _norm(t)
-    }
 
+def _tally_test_counts(
+    relations_by_wi: dict[int, list[dict[str, Any]]],
+    direct: dict[int, set[int]],
+    direct_noid: dict[int, int],
+    candidates: dict[int, set[int]],
+    test_typed: frozenset[int],
+) -> dict[int, int]:
+    """Tally final test-case counts per work item from classified relations."""
+    counts: dict[int, int] = {}
     for wid in relations_by_wi:
         d = direct.get(wid, set())
         c = candidates.get(wid, set())
@@ -727,6 +715,38 @@ async def _fetch_test_case_counts(
         if total:
             counts[wid] = total
     return counts
+
+
+async def _fetch_test_case_counts(
+    client: httpx.AsyncClient, org: str, project: str,
+    ids: list[int], cfg: RuntimeConfig,
+) -> dict[int, int]:
+    """Versatile linked-test-case discovery per work item. Counts DISTINCT test
+    cases reached via test relations OR link targets that are test-type items.
+    Best-effort: returns {} on error so the board still loads."""
+    if not ids:
+        return {}
+    relations_by_wi = await _fetch_relations(client, org, project, ids, cfg)
+    if not relations_by_wi:
+        return {}
+
+    direct, direct_noid, candidates, all_candidate_ids = _classify_relations(
+        relations_by_wi
+    )
+
+    type_map = (
+        await _fetch_work_item_types(
+            client, org, project, sorted(all_candidate_ids), cfg
+        )
+        if all_candidate_ids else {}
+    )
+    test_typed = frozenset(
+        tid for tid, t in type_map.items() if _TEST_TYPE_TOKEN in _norm(t)
+    )
+
+    return _tally_test_counts(
+        relations_by_wi, direct, direct_noid, candidates, test_typed
+    )
 
 
 def _apply_test_case_counts(
@@ -1095,37 +1115,75 @@ async def fetch_ado_blob_async(
         return r.content, ctype
 
 
+async def _batch_fetch_work_items(
+    client: httpx.AsyncClient, org: str, project: str,
+    ids: list[int], cfg: RuntimeConfig,
+) -> dict[int, dict[str, Any]]:
+    """Batch-fetch full work item payloads via workitemsbatch (up to 200/call).
+    Returns {wi_id: payload}. Eliminates N individual GETs."""
+    out: dict[int, dict[str, Any]] = {}
+    if not ids:
+        return out
+    url = (
+        f"https://dev.azure.com/{org}/{project}/_apis/wit/workitemsbatch"
+        f"?api-version={API_VER_WI}"
+    )
+    for start in range(0, len(ids), _BATCH_LIMIT):
+        batch_ids = ids[start:start + _BATCH_LIMIT]
+        try:
+            data = await _post_json(
+                client, url,
+                {"ids": batch_ids, "$expand": "All"},
+                cfg, label="details-batch",
+            )
+            for wi in data.get("value", []) or []:
+                wid = int(wi.get("id", 0) or 0)
+                if wid:
+                    out[wid] = wi
+        except RuntimeError as e:
+            _log.debug("_batch_fetch_work_items %d-%d failed: %s",
+                       batch_ids[0], batch_ids[-1], e)
+    return out
+
+
 async def fetch_details_async(
     org: str, project: str, wi_ids: list[int], cfg: RuntimeConfig,
     on_progress: Callable[[int, int], None] | None = None,
     on_log: LogFn | None = None,
 ) -> list[WorkItemDetail]:
-    """Fetch full detail for many work items concurrently (used to build
-    the generation dump). Order of the returned list follows wi_ids."""
+    """Fetch full detail for many work items. Batches the work-item payload
+    (eliminating N individual GETs) and fetches comments per-item (no batch
+    API for comments in ADO). Order of the returned list follows wi_ids."""
     dcfg = _detail_cfg(org, project, cfg)
     sem = asyncio.Semaphore(max(1, cfg.concurrency))
     done = {"n": 0}
     total = len(wi_ids)
 
-    async def _one(client: httpx.AsyncClient, wid: int) -> WorkItemDetail | None:
-        async with sem:
-            try:
-                wi, comments = await asyncio.gather(
-                    fetch_work_item(client, dcfg, wid),
-                    fetch_comments(client, dcfg, wid),
-                )
-                return _to_detail(wi, comments)
-            except Exception as e:
-                if on_log:
-                    on_log(f"[ERROR] WI {wid} detail fetch failed: {e!r}")
-                return None
-            finally:
-                done["n"] += 1
-                if on_progress:
-                    on_progress(done["n"], total)
-
     async with _client(cfg) as client:
-        results = await asyncio.gather(*[_one(client, w) for w in wi_ids])
+        wi_map = await _batch_fetch_work_items(
+            client, org, project, wi_ids, cfg
+        )
+
+        async def _fetch_comments_for(wid: int) -> WorkItemDetail | None:
+            async with sem:
+                wi = wi_map.get(wid)
+                if not wi:
+                    return None
+                try:
+                    comments = await fetch_comments(client, dcfg, wid)
+                    return _to_detail(wi, comments)
+                except Exception as e:
+                    if on_log:
+                        on_log(f"[ERROR] WI {wid} comments failed: {e!r}")
+                    return _to_detail(wi, [])
+                finally:
+                    done["n"] += 1
+                    if on_progress:
+                        on_progress(done["n"], total)
+
+        results = await asyncio.gather(
+            *[_fetch_comments_for(w) for w in wi_ids]
+        )
     by_id = {d.wi_id: d for d in results if d is not None}
     return [by_id[w] for w in wi_ids if w in by_id]
 

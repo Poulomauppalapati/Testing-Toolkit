@@ -379,9 +379,9 @@ async def extract_one(
 
         inline_dir = paths.root / "inline_images"
         inline_map: dict[str, str] = {}
-        for i, url in enumerate(unique_inline_urls):
-            inline_dir.mkdir(parents=True, exist_ok=True)
-            # Handle data URI
+        _dl_sem = asyncio.Semaphore(6)
+
+        async def _download_inline(i: int, url: str) -> None:
             m = _DATA_URI_RE.match(url)
             if m:
                 ext = m.group(1).lower().replace("+xml", "")
@@ -395,19 +395,25 @@ async def extract_one(
                     inline_map[url] = fname
                 except Exception as e:
                     log_error(f"WI {wi_id} bad data URI: {e!r}")
-                continue
-
-            # Handle HTTP(S) URL
+                return
             base = url.split("?")[0].split("/")[-1] or "image.png"
             filename = _safe_filename(f"img_{i:03d}_{base}")
             if not Path(filename).suffix:
                 filename += ".png"
             local = inline_dir / filename
-            try:
-                await download_attachment(client, cfg, url, local)
-                inline_map[url] = filename
-            except Exception as e:
-                log_error(f"WI {wi_id} inline image failed: {url} - {e!r}")
+            async with _dl_sem:
+                try:
+                    await download_attachment(client, cfg, url, local)
+                    inline_map[url] = filename
+                except Exception as e:
+                    log_error(f"WI {wi_id} inline image failed: {url} - {e!r}")
+
+        if unique_inline_urls:
+            inline_dir.mkdir(parents=True, exist_ok=True)
+            await asyncio.gather(
+                *(_download_inline(i, u)
+                  for i, u in enumerate(unique_inline_urls))
+            )
 
         if unique_inline_urls:
             (paths.root / "_inline_images.json").write_text(
@@ -421,22 +427,39 @@ async def extract_one(
             if r.get("rel") == "AttachedFile" and r.get("url")
         ]
 
-        n_ok = 0
+        # Pre-compute unique dest paths (sequential to avoid collisions),
+        # then download concurrently.
+        att_tasks: list[tuple[str, Path]] = []
         for rel in att_relations:
             att_name = _safe_filename(
                 (rel.get("attributes") or {}).get("name", "attachment.bin")
             )
             dest = paths.attachments_dir / att_name
             i = 1
-            while dest.exists():
+            while dest.exists() or any(d == dest for _, d in att_tasks):
                 stem, ext = os.path.splitext(att_name)
                 dest = paths.attachments_dir / f"{stem}_{i}{ext}"
                 i += 1
-            try:
-                await download_attachment(client, cfg, rel["url"], dest)
-                n_ok += 1
-            except Exception as e:
-                log_error(f"WI {wi_id} attachment '{att_name}' failed: {e!r}")
+            att_tasks.append((rel["url"], dest))
+
+        n_ok = 0
+
+        async def _download_att(url: str, dest: Path) -> bool:
+            async with _dl_sem:
+                try:
+                    await download_attachment(client, cfg, url, dest)
+                    return True
+                except Exception as e:
+                    log_error(
+                        f"WI {wi_id} attachment '{dest.name}' failed: {e!r}"
+                    )
+                    return False
+
+        if att_tasks:
+            results = await asyncio.gather(
+                *(_download_att(u, d) for u, d in att_tasks)
+            )
+            n_ok = sum(1 for r in results if r)
 
         n_comments_count = len(comments) if isinstance(comments, list) else 0
 

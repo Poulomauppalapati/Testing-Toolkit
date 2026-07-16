@@ -65,17 +65,23 @@ async def _fetch_work_item_dump(
 
         cfg = build_jira_runtime_config()
         total = len(wi_keys)
-        details: list[dict[str, Any]] = []
-        for i, key in enumerate(wi_keys):
-            if on_progress:
-                on_progress(i, total)
-            d = await get_issue_detail(rs.url, rs.user, rs.pat, key, cfg)
-            if d:
-                details.append(d)
-            elif on_log:
-                on_log(f"[WARN] Could not fetch JIRA issue {key}")
-        if on_progress:
-            on_progress(total, total)
+        sem = asyncio.Semaphore(max(1, cfg.concurrency))
+        done = {"n": 0}
+
+        async def _fetch_one(key: str) -> dict[str, Any] | None:
+            async with sem:
+                d = await get_issue_detail(
+                    rs.url, rs.user, rs.pat, key, cfg
+                )
+                if not d and on_log:
+                    on_log(f"[WARN] Could not fetch JIRA issue {key}")
+                done["n"] += 1
+                if on_progress:
+                    on_progress(done["n"], total)
+                return d
+
+        results = await asyncio.gather(*(_fetch_one(k) for k in wi_keys))
+        details: list[dict[str, Any]] = [d for d in results if d]
         if not details:
             return "", [], 0
         combined = build_jira_work_item_dump(details)
