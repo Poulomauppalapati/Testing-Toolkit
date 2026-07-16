@@ -5,6 +5,10 @@ import {
   agentLogLevel,
   mergeCommentsHtml,
   sanitizeWorkItemHtml,
+  displayProjectName,
+  TC_TYPES,
+  TC_DISPLAY_NAME,
+  TC_BUTTON_LABEL,
   agent,
 } from "../agent-client";
 import type { WorkItemRow } from "../agent-client";
@@ -445,5 +449,49 @@ describe("humanSize", () => {
     expect(humanSize(1536)).toBe("1.5 KB");
     expect(humanSize(1024 * 1024)).toBe("1.0 MB");
     expect(humanSize(1024 * 1024 * 1024)).toBe("1.0 GB");
+  });
+});
+
+describe("displayProjectName", () => {
+  it("strips a matching prefix (case-insensitive) and leading separators", () => {
+    expect(displayProjectName("ACME_ProjectAlpha", "ACME_")).toBe("ProjectAlpha");
+    expect(displayProjectName("acme-Beta", "ACME-")).toBe("Beta");
+    expect(displayProjectName("PREFIX - Gamma", "PREFIX")).toBe("Gamma");
+  });
+
+  it("returns the full name when prefix does not match", () => {
+    expect(displayProjectName("ProjectAlpha", "OTHER")).toBe("ProjectAlpha");
+    expect(displayProjectName("Short", "LongerPrefix")).toBe("Short");
+  });
+
+  it("returns the full name when stripping would leave empty", () => {
+    expect(displayProjectName("PREFIX", "PREFIX")).toBe("PREFIX");
+  });
+
+  it("returns the full name when prefix is empty", () => {
+    expect(displayProjectName("MyProject", "")).toBe("MyProject");
+  });
+});
+
+describe("TC_TYPES and display constants", () => {
+  it("defines exactly three test-case types", () => {
+    expect(TC_TYPES).toHaveLength(3);
+    expect(TC_TYPES).toContain("implementation");
+    expect(TC_TYPES).toContain("sit");
+    expect(TC_TYPES).toContain("uat");
+  });
+
+  it("has a display name for every type", () => {
+    for (const t of TC_TYPES) {
+      expect(TC_DISPLAY_NAME[t]).toBeTruthy();
+      expect(typeof TC_DISPLAY_NAME[t]).toBe("string");
+    }
+  });
+
+  it("has a button label for every type", () => {
+    for (const t of TC_TYPES) {
+      expect(TC_BUTTON_LABEL[t]).toBeTruthy();
+      expect(typeof TC_BUTTON_LABEL[t]).toBe("string");
+    }
   });
 });
