@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-  import { Upload, FileText, RefreshCw, Download, Trash2, Sparkles, Eye, EyeOff, Pencil, Copy, Check, X } from "lucide-react";
+  import { FileText, RefreshCw, Download, Trash2, Sparkles, Eye, EyeOff, Pencil, Copy, Check, X } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { agent, type KbStatus, type TcType, TC_TYPES, TC_DISPLAY_NAME, type TemplateStatus, type ProjectContextSummary } from "@/lib/agent-client";
 import { useAppState } from "@/lib/app-state";
@@ -331,7 +331,7 @@ function DocumentsSection({
     setContextRunning(false);
     setContextProgress("");
     setContextPct(null);
-    pushLog("WARN", "Force-clearing knowledge base...");
+    pushLog("WARN", "Clearing knowledge base...");
     try {
       const r = await agent.clearKb(project, keepDocuments);
       clearKbDirty();
@@ -344,8 +344,9 @@ function DocumentsSection({
         }${keepDocuments ? " — documents kept" : ""}.`
       );
       refresh();
+      window.location.reload();
     } catch (e) {
-      pushLog("ERROR", `Force-clear failed: ${(e as Error).message}`);
+      pushLog("ERROR", `Clear KB failed: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -428,8 +429,7 @@ function DocumentsSection({
           disabled={busy || uploadingHere || !project}
           onClick={() => fileRef.current?.click()}
         >
-          <Upload className="h-3.5 w-3.5" />{" "}
-          {uploadingHere ? "Uploading..." : "Add files..."}
+          {uploadingHere ? "Uploading..." : "Add files"}
         </button>
         <button
           className="tt-btn-ghost !px-3 !py-1.5 text-xs"
@@ -454,9 +454,9 @@ function DocumentsSection({
           className="tt-btn-ghost !px-3 !py-1.5 text-xs !text-[var(--tt-danger)]"
           disabled={busy || !project}
           onClick={forceClear}
-          title="Stop any running indexing and wipe the knowledge base (force clear)"
+          title="Stop any running indexing and wipe the knowledge base"
         >
-          <Trash2 className="h-3.5 w-3.5" /> Force clear
+          <Trash2 className="h-3.5 w-3.5" /> Clear KB
         </button>
         <input
           ref={fileRef}
@@ -676,8 +676,7 @@ function TemplatesSection({
           disabled={busy || !project}
           onClick={() => fileRef.current?.click()}
         >
-          <Upload className="h-3.5 w-3.5" />{" "}
-          {hasTemplate ? "Replace template..." : "Upload template..."}
+          {hasTemplate ? "Replace template" : "Upload template"}
         </button>
         <button
           className="tt-btn-ghost !px-3 !py-1.5 text-xs"

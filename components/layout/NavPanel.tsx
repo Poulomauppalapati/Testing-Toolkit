@@ -138,6 +138,12 @@ export function NavPanel() {
             ) : (
               boards.map((b) => {
                 const isSelected = b.label === currentBoard?.label;
+                const project = currentProject ? displayName(currentProject) : "";
+                let boardLabel = (b.team_name || b.name || "").replace(/_/g, " ").trim();
+                if (project && boardLabel.toLowerCase().startsWith(project.toLowerCase())) {
+                  boardLabel = boardLabel.slice(project.length).replace(/^[\s\-–—:]+/, "").trim();
+                }
+                if (!boardLabel) boardLabel = b.team_name || b.label;
                 return (
                   <div
                     key={b.id || b.label}
@@ -146,7 +152,6 @@ export function NavPanel() {
                     data-selected={isSelected}
                     onClick={() => selectBoard(b)}
                     onKeyDown={(e) => {
-                      // ARIA button pattern: activate on Enter and Space.
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
                         selectBoard(b);
@@ -155,7 +160,7 @@ export function NavPanel() {
                     className="tt-list-item flex items-center gap-2 text-sm"
                     title={b.label}
                   >
-                    <span className="min-w-0 flex-1 truncate">{b.team_name}</span>
+                    <span className="min-w-0 flex-1 truncate">{boardLabel}</span>
                   </div>
                 );
               })
