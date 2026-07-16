@@ -73,8 +73,7 @@ export function AppShell() {
               current: agentVersion,
               latest: REQUIRED_AGENT_VERSION,
               update_available: true,
-              // We don't yet know if auto-update is configured; the check below
-              // refines this. Default false so the gate shows reinstall first.
+              patch_only: false,
               configured: false,
               reachable: true,
               install_dir: "",

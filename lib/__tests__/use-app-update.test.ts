@@ -55,6 +55,7 @@ function makeStatus(overrides: Partial<UpdateStatus> = {}): UpdateStatus {
     current: "2.10.6",
     latest: null,
     update_available: false,
+    patch_only: false,
     configured: true,
     reachable: true,
     install_dir: "C:\\agent",

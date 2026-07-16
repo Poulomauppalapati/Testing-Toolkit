@@ -49,7 +49,23 @@ export function useAppUpdate(pushLog?: Pushed): {
     try {
       const next = await agent.updateStatus();
       setStatus(next);
-      if (next.update_available) {
+      if (next.update_available && next.patch_only) {
+        log("INFO", `Patch v${next.latest} available. Applying...`);
+        try {
+          const result = await agent.applyPatch();
+          if (result.ok) {
+            log("SUCCESS", `Patch v${result.version} applied. Reconnecting...`);
+            // Agent will restart; wait then reload to reconnect.
+            setTimeout(() => window.location.reload(), 3000);
+          } else {
+            log("WARN", `Patch failed: ${result.error}. Reinstall may be needed.`);
+            announceAgentUpdateRequired(next);
+          }
+        } catch {
+          log("WARN", "Patch apply failed. Reinstall may be needed.");
+          announceAgentUpdateRequired(next);
+        }
+      } else if (next.update_available) {
         log(
           "WARN",
           `Agent v${next.latest ?? "latest"} is available. Reinstall is required.`

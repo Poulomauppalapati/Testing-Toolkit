@@ -1785,6 +1785,7 @@ export const agent = {
           current: "unknown",
           latest: null,
           update_available: false,
+          patch_only: false,
           configured: false,
           reachable: true,
           install_dir: "",
@@ -1792,6 +1793,10 @@ export const agent = {
       }
       throw e;
     }
+  },
+
+  async applyPatch(): Promise<{ ok: boolean; version?: string; error?: string }> {
+    return agentFetch("/update/apply", { method: "POST" });
   },
 
 };
@@ -1811,6 +1816,7 @@ export interface UpdateStatus {
   current: string;
   latest: string | null;
   update_available: boolean;
+  patch_only: boolean;
   configured: boolean;
   reachable: boolean;
   install_dir: string;

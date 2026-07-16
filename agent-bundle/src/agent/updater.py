@@ -137,6 +137,16 @@ def _is_newer(latest: str, current: str) -> bool:
     return a > b
 
 
+def _is_patch_only(latest: str, current: str) -> bool:
+    """True when the version difference is patch-level only (same major.minor).
+    Patch updates can be applied via source overlay without full reinstall."""
+    a = _version_tuple(latest)
+    b = _version_tuple(current)
+    if len(a) < 3 or len(b) < 3:
+        return False
+    return a[0] == b[0] and a[1] == b[1] and a[2] > b[2]
+
+
 def _invalidate_update_cache() -> None:
     """Clear the cached update check result. Called by tests."""
     global _cached_result, _cached_result_time
@@ -157,10 +167,13 @@ def check_for_update() -> dict[str, Any]:
     manifest_url = resolve_manifest_url()
     manifest = _fetch_manifest(manifest_url) if manifest_url else None
     latest = str(manifest.get("version", "")).strip() if manifest else ""
+    newer = bool(latest and _is_newer(latest, AGENT_VERSION))
+    patch = bool(latest and newer and _is_patch_only(latest, AGENT_VERSION))
     result = {
         "current": AGENT_VERSION,
         "latest": latest or None,
-        "update_available": bool(latest and _is_newer(latest, AGENT_VERSION)),
+        "update_available": newer,
+        "patch_only": patch,
         "configured": bool(manifest_url),
         "reachable": manifest is not None,
         "install_dir": str(install_dir()),
@@ -168,3 +181,80 @@ def check_for_update() -> dict[str, Any]:
     _cached_result = result
     _cached_result_time = now
     return result
+
+
+def apply_patch() -> dict[str, Any]:
+    """Download and apply a patch-only update via source overlay.
+
+    Only proceeds when the manifest version is patch-level above the current.
+    Downloads each changed file from GitHub, verifies SHA-256, writes in-place.
+    Returns a result dict with success/failure and files changed."""
+    import hashlib
+    import logging
+    import sys
+
+    log = logging.getLogger(__name__)
+    manifest_url = resolve_manifest_url()
+    if not manifest_url:
+        return {"ok": False, "error": "update not configured"}
+
+    manifest = _fetch_manifest(manifest_url)
+    if not manifest:
+        return {"ok": False, "error": "cannot reach update server"}
+
+    latest = str(manifest.get("version", "")).strip()
+    if not latest or not _is_newer(latest, AGENT_VERSION):
+        return {"ok": False, "error": "already up to date"}
+    if not _is_patch_only(latest, AGENT_VERSION):
+        return {"ok": False, "error": "not a patch update; reinstall required"}
+
+    files = manifest.get("files", [])
+    if not files:
+        return {"ok": False, "error": "manifest has no files"}
+
+    src_dir = Path(sys.modules["agent"].__file__ or "").resolve().parent.parent
+    headers = _auth_headers()
+    headers["Accept"] = "application/vnd.github.raw"
+    applied: list[str] = []
+    errors: list[str] = []
+
+    for entry in files:
+        rel_path = str(entry.get("path", ""))
+        url = str(entry.get("url", ""))
+        expected_hash = str(entry.get("hash", ""))
+        if not rel_path or not url or not expected_hash:
+            continue
+
+        target = src_dir / rel_path
+        if not target.exists():
+            continue
+
+        try:
+            resp = httpx.get(url, headers=headers, timeout=30,
+                             follow_redirects=True)
+            if resp.status_code != 200:
+                errors.append(f"{rel_path}: HTTP {resp.status_code}")
+                continue
+            content = resp.content
+            actual_hash = hashlib.sha256(content).hexdigest()
+            if actual_hash != expected_hash:
+                errors.append(f"{rel_path}: hash mismatch")
+                continue
+            target.write_bytes(content)
+            applied.append(rel_path)
+        except Exception as e:
+            errors.append(f"{rel_path}: {type(e).__name__}")
+
+    if errors and not applied:
+        return {"ok": False, "error": f"all files failed: {errors}"}
+
+    _invalidate_update_cache()
+    log.info("[INFO] Patch %s applied: %d file(s), %d error(s)",
+             latest, len(applied), len(errors))
+    return {
+        "ok": True,
+        "version": latest,
+        "applied": applied,
+        "errors": errors,
+        "restart_required": True,
+    }
