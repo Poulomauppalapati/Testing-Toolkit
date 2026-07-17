@@ -337,7 +337,11 @@ def make_cover_pdf(wi_dir: Path, out_pdf: Path, paper: str, *, organization: str
         wi_url = f"https://dev.azure.com/{organization}/_workitems/edit/{wi_id_str}"
     wi_title = _safe_html(meta.get("title", "(no title)"))
     if wi_url:
-        heading = f'<a href="{_safe_html(wi_url)}" color="blue">WI {wi_id_str}</a>: {wi_title}'
+        heading = (
+            f'<a href="{_safe_html(wi_url)}">'
+            f'<font color="blue"><u>WI {wi_id_str}</u></font></a>'
+            f": {wi_title}"
+        )
     else:
         heading = f"WI {wi_id_str}: {wi_title}"
     story.append(Paragraph(heading, sty["h1"]))
