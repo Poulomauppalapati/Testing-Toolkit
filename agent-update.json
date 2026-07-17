@@ -1,7 +1,7 @@
 {
-  "version": "2.25.0",
-  "ref": "aec6bbb23e74f29c9e55cf8a705c3a2e281e49b6",
-  "generatedAt": "2026-07-17T05:55:20.055Z",
+  "version": "2.26.0",
+  "ref": "0904b012c98b56a8926858101d9205e4a9265acd",
+  "generatedAt": "2026-07-17T19:34:10.000Z",
   "files": [
     {
       "path": ".env.enc",
