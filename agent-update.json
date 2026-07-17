@@ -1,5 +1,5 @@
 {
-  "version": "2.23.0",
+  "version": "2.24.0",
   "ref": "main",
   "generatedAt": "2026-07-17T05:55:20.055Z",
   "files": [
@@ -51,7 +51,7 @@
     {
       "path": "agent/jobs.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/jobs.py?ref=main",
-      "hash": "ecc01695b39abf7b6569198e4875f934e206e58b290d2626b31c29971298b752"
+      "hash": "665646dfccc97509c25a93fe7cec33411712c76374fce17838c97f6af7c9f962"
     },
     {
       "path": "agent/middleware_trace.py",
@@ -86,7 +86,7 @@
     {
       "path": "agent/routes/chat.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/chat.py?ref=main",
-      "hash": "6aae199311b6eac338834d0edce78f7b5506382af93d7f7beb65a80e9dcf0ca1"
+      "hash": "89e3d1e89a3e09026a2645018c681da2f04e75992d66049a25e2aab137ee4cec"
     },
     {
       "path": "agent/routes/credentials.py",
@@ -96,12 +96,12 @@
     {
       "path": "agent/routes/defects.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/defects.py?ref=main",
-      "hash": "dc43fa1984a17b18f52d1a50ecf81626b15a42a116cba5051f31090e34b89fb2"
+      "hash": "678629298757ca5ad2ae8ae5415913a6ea0fdd508be664c6dca8baf21a24d842"
     },
     {
       "path": "agent/routes/e2e.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/e2e.py?ref=main",
-      "hash": "5ee1c678441fec3b295cc3f7fb2a24f62ddbe2fb1ec3ad3d80cd0b23b9157790"
+      "hash": "0a58d99744404bdf16aaa26601b969fe66d28cb2e4ad3177fce8accbb4e46277"
     },
     {
       "path": "agent/routes/events.py",
@@ -111,12 +111,12 @@
     {
       "path": "agent/routes/generate.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/generate.py?ref=main",
-      "hash": "4c5efb1a8c080eef32ef206126e718424c39a936707b955ca658a2c3ce224dda"
+      "hash": "232799a164413d611c22e23af885bdeb1f2474c1fef39572cab50a88039e2cf0"
     },
     {
       "path": "agent/routes/health.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/health.py?ref=main",
-      "hash": "56b1f4952a96ae2661630d2a48f42a78cd54d1377e3101c042531ce79125f428"
+      "hash": "925a7f405b5fd33579a2e3d5521cca24302c07ad93a6ae60ca77cd56f7313c41"
     },
     {
       "path": "agent/routes/jira.py",
@@ -131,12 +131,12 @@
     {
       "path": "agent/routes/kb.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/kb.py?ref=main",
-      "hash": "b3e4ffbb258f59b4742ce9d52148735dc2737841ae3699eef2e4bcb29847b295"
+      "hash": "699549c9b2bae6b2888f5d2f9bbfa013aa62905d485d2c7072e2869b1c7c109a"
     },
     {
       "path": "agent/routes/llm.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/llm.py?ref=main",
-      "hash": "3364b253973d04bb379078a892b15ff17c66cf6d5195d978ef98f142b2df16a4"
+      "hash": "91c5fc55be5cc0693ffbfd2244103a7248943306c34d29c23c1c6d12226ab740"
     },
     {
       "path": "agent/routes/settings.py",
@@ -151,7 +151,7 @@
     {
       "path": "agent/routes/tools.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/routes/tools.py?ref=main",
-      "hash": "9f5dad8e6cbe07da6bc824a806cf5e1d72c7b3651a80490660260c1a92f8eb92"
+      "hash": "d4d5f878bfd9eb6e0323354931585d62b274183c151268243f21da0c32f1ecd1"
     },
     {
       "path": "agent/routes/update.py",
@@ -161,17 +161,17 @@
     {
       "path": "agent/server.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/server.py?ref=main",
-      "hash": "4f1cf217aa3ae285aff6d9af4ea18dcdaf6180720d81671f26e8cdd872d9ae69"
+      "hash": "733395a979f651bff5e8a2465b13da54984d2c19085b4d98de64ef5fa075a885"
     },
     {
       "path": "agent/updater.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/updater.py?ref=main",
-      "hash": "eb120d3ed1ce409933ac464b921b9b3f8b2d1c4603a2d502a360922482186b84"
+      "hash": "1fd7a327fe2bccfb4a6a541228156ef8f43d5632d6fd519fb7a5688d434970da"
     },
     {
       "path": "agent/version.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/agent/version.py?ref=main",
-      "hash": "0865a0bd0dc6a5ba30ad62e550b6bbf2d36bfe01e65d265f40e0818b60bdb5b6"
+      "hash": "eb2f3dabbca3b53aadef5f77c853dfa63c168e1e2541b72b4c762591167102e7"
     },
     {
       "path": "automation/__init__.py",
@@ -296,12 +296,12 @@
     {
       "path": "core/http_retry.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/http_retry.py?ref=main",
-      "hash": "85bbac2e652176d4d2dcd5fc26772b526fb700a962dec17b9a5c0253172132e9"
+      "hash": "19d33c8264a8f9f99f586225029cd2ea1e94582d59a2fcd1382681e41576804c"
     },
     {
       "path": "core/mcp_bridge.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/mcp_bridge.py?ref=main",
-      "hash": "aad641b9e4c36bcfd9c060e2bccd788732a6b9b2d819c8e0d884f919f4f509a2"
+      "hash": "797bc21e875d01896804dd3454eadc6124a6d365a6ca4efff54807ba29c1f43c"
     },
     {
       "path": "core/model_router.py",
@@ -356,7 +356,7 @@
     {
       "path": "core/settings_store.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/core/settings_store.py?ref=main",
-      "hash": "02d2fd222e3d6716d0cb8fd7b257bc07409f1fa9c33b4062a027c271796cb302"
+      "hash": "a417302fd43e97d25d48b8c337aaede31e5d7df91f437a33d0bbcf394c054cdf"
     },
     {
       "path": "core/source_registry.py",
@@ -476,7 +476,7 @@
     {
       "path": "kb/kb_crypto.py",
       "url": "https://api.github.com/repos/nrcharanvignesh/Testing-Toolkit/contents/agent-bundle/src/kb/kb_crypto.py?ref=main",
-      "hash": "8797c83db82ae598be064a76b2ab5add724037c81ec224f9d571cfdfb6fefd8d"
+      "hash": "44b5d23a0ab50cb6c75d9eef6c55108c039ac03cf61a6ef9c508c7256a1e7ccb"
     },
     {
       "path": "kb/legacy_docs.py",
