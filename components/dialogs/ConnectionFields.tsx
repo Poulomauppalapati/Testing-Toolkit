@@ -139,11 +139,6 @@ export function ConnectionFields({
           onChange={(e) => set("organization", e.target.value)}
         />
       </Field>
-      <p className="pl-[152px] text-xs text-muted-foreground">
-        Connect Azure DevOps to browse boards and generate test cases from ADO
-        work items. Provide both PAT and Organization, or leave blank to use
-        JIRA only.
-      </p>
       <Field label="Strip project prefix">
         <input
           type="text"

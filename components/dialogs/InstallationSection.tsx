@@ -41,7 +41,7 @@ export function InstallationSection() {
 
   const onReinstall = () => {
     setConfirmReinstall(false);
-    pushLog("INFO", "Reinstall requested — returning to the installer step.");
+    pushLog("INFO", "Update requested — returning to the installer step.");
     // Shared with the blocking AgentUpdateRequired gate: reopen the installer
     // while preserving settings, project data and artifacts.
     requestReinstall();
@@ -119,12 +119,11 @@ export function InstallationSection() {
         offers the installer instead of changing or restarting the live agent.
       </p>
 
-      {/* Reinstall — a heavier action than a refresh/update. */}
       <div className="mt-4 border-t border-border pt-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h4 className="text-xs font-semibold text-foreground">
-              Reinstall the agent
+              Update application
             </h4>
             <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
               Refresh the local agent from the latest installer. Use this for
@@ -137,7 +136,7 @@ export function InstallationSection() {
             disabled={busy}
           >
             <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
-            Reinstall app
+            Update app
           </button>
         </div>
       </div>
@@ -174,10 +173,10 @@ function ReinstallConfirm({
           </div>
           <div>
             <h2 className="text-base font-bold tracking-tight text-foreground">
-              Reinstall the Testing Toolkit?
+              Update the Testing Toolkit?
             </h2>
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              This is a full reinstall, not a refresh. Here&apos;s what to expect:
+              This will refresh the agent. Here&apos;s what to expect:
             </p>
           </div>
         </div>
@@ -245,7 +244,7 @@ function ReinstallConfirm({
             onClick={onConfirm}
           >
             <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
-            Reinstall now
+            Update now
           </button>
         </div>
       </div>

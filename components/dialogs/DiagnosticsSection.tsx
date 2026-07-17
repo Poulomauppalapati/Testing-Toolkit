@@ -74,8 +74,8 @@ export function DiagnosticsSection() {
 
       {ran && unsupported && (
         <p className="mt-3 text-[11px] leading-relaxed text-amber-300/90">
-          This agent version doesn&apos;t support diagnostics. Reinstall or update
-          the agent to enable them.
+          This agent version doesn&apos;t support diagnostics. Update the agent
+          to enable them.
         </p>
       )}
 

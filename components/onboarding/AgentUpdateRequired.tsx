@@ -23,10 +23,10 @@ export function AgentUpdateRequired({ status }: { status: UpdateStatus }) {
               id="agent-update-title"
               className="text-balance text-lg font-bold tracking-tight text-foreground"
             >
-              Agent reinstall required
+              Agent update required
             </h1>
             <p className="mt-1 text-pretty text-sm leading-relaxed text-muted-foreground">
-              A newer Testing Toolkit agent is available. Reinstall the agent to
+              A newer Testing Toolkit agent is available. Update the agent to
               continue with the compatible version of the app.
             </p>
           </div>
@@ -53,7 +53,7 @@ export function AgentUpdateRequired({ status }: { status: UpdateStatus }) {
             onClick={requestReinstall}
           >
             <Download className="h-4 w-4" strokeWidth={2} />
-            Reinstall
+            Update application
           </button>
         </div>
 

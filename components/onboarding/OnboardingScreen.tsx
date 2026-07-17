@@ -78,7 +78,7 @@ export function OnboardingScreen({
   }
 
   const downloadLabel = reinstall
-    ? `Re-download for ${installer.label}`
+    ? `Download update for ${installer.label}`
     : `Download for ${installer.label}`;
 
   return (
@@ -107,18 +107,18 @@ export function OnboardingScreen({
             </svg>
           </div>
           <h1 className="text-3xl font-bold tracking-tight">
-            {reinstall ? "Reinstall Testing Toolkit" : "Testing Toolkit"}
+            {reinstall ? "Update Testing Toolkit" : "Testing Toolkit"}
           </h1>
           <p className="text-muted-foreground">
             AI-powered testing and quality automation
           </p>
         </div>
 
-        {/* Reinstall warning note */}
+        {/* Update warning note */}
         {reinstall && (
           <div className="w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-left">
             <p className="text-sm font-semibold text-amber-300">
-              You&apos;re reinstalling the agent
+              You&apos;re updating the agent
             </p>
             <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
               <li>
@@ -185,7 +185,7 @@ export function OnboardingScreen({
                 onClick={onReinstallCancel}
                 className="text-xs text-muted-foreground underline-offset-2 hover:underline"
               >
-                Cancel reinstall
+                Cancel update
               </button>
             )}
           </motion.div>
@@ -217,7 +217,7 @@ export function OnboardingScreen({
               <div className="flex flex-1 items-center justify-between gap-4">
                 <p className="text-sm">
                   Run the downloaded file to{" "}
-                  {reinstall ? "complete the reinstall" : "complete setup"}
+                  {reinstall ? "complete the update" : "complete setup"}
                 </p>
                 <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
                   Usually 10–20 min
@@ -230,20 +230,20 @@ export function OnboardingScreen({
                 reconnects and the onboarding screen closes automatically. */}
             <div className="flex w-full flex-col gap-2 text-left">
               <div className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
-                <span>{reinstall ? "Reinstalling agent" : "Installing agent"}</span>
+                <span>{reinstall ? "Updating agent" : "Installing agent"}</span>
                 <span className="animate-pulse">In progress</span>
               </div>
               <div
                 className="h-2 w-full overflow-hidden rounded-full bg-[var(--tt-outline)]"
                 role="progressbar"
-                aria-label={reinstall ? "Reinstalling agent" : "Installing agent"}
+                aria-label={reinstall ? "Updating agent" : "Installing agent"}
                 aria-valuetext="In progress"
               >
                 <span className="tt-progress-indeterminate block h-full w-2/5 rounded-full bg-primary" />
               </div>
               <p className="text-center text-xs text-muted-foreground">
                 {reinstall
-                  ? "Keep the installer open. This page will continue when the agent restarts."
+                  ? "Keep the installer open. This page will resume when the agent restarts."
                   : "Keep the installer open. This page will continue when the agent connects."}
               </p>
             </div>

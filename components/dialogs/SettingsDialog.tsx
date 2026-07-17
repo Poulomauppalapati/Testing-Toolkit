@@ -41,7 +41,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         ado.ok ? "[OK] ADO connected" : `[FAIL] ADO: ${ado.detail}`,
         llm.ok
           ? "[OK] Managed AI service reachable"
-          : `[FAIL] Managed AI service: ${llm.detail}. Update or reinstall the agent; no AI key is entered in Settings.`,
+          : `[FAIL] Managed AI service: ${llm.detail}. Update the agent; no AI key is entered in Settings.`,
       ];
       setStatus(parts.join("  ·  "));
     } catch (e) {

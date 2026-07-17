@@ -232,7 +232,17 @@ export function BoardGrid() {
       {/* Items pane */}
       <div className="tt-card flex min-w-0 flex-1 flex-col gap-1.5 p-2.5">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="tt-header text-[15px]">{headerLabel}</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="tt-header text-[15px]">{headerLabel}</h2>
+            {columns.length > 0 && (
+              <KpiTiles
+                columns={columns}
+                rows={rows}
+                activeBucket={fKpiBucket}
+                onSelect={(b) => setFKpiBucket(b === fKpiBucket ? ALL : b)}
+              />
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <span
               className="text-xs"
@@ -259,16 +269,6 @@ export function BoardGrid() {
             </button>
           </div>
         </div>
-
-        {/* KPI tiles — 5 aggregate buckets from board columns */}
-        {columns.length > 0 && (
-          <KpiTiles
-            columns={columns}
-            rows={rows}
-            activeBucket={fKpiBucket}
-            onSelect={(b) => setFKpiBucket(b === fKpiBucket ? ALL : b)}
-          />
-        )}
 
         {/* Filter row 1 */}
         <div className="flex items-center gap-2">
@@ -799,8 +799,6 @@ const KPI_BUCKETS = [
     icon: Inbox,
     color: "var(--tt-text-secondary)",
     bg: "var(--tt-surface-container)",
-    // ADO: New, Backlog, Ready for Estimation, Ready for Development, In Backlog
-    // JIRA: To Do, Open, Reopened, Selected for Development
     match: [
       "backlog", "new", "to do", "todo", "open", "reopened",
       "estimation", "ready for development", "in backlog",
@@ -812,14 +810,11 @@ const KPI_BUCKETS = [
     icon: Play,
     color: "var(--tt-primary)",
     bg: "color-mix(in srgb, var(--tt-primary) 12%, transparent)",
-    // ADO: Active, In Development, Blocked in Development, Ready for QA,
-    //      In QA, Blocked in QA, Ready for Acceptance, In Acceptance, Blocked in Acceptance
-    // JIRA: In Progress, In Review, Code Review, In Testing, UAT
     match: [
       "active", "in development", "development", "in dev",
       "blocked in dev", "ready for qa", "in qa", "blocked in qa",
       "ready for acceptance", "in acceptance", "blocked in acceptance",
-      "in progress", "in review", "code review", "review",
+      "in progress", "in review", "code review",
       "in testing", "testing", "uat", "doing", "wip",
       "ready for review", "peer review", "blocked",
     ],
@@ -829,8 +824,6 @@ const KPI_BUCKETS = [
     icon: CheckCircle2,
     color: "var(--tt-success)",
     bg: "color-mix(in srgb, var(--tt-success) 12%, transparent)",
-    // ADO: Passed Business Review, Passed in QA
-    // JIRA: Verified, Validated
     match: ["passed", "verified", "validated", "approved"],
   },
   {
@@ -838,8 +831,6 @@ const KPI_BUCKETS = [
     icon: XCircle,
     color: "var(--tt-danger)",
     bg: "color-mix(in srgb, var(--tt-danger) 12%, transparent)",
-    // ADO: Failed Business Review, Rejected, Failed in QA
-    // JIRA: Rejected, Won't Do
     match: ["failed", "rejected", "won't do", "wont do", "cancelled"],
   },
   {
@@ -847,18 +838,21 @@ const KPI_BUCKETS = [
     icon: Archive,
     color: "var(--tt-text-muted)",
     bg: "color-mix(in srgb, var(--tt-text-muted) 12%, transparent)",
-    // ADO: Closed, Accepted
-    // JIRA: Done, Resolved, Closed, Released
     match: ["closed", "accepted", "done", "resolved", "removed", "released", "completed"],
   },
 ] as const;
 
+// Match priority: specific terminal states first, then broad Active last.
+// Display order (KPI_BUCKETS array) stays Backlog, Active, Passed, Failed, Closed.
+const CLASSIFY_ORDER = ["Backlog", "Passed", "Failed", "Closed", "Active"] as const;
+const CLASSIFY_MAP = new Map(KPI_BUCKETS.map((b) => [b.label, b.match]));
+
 function classifyColumn(columnName: string): string {
   const lower = columnName.toLowerCase();
-  for (const bucket of KPI_BUCKETS) {
-    if (bucket.match.some((kw) => lower.includes(kw))) return bucket.label;
+  for (const label of CLASSIFY_ORDER) {
+    const keywords = CLASSIFY_MAP.get(label)!;
+    if (keywords.some((kw) => lower.includes(kw))) return label;
   }
-  // Unmatched columns fall into Active (the catch-all for in-progress work)
   return "Active";
 }
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { agent, type UpdateStatus } from "./agent-client";
+import { isAgentOutdated } from "./agent-version";
 
 type Pushed = (
   level: "INFO" | "SUCCESS" | "WARN" | "ERROR",
@@ -55,22 +56,26 @@ export function useAppUpdate(pushLog?: Pushed): {
           const result = await agent.applyPatch();
           if (result.ok) {
             log("SUCCESS", `Patch v${result.version} applied. Reconnecting...`);
-            // Agent will restart; wait then reload to reconnect.
             setTimeout(() => window.location.reload(), 3000);
           } else {
-            log("WARN", `Patch failed: ${result.error}. Reinstall may be needed.`);
-            announceAgentUpdateRequired(next);
+            log("WARN", `Patch failed: ${result.error}. Update may be needed.`);
+            if (isAgentOutdated(next.current)) announceAgentUpdateRequired(next);
           }
         } catch {
-          log("WARN", "Patch apply failed. Reinstall may be needed.");
-          announceAgentUpdateRequired(next);
+          log("WARN", "Patch apply failed. Update may be needed.");
+          if (isAgentOutdated(next.current)) announceAgentUpdateRequired(next);
         }
-      } else if (next.update_available) {
+      } else if (next.update_available && isAgentOutdated(next.current)) {
         log(
           "WARN",
-          `Agent v${next.latest ?? "latest"} is available. Reinstall is required.`
+          `Agent v${next.latest ?? "latest"} is required. Update needed.`
         );
         announceAgentUpdateRequired(next);
+      } else if (next.update_available) {
+        log(
+          "INFO",
+          `Agent v${next.latest ?? "latest"} is available. Update when convenient.`
+        );
       } else if (next.reachable) {
         log("SUCCESS", `Agent v${next.current} is up to date.`);
       } else {
