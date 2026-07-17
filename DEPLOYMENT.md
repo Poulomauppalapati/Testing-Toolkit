@@ -25,8 +25,10 @@ Steps to follow when pushing changes that affect the agent bundle.
    - Set `"generatedAt"` to current UTC timestamp
    - **Update all file `"url"` fields** to use the new ref (replace old commit SHA)
    - **Recompute `"hash"` (SHA-256)** for every source file that changed between
-     the old ref and new ref. The installer verifies each downloaded file against
-     these hashes and rejects mismatches.
+     the old ref and new ref. **CRITICAL: hash from git blob content (LF), NOT
+     local files (CRLF on Windows).** Use:
+     `git show <ref>:agent-bundle/src/<path> | python -c "import sys,hashlib; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())"`
+     The installer downloads from GitHub Content API which serves LF line endings.
    - Push to `origin parts`
 
    Quick verification: the installer reads `src/agent/version.py` from the URLs
@@ -55,6 +57,6 @@ Steps to follow when pushing changes that affect the agent bundle.
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `overlay version mismatch` | Manifest file URLs point to old commit ref | Update all `"url"` fields to new ref SHA |
-| `hash mismatch` | File changed but manifest hash not updated | Recompute SHA-256 for changed files |
+| `hash mismatch` | File changed but manifest hash not updated, OR hash computed from local CRLF instead of git LF content | Recompute SHA-256 from git blob: `git show <ref>:agent-bundle/src/<path> \| python -c "import sys,hashlib; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())"` |
 | `Agent vX.Y.Z is up to date` (old version) | Manifest on `parts` not updated | Push updated manifest to `origin parts` |
 | No update prompt shown | `REQUIRED_AGENT_VERSION` not bumped | Bump in `lib/agent-version.ts` and redeploy |
