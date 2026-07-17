@@ -538,7 +538,7 @@ try {
       $last = $null
       $partial = $outFile + '.part'
       # Cache-bust: append a unique timestamp so GitHub CDN never serves stale content.
-      $bustChar = if ($uri -match '\?') { '&' } else { '?' }
+      $bustChar = if ($uri -match '\\?') { '&' } else { '?' }
       $freshUri = $uri + $bustChar + '_t=' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
       for ($attempt = 1; $attempt -le 4; $attempt++) {
         $client = $null; $response = $null; $stream = $null; $file = $null
