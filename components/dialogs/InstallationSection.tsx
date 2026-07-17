@@ -123,11 +123,11 @@ export function InstallationSection() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h4 className="text-xs font-semibold text-foreground">
-              Update application
+              Reinstall application
             </h4>
             <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
               Refresh the local agent from the latest installer. Use this for
-              updates or recovery without deleting project data.
+              recovery without deleting project data.
             </p>
           </div>
           <button
@@ -136,7 +136,7 @@ export function InstallationSection() {
             disabled={busy}
           >
             <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
-            Update app
+            Reinstall app
           </button>
         </div>
       </div>

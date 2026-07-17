@@ -189,10 +189,8 @@ function DocumentsSection({
     if (!project || !contextRunning) return;
     let cancelled = false;
     let pollCount = 0;
-    let lastProgress = -1;
-    let staleTicks = 0;
-    const MAX_POLLS = 45; // 45 * 2s = 90s hard cap
-    const MAX_STALE = 15; // 15 * 2s = 30s stale cap
+    // No stale detection: slow agents can legitimately pause for minutes.
+    const MAX_POLLS = 900; // 900 * 2s = 30 min safety valve
     const poll = async () => {
       try {
         const active = await agent.activeContextJob(project);
@@ -210,11 +208,11 @@ function DocumentsSection({
         const current = Number(progress?.current ?? 0);
         const total = Number(progress?.total ?? 0);
         pollCount++;
-        if (current === lastProgress) staleTicks++;
-        else { staleTicks = 0; lastProgress = current; }
-        if (pollCount >= MAX_POLLS || staleTicks >= MAX_STALE) {
+        if (pollCount >= MAX_POLLS) {
+          // 30 min safety valve — server-side gen continues; re-opening
+          // the dialog or refreshing re-attaches via the mount probe.
           setContextRunning(false);
-          setContextProgress("Timed out — retry from KB panel");
+          setContextProgress("Finishing in background...");
           setContextPct(null);
           return;
         }

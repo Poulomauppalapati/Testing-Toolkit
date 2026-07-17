@@ -28,7 +28,13 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const inFlightRef = useRef(false);
   const statusRef = useRef(status);
+  const failCountRef = useRef(0);
   statusRef.current = status;
+
+  // Require 3 consecutive failures before declaring offline. Prevents
+  // the onboarding screen from flashing when the agent is simply slow
+  // under heavy load (e.g. bulk uploads, indexing).
+  const OFFLINE_THRESHOLD = 3;
 
   const check = useCallback(async () => {
     if (inFlightRef.current) return;
@@ -37,9 +43,16 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       const h = await agent.health();
       setHealth(h);
       setStatus("connected");
+      failCountRef.current = 0;
     } catch {
-      setHealth(null);
-      setStatus("offline");
+      failCountRef.current++;
+      if (
+        statusRef.current !== "connected" ||
+        failCountRef.current >= OFFLINE_THRESHOLD
+      ) {
+        setHealth(null);
+        setStatus("offline");
+      }
     } finally {
       inFlightRef.current = false;
     }

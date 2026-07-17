@@ -470,11 +470,10 @@ export function AppStateProvider({
 
         // The agent starts context alongside indexing. Attach to that job rather
         // than issuing a second forced regeneration after indexing completes.
-        // Hard cap: 120 iterations * 500ms = 60s max wait.
-        const MAX_CONTEXT_POLLS = 90; // 90 * 500ms = 45s hard cap
+        // Safety-valve only: 30 min hard cap. No stale detection — slow agents
+        // under heavy load can legitimately stall for minutes between increments.
+        const MAX_CONTEXT_POLLS = 3600; // 3600 * 500ms = 30 min hard cap
         let polls = 0;
-        let lastProgress = -1;
-        let staleTicks = 0;
         for (;;) {
           if (ctl.signal.aborted) return;
           const active = await agent.activeContextJob(project);
@@ -487,13 +486,12 @@ export function AppStateProvider({
               : "Generating project context..."
           );
           polls++;
-          if (current === lastProgress) staleTicks++;
-          else { staleTicks = 0; lastProgress = current; }
-          // Give up if we hit the hard cap or progress stalls for 15s.
-          if (polls >= MAX_CONTEXT_POLLS || staleTicks >= 30) {
-            pushLog("WARN", "Context generation timed out — KB is ready, context may be incomplete.");
+          if (polls >= MAX_CONTEXT_POLLS) {
+            // Extreme edge: 30 min elapsed. Server-side gen continues; next
+            // page load re-attaches via the activeContextJob probe.
+            pushLog("WARN", "Context generation still running server-side — it will complete in the background.");
             setKbState("ready");
-            setKbMessage("KB ready (context timed out)");
+            setKbMessage("KB ready | Context finishing in background...");
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, 500));
