@@ -197,7 +197,7 @@ def test_context_worker_can_start_without_asyncio_loop(monkeypatch):
 # Full contract sweep: no route may return 500.
 # --------------------------------------------------------------------------
 _BODIES = {
-    "/settings": {"organization": "x"},
+    "/settings": {},
     "/kb/retrieve": {"project": "P", "query": "q", "top_k": 3},
     "/kb/embed": {"texts": ["a", "b"]},
     "/kb/rerank": {"query": "q", "documents": ["a"], "top_k": 1},
