@@ -153,7 +153,7 @@ describe("useAppUpdate hook", () => {
       );
       expect(pushLog).toHaveBeenCalledWith(
         "WARN",
-        expect.stringContaining("Reinstall is required")
+        expect.stringContaining("Update needed")
       );
     });
 
