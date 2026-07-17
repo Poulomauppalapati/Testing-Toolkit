@@ -45,6 +45,7 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
   const [loading, setLoading] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
   const [tagging, setTagging] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   useEffect(() => {
     if (activeWiId == null || !currentProject) {
@@ -120,6 +121,39 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
     }
   };
 
+  const downloadWiPdf = async () => {
+    if (!detail || !currentProject || pdfBusy) return;
+    // PDF packaging is ADO-only (numeric IDs)
+    if (typeof detail.wi_id === "string") {
+      pushLog("WARN", "PDF packaging is available for ADO work items only");
+      return;
+    }
+    setPdfBusy(true);
+    pushLog("INFO", `Packaging PDF for #${detail.wi_id}...`);
+    try {
+      await agent.packagePdfs(
+        { project: currentProject, wi_ids: [detail.wi_id], paper_size: "A4" },
+        { onLog: (msg: string) => pushLog("INFO", msg) }
+      );
+      const artifacts = await agent.listArtifacts(currentProject);
+      const wiStr = String(detail.wi_id);
+      const pdf = artifacts.find(
+        (a) => a.name.endsWith(".pdf") && a.name.includes(wiStr)
+      );
+      if (pdf) {
+        const url = agent.artifactDownloadUrl(pdf.path);
+        window.open(url, "_blank", "noopener");
+        pushLog("SUCCESS", `PDF ready: ${pdf.name}`);
+      } else {
+        pushLog("WARN", "PDF packaged but file not found in artifacts");
+      }
+    } catch (e) {
+      pushLog("ERROR", `PDF packaging failed: ${(e as Error).message}`);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   // Tabs: selected tab is gray/inset (not bright blue).
   const tabStyle = (active: boolean): React.CSSProperties =>
     active
@@ -144,6 +178,15 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
           Outputs
         </button>
         <div className="flex-1" />
+        <button
+          className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5"
+          disabled={!detail || pdfBusy || typeof detail?.wi_id === "string"}
+          onClick={downloadWiPdf}
+          title="Download WI as PDF"
+        >
+          <FileText className="h-3 w-3" />
+          {pdfBusy ? "..." : "PDF"}
+        </button>
         <button
           className="tt-btn-ghost !px-2.5 !py-1 !text-xs !gap-1.5"
           disabled={!detail}

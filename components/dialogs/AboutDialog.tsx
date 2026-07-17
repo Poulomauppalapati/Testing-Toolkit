@@ -47,14 +47,17 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
           <p className="mt-3 text-sm leading-relaxed text-foreground">
             Browse boards, select work items, generate Test Cases with a
             Recursive Language Model over the project knowledge base, export
-            boards to Excel, or package work items as PDFs.
+            boards as a full audit workbook to Excel, download WI-level PDFs,
+            or package work items as PDFs.
           </p>
 
           <p className="mt-4 text-sm font-semibold text-foreground">Features:</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm leading-relaxed text-foreground">
             <li>Board-driven work item selection with hyperlinked IDs</li>
-            <li>Export board to Excel (filtered state, KPIs, hyperlinks)</li>
+            <li>Export board to Excel with audit sheets (coverage, traceability, defect density, pivot data, execution results)</li>
             <li>Export all boards as a multi-sheet workbook</li>
+            <li>WI-level PDF download from detail pane</li>
+            <li>Conditional formatting (red/amber/green) on coverage and test status</li>
             <li>Recursive Language Model test case generation</li>
             <li>Per-client template support</li>
             <li>PDF packaging with KB-ready bundles</li>

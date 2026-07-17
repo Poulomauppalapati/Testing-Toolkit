@@ -280,6 +280,8 @@ export function BoardGrid() {
                   kpiCounts,
                   filters: { type: fType, assignee: fAssignee, sprint: fSprint, column: fColumn, search },
                   settings,
+                  testCases: testCases ?? [],
+                  lastRun: lastRun ?? null,
                 });
               }}
               disabled={boardLoading || !boardView || rows.length === 0}

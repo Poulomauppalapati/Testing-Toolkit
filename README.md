@@ -1,6 +1,6 @@
 # Testing Toolkit
 
-> **Web v3.1.0 — Agent v2.25.0**
+> **Web v3.2.0 — Agent v2.25.0**
 
 A browser-based QA platform that turns **Azure DevOps** and **JIRA** work items
 into LLM-generated test cases, requirement PDF packets, E2E automation scripts,
@@ -19,7 +19,8 @@ credentials remain agent-side and are never returned by its API.
 | Capability | Description |
 |---|---|
 | **Browse ADO / JIRA boards** | Pick a project and board from Azure DevOps or JIRA; view work items in a swim-lane grid with clickable WI ID hyperlinks and a full detail pane (description, acceptance criteria, comments, attachments, links) |
-| **Export to Excel** | Export the current board (filtered state, search term, KPIs) to a formatted .xlsx with hyperlinked IDs, autofit columns, frozen header, and autofilter. Export all boards as a multi-sheet workbook with a summary page |
+| **Export to Excel** | Export the current board as a full audit workbook: board sheet (filtered state, KPIs, hyperlinked IDs), test coverage, traceability matrix (WI x TC x pass/fail), defect density by column/sprint, pivot-ready flat data, and E2E execution results. Conditional formatting (red/amber/green) on coverage and status cells. Export all boards as a multi-sheet workbook with a summary page |
+| **WI-level PDF** | Download any work item as a standalone PDF from the detail pane (ADO only) |
 | **Generate test cases** | Select work items and a phase (Implementation / SIT / UAT); the RLM pipeline reads the work items + project KB and produces a reviewable Excel workbook |
 | **E2E automation** | Self-healing Playwright script generation and execution with a 6-strategy locator waterfall, auto-retry, iframe/shadow-DOM traversal, and a full per-TC result history |
 | **Review + regenerate** | Refine generated test cases and re-run with written feedback (up to 10 iterations per session) |
@@ -174,7 +175,7 @@ path; default is `anthropic` (also supported by the LiteLLM proxy).
 
 ## Design system
 
-Web v3.1.0 ships a complete CXO-level design system:
+Web v3.2.0 ships a complete CXO-level design system:
 
 - **Token set**: work-item type colors (story/bug/task/epic/feature), state
   badge colors, elevation shadows (sm/md/lg), teal brand accent
