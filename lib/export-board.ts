@@ -5,6 +5,8 @@ import type {
   SettingsResponse,
   E2ETestCase,
   E2ELastRun,
+  WiId,
+  WorkItemDetail,
 } from "./agent-client";
 
 // ---------------------------------------------------------------------------
@@ -157,6 +159,14 @@ function statusFmt(status: string | null): { fill: Partial<ExcelJS.Fill>; font: 
 // Single board export
 // ---------------------------------------------------------------------------
 
+// Relationship data fetched per-WI via streaming detail calls
+export interface WiRelationships {
+  // wi_id -> { parents: [id, title?], children: [id, title?], related: [id, title?] }
+  parents: Map<string, Array<{ id: WiId; url: string }>>;
+  children: Map<string, Array<{ id: WiId; url: string }>>;
+  related: Map<string, Array<{ id: WiId; url: string }>>;
+}
+
 export interface ExportBoardOpts {
   projectName: string;
   boardName: string;
@@ -166,12 +176,16 @@ export interface ExportBoardOpts {
   settings: SettingsResponse | null;
   testCases?: E2ETestCase[];
   lastRun?: E2ELastRun | null;
+  // Streaming relationship fetch
+  fetchDetail?: (wiId: WiId) => Promise<WorkItemDetail>;
+  onProgress?: (done: number, total: number, phase: string) => void;
 }
 
 function buildBoardSheet(
   wb: ExcelJS.Workbook,
   sheetName: string,
-  opts: ExportBoardOpts
+  opts: ExportBoardOpts,
+  rels?: WiRelationships
 ): void {
   const ws = wb.addWorksheet(sheetName.slice(0, 31));
   const ts = formatTimestamp();
@@ -205,14 +219,20 @@ function buildBoardSheet(
   ws.getRow(4).getCell(1).font = META_FONT;
 
   // Row 5: column headers
-  const headers = ["ID", "Title", "Type", "State", "Board Column", "Assignee", "Sprint", "Area Path", "Tags", "Linked TCs"];
+  const hasRels = rels && (rels.parents.size > 0 || rels.children.size > 0);
+  const headers = hasRels
+    ? ["ID", "Title", "Type", "State", "Board Column", "Assignee", "Sprint", "Area Path", "Tags", "Linked TCs", "Parent", "Children"]
+    : ["ID", "Title", "Type", "State", "Board Column", "Assignee", "Sprint", "Area Path", "Tags", "Linked TCs"];
   applyHeaderRow(ws, 5, headers);
 
   // Data rows
   opts.rows.forEach((r) => {
     const url = wiUrl(r, opts.settings);
     const linked = r.linked_test_case_count ?? 0;
-    const dataRow = ws.addRow([
+    const key = String(r.wi_id);
+    const parentStr = hasRels ? (rels!.parents.get(key) ?? []).map((p) => String(p.id)).join(", ") : undefined;
+    const childStr = hasRels ? (rels!.children.get(key) ?? []).map((c) => String(c.id)).join(", ") : undefined;
+    const rowData: (string | number)[] = [
       String(r.wi_id),
       r.title,
       r.wi_type,
@@ -223,7 +243,12 @@ function buildBoardSheet(
       r.area_path || "",
       (r.tags ?? []).join(", "),
       linked,
-    ]);
+    ];
+    if (hasRels) {
+      rowData.push(parentStr || "");
+      rowData.push(childStr || "");
+    }
+    const dataRow = ws.addRow(rowData);
     if (url) {
       const idCell = dataRow.getCell(1);
       idCell.value = { text: String(r.wi_id), hyperlink: url };
@@ -233,6 +258,14 @@ function buildBoardSheet(
     const fmt = coverageFmt(linked);
     dataRow.getCell(10).fill = fmt.fill as ExcelJS.Fill;
     dataRow.getCell(10).font = fmt.font;
+    // Hyperlink parent IDs
+    if (hasRels && parentStr) {
+      const parentLinks = rels!.parents.get(key) ?? [];
+      if (parentLinks.length === 1 && parentLinks[0].url) {
+        dataRow.getCell(11).value = { text: parentStr, hyperlink: parentLinks[0].url };
+        dataRow.getCell(11).font = { color: { argb: "FF0563C1" }, underline: true, size: 11 };
+      }
+    }
   });
 
   // Freeze rows 1-4
@@ -505,7 +538,8 @@ function buildDefectDensitySheet(
 
 function buildPivotDataSheet(
   wb: ExcelJS.Workbook,
-  opts: ExportBoardOpts
+  opts: ExportBoardOpts,
+  rels?: WiRelationships
 ): void {
   const ws = wb.addWorksheet("Pivot Data");
   const ts = formatTimestamp();
@@ -538,10 +572,12 @@ function buildPivotDataSheet(
   }
 
   // Header
+  const hasRels = rels && (rels.parents.size > 0 || rels.children.size > 0);
   const headers = [
     "ID", "Title", "Type", "State", "Board Column", "Assignee",
     "Sprint", "Area Path", "Tags", "Linked TCs", "Generated TCs",
     "Last Run Passed", "Last Run Failed", "Coverage Status", "Is Bug",
+    ...(hasRels ? ["Parent IDs", "Child IDs", "Related IDs"] : []),
   ];
   applyHeaderRow(ws, 4, headers);
 
@@ -556,7 +592,7 @@ function buildPivotDataSheet(
     const status = totalTc === 0 ? "No Tests" : fail > 0 ? "Failing" : pass > 0 ? "Passing" : "Not Run";
     const isBug = (r.wi_type || "").toLowerCase() === "bug" ? "Yes" : "No";
 
-    const dataRow = ws.addRow([
+    const rowData: (string | number)[] = [
       String(r.wi_id),
       r.title,
       r.wi_type,
@@ -572,7 +608,14 @@ function buildPivotDataSheet(
       fail,
       status,
       isBug,
-    ]);
+    ];
+    if (hasRels) {
+      rowData.push((rels!.parents.get(key) ?? []).map((p) => String(p.id)).join(", "));
+      rowData.push((rels!.children.get(key) ?? []).map((c) => String(c.id)).join(", "));
+      rowData.push((rels!.related.get(key) ?? []).map((rel) => String(rel.id)).join(", "));
+    }
+
+    const dataRow = ws.addRow(rowData);
 
     // Hyperlink
     const url = wiUrl(r, opts.settings);
@@ -581,7 +624,7 @@ function buildPivotDataSheet(
       dataRow.getCell(1).font = { color: { argb: "FF0563C1" }, underline: true, size: 11 };
     }
 
-    // Conditional formatting on coverage status
+    // Conditional formatting on coverage status (col 14)
     const sFmt = statusFmt(status === "No Tests" ? "fail" : status === "Failing" ? "fail" : status === "Passing" ? "pass" : null);
     dataRow.getCell(14).fill = sFmt.fill as ExcelJS.Fill;
     dataRow.getCell(14).font = sFmt.font;
@@ -672,18 +715,135 @@ function buildExecutionHistorySheet(
 }
 
 // ---------------------------------------------------------------------------
-// Public: Single board export (all sheets)
+// Streaming relationship fetcher (batched parallel)
+// ---------------------------------------------------------------------------
+
+const BATCH_SIZE = 5;
+
+async function fetchRelationships(
+  rows: WorkItemRow[],
+  fetchDetail: (wiId: WiId) => Promise<WorkItemDetail>,
+  onProgress?: (done: number, total: number, phase: string) => void
+): Promise<WiRelationships> {
+  const parents = new Map<string, Array<{ id: WiId; url: string }>>();
+  const children = new Map<string, Array<{ id: WiId; url: string }>>();
+  const related = new Map<string, Array<{ id: WiId; url: string }>>();
+  const total = rows.length;
+  let done = 0;
+
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const batch = rows.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map((r) => fetchDetail(r.wi_id))
+    );
+    for (let j = 0; j < results.length; j++) {
+      const result = results[j];
+      if (result.status !== "fulfilled") continue;
+      const detail = result.value;
+      const key = String(detail.wi_id);
+      for (const [name, linkId, url] of detail.related) {
+        const lower = name.toLowerCase();
+        if (lower.includes("parent")) {
+          const arr = parents.get(key) ?? [];
+          arr.push({ id: linkId, url });
+          parents.set(key, arr);
+        } else if (lower.includes("child")) {
+          const arr = children.get(key) ?? [];
+          arr.push({ id: linkId, url });
+          children.set(key, arr);
+        } else {
+          const arr = related.get(key) ?? [];
+          arr.push({ id: linkId, url });
+          related.set(key, arr);
+        }
+      }
+    }
+    done += batch.length;
+    onProgress?.(Math.min(done, total), total, "Fetching relationships");
+  }
+  return { parents, children, related };
+}
+
+// ---------------------------------------------------------------------------
+// Relationships sheet
+// ---------------------------------------------------------------------------
+
+function buildRelationshipsSheet(
+  wb: ExcelJS.Workbook,
+  opts: ExportBoardOpts,
+  rels: WiRelationships
+): void {
+  const hasAny = rels.parents.size > 0 || rels.children.size > 0 || rels.related.size > 0;
+  if (!hasAny) return;
+
+  const ws = wb.addWorksheet("Relationships");
+  const ts = formatTimestamp();
+  applyMetaBlock(ws, opts.projectName, "Work Item Relationships", ts);
+
+  const headers = ["ID", "Title", "Type", "Parent IDs", "Child IDs", "Related IDs"];
+  applyHeaderRow(ws, 4, headers);
+
+  opts.rows.forEach((r) => {
+    const key = String(r.wi_id);
+    const parentIds = (rels.parents.get(key) ?? []).map((p) => String(p.id)).join(", ");
+    const childIds = (rels.children.get(key) ?? []).map((c) => String(c.id)).join(", ");
+    const relatedIds = (rels.related.get(key) ?? []).map((rel) => String(rel.id)).join(", ");
+
+    if (!parentIds && !childIds && !relatedIds) return;
+
+    const dataRow = ws.addRow([
+      String(r.wi_id),
+      r.title,
+      r.wi_type,
+      parentIds,
+      childIds,
+      relatedIds,
+    ]);
+
+    // Hyperlink on ID
+    const url = wiUrl(r, opts.settings);
+    if (url) {
+      dataRow.getCell(1).value = { text: String(r.wi_id), hyperlink: url };
+      dataRow.getCell(1).font = { color: { argb: "FF0563C1" }, underline: true, size: 11 };
+    }
+  });
+
+  ws.views = [{ state: "frozen", xSplit: 0, ySplit: 3, topLeftCell: "A4" }];
+  autoFitColumns(ws);
+}
+
+// ---------------------------------------------------------------------------
+// Public: Single board export (all sheets) - streaming with progress
 // ---------------------------------------------------------------------------
 
 export async function exportSingleBoard(opts: ExportBoardOpts): Promise<void> {
+  const { onProgress, fetchDetail } = opts;
+
+  // Phase 1: Fetch relationships if detail fetcher provided
+  let rels: WiRelationships = { parents: new Map(), children: new Map(), related: new Map() };
+  if (fetchDetail && opts.rows.length > 0) {
+    onProgress?.(0, opts.rows.length, "Fetching relationships");
+    rels = await fetchRelationships(opts.rows, fetchDetail, onProgress);
+  }
+
+  // Phase 2: Build workbook
+  onProgress?.(0, 6, "Building workbook");
   const wb = new ExcelJS.Workbook();
-  buildBoardSheet(wb, opts.boardName || "Board", opts);
+  buildBoardSheet(wb, opts.boardName || "Board", opts, rels);
+  onProgress?.(1, 6, "Building workbook");
   buildTestCoverageSheet(wb, opts);
+  onProgress?.(2, 6, "Building workbook");
   buildTraceabilitySheet(wb, opts);
+  onProgress?.(3, 6, "Building workbook");
   buildDefectDensitySheet(wb, opts);
-  buildPivotDataSheet(wb, opts);
+  buildPivotDataSheet(wb, opts, rels);
+  onProgress?.(4, 6, "Building workbook");
   buildExecutionHistorySheet(wb, opts);
+  buildRelationshipsSheet(wb, opts, rels);
+  onProgress?.(5, 6, "Building workbook");
+
   const buf = await wb.xlsx.writeBuffer();
+  onProgress?.(6, 6, "Downloading");
   downloadBuffer(
     buf,
     `${opts.projectName}_${opts.boardName}_${Date.now()}.xlsx`

@@ -114,6 +114,8 @@ export function BoardGrid() {
   const [fSprint, setFSprint] = useState(ALL);
   const [fColumn, setFColumn] = useState(ALL);
   const [fKpiBucket, setFKpiBucket] = useState(ALL);
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState("");
 
   const rows = useMemo(() => boardView?.rows ?? [], [boardView?.rows]);
   const columns = useMemo(() => boardView?.columns ?? [], [boardView?.columns]);
@@ -258,8 +260,12 @@ export function BoardGrid() {
               {selected.size} selected
             </span>
             <button
-              className="tt-btn-ghost flex h-7 w-7 shrink-0 items-center justify-center rounded-md !p-0"
+              className="tt-btn-ghost flex shrink-0 items-center justify-center rounded-md !p-0 relative"
+              style={{ height: 28, minWidth: 28, paddingInline: exportProgress ? 8 : 0 }}
               onClick={() => {
+                if (exporting) return;
+                setExporting(true);
+                setExportProgress("");
                 const projectName = currentProject ? displayName(currentProject) : "Project";
                 const boardName = currentBoard?.team_name || currentBoard?.name || "Board";
                 const visibleRows = groups.flatMap(([, rs]) => rs);
@@ -282,13 +288,31 @@ export function BoardGrid() {
                   settings,
                   testCases: testCases ?? [],
                   lastRun: lastRun ?? null,
+                  fetchDetail: currentProject
+                    ? (wiId) => agent.workItemDetail(currentProject, wiId)
+                    : undefined,
+                  onProgress: (done, total, phase) => {
+                    setExportProgress(`${phase}: ${done}/${total}`);
+                  },
+                }).finally(() => {
+                  setExporting(false);
+                  setExportProgress("");
                 });
               }}
-              disabled={boardLoading || !boardView || rows.length === 0}
-              title="Export board to Excel"
+              disabled={boardLoading || !boardView || rows.length === 0 || exporting}
+              title={exporting ? exportProgress : "Export board to Excel"}
               aria-label="Export board to Excel"
             >
-              <Download className="h-3.5 w-3.5" strokeWidth={2} />
+              {exporting ? (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+              ) : (
+                <Download className="h-3.5 w-3.5" strokeWidth={2} />
+              )}
+              {exportProgress && (
+                <span className="ml-1 text-[10px] whitespace-nowrap" style={{ color: COLOR_MUTED }}>
+                  {exportProgress}
+                </span>
+              )}
             </button>
             <button
               className="tt-btn-ghost flex shrink-0 items-center gap-1.5 !px-3 !py-1.5 text-xs"
