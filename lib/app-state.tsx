@@ -457,10 +457,21 @@ export function AppStateProvider({
       setKbProgress(null);
 
       try {
+        // Sanity check: if KB has no documents, nothing to contextualize.
+        try {
+          const kbCheck = await agent.kbStatus(project);
+          if (ctl.signal.aborted) return;
+          if (!kbCheck.documents || kbCheck.documents.length === 0) {
+            setKbState("none");
+            setKbMessage("KB: no files uploaded");
+            return;
+          }
+        } catch { /* agent may not support kbStatus; proceed */ }
+
         // The agent starts context alongside indexing. Attach to that job rather
         // than issuing a second forced regeneration after indexing completes.
         // Hard cap: 120 iterations * 500ms = 60s max wait.
-        const MAX_CONTEXT_POLLS = 120;
+        const MAX_CONTEXT_POLLS = 90; // 90 * 500ms = 45s hard cap
         let polls = 0;
         let lastProgress = -1;
         let staleTicks = 0;
@@ -478,8 +489,8 @@ export function AppStateProvider({
           polls++;
           if (current === lastProgress) staleTicks++;
           else { staleTicks = 0; lastProgress = current; }
-          // Give up if we hit the hard cap or progress stalls for 30s.
-          if (polls >= MAX_CONTEXT_POLLS || staleTicks >= 60) {
+          // Give up if we hit the hard cap or progress stalls for 15s.
+          if (polls >= MAX_CONTEXT_POLLS || staleTicks >= 30) {
             pushLog("WARN", "Context generation timed out — KB is ready, context may be incomplete.");
             setKbState("ready");
             setKbMessage("KB ready (context timed out)");

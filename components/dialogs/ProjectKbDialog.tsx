@@ -191,36 +191,39 @@ function DocumentsSection({
     let pollCount = 0;
     let lastProgress = -1;
     let staleTicks = 0;
-    const MAX_POLLS = 90; // 90 * 2s = 3 min hard cap
-    const MAX_STALE = 30; // 30 * 2s = 60s stale cap
+    const MAX_POLLS = 45; // 45 * 2s = 90s hard cap
+    const MAX_STALE = 15; // 15 * 2s = 30s stale cap
     const poll = async () => {
       try {
         const active = await agent.activeContextJob(project);
         if (cancelled) return;
+        // If the backend says no active job, done.
+        if (!active.job_id) {
+          if (!indexing) {
+            setContextRunning(false);
+            setContextProgress("");
+            setContextPct(null);
+          }
+          return;
+        }
         const progress = active.progress;
         const current = Number(progress?.current ?? 0);
         const total = Number(progress?.total ?? 0);
-        if (active.job_id) {
-          pollCount++;
-          if (current === lastProgress) staleTicks++;
-          else { staleTicks = 0; lastProgress = current; }
-          if (pollCount >= MAX_POLLS || staleTicks >= MAX_STALE) {
-            setContextRunning(false);
-            setContextProgress("Timed out — retry from KB panel");
-            setContextPct(null);
-            return;
-          }
-          setContextProgress(
-            total > 0
-              ? `${current}/${total} (${Math.round((100 * current) / total)}%)`
-              : "Preparing document maps..."
-          );
-          setContextPct(total > 0 ? current / total : null);
-        } else if (!indexing) {
+        pollCount++;
+        if (current === lastProgress) staleTicks++;
+        else { staleTicks = 0; lastProgress = current; }
+        if (pollCount >= MAX_POLLS || staleTicks >= MAX_STALE) {
           setContextRunning(false);
-          setContextProgress("");
+          setContextProgress("Timed out — retry from KB panel");
           setContextPct(null);
+          return;
         }
+        setContextProgress(
+          total > 0
+            ? `${current}/${total} (${Math.round((100 * current) / total)}%)`
+            : "Preparing document maps..."
+        );
+        setContextPct(total > 0 ? current / total : null);
       } catch {
         if (!cancelled && !indexing) setContextRunning(false);
       }
@@ -427,6 +430,13 @@ function DocumentsSection({
       setIndexPct(null);
       clearKbDirty(); // freshly rebuilt — no auto-index needed on close
       pushLog("SUCCESS", `Indexed ${r.n_documents} doc(s), ${r.n_chunks} chunk(s).`);
+      // If nothing was indexed, stop context polling immediately — there is
+      // nothing to contextualize. Stale backend jobs must not spin the UI.
+      if (r.n_chunks === 0) {
+        setContextRunning(false);
+        setContextProgress("");
+        setContextPct(null);
+      }
       refresh();
     } catch (e) {
       setIndexProgress("");
