@@ -135,6 +135,8 @@ function applyHeaderRow(ws: ExcelJS.Worksheet, rowNum: number, headers: string[]
   });
 }
 
+const META_BOLD: Partial<ExcelJS.Font> = { bold: true, size: 11 };
+
 function applyMetaBlock(
   ws: ExcelJS.Worksheet,
   opts: ExportBoardOpts,
@@ -142,19 +144,19 @@ function applyMetaBlock(
 ): void {
   const source = opts.settings?.jira_configured ? "JIRA" : "Azure DevOps Board";
   ws.getRow(1).getCell(1).value = "Project";
-  ws.getRow(1).getCell(1).font = { bold: true, size: 11 };
+  ws.getRow(1).getCell(1).font = META_BOLD;
   ws.getRow(1).getCell(2).value = opts.projectName;
-  ws.getRow(1).getCell(2).font = { bold: true, size: 11 };
+  ws.getRow(1).getCell(2).font = META_BOLD;
 
   ws.getRow(2).getCell(1).value = "Source";
-  ws.getRow(2).getCell(1).font = META_FONT;
+  ws.getRow(2).getCell(1).font = META_BOLD;
   ws.getRow(2).getCell(2).value = source;
-  ws.getRow(2).getCell(2).font = META_FONT;
+  ws.getRow(2).getCell(2).font = META_BOLD;
 
   ws.getRow(3).getCell(1).value = "Generated";
-  ws.getRow(3).getCell(1).font = META_FONT;
+  ws.getRow(3).getCell(1).font = META_BOLD;
   ws.getRow(3).getCell(2).value = ts;
-  ws.getRow(3).getCell(2).font = META_FONT;
+  ws.getRow(3).getCell(2).font = META_BOLD;
 }
 
 // Coverage threshold: 0 = red, 1-2 = amber, 3+ = green
@@ -209,26 +211,26 @@ function buildBoardSheet(
   const ts = formatTimestamp();
   const source = opts.settings?.jira_configured ? "JIRA" : "Azure DevOps Board";
 
-  // Meta block: Col A = label, Col B = value
+  // Meta block: Col A = label, Col B = value (all bold)
   ws.getRow(1).getCell(1).value = "Project";
-  ws.getRow(1).getCell(1).font = { bold: true, size: 11 };
+  ws.getRow(1).getCell(1).font = META_BOLD;
   ws.getRow(1).getCell(2).value = opts.projectName;
-  ws.getRow(1).getCell(2).font = { bold: true, size: 11 };
+  ws.getRow(1).getCell(2).font = META_BOLD;
 
   ws.getRow(2).getCell(1).value = "Source";
-  ws.getRow(2).getCell(1).font = META_FONT;
+  ws.getRow(2).getCell(1).font = META_BOLD;
   ws.getRow(2).getCell(2).value = source;
-  ws.getRow(2).getCell(2).font = META_FONT;
+  ws.getRow(2).getCell(2).font = META_BOLD;
 
   ws.getRow(3).getCell(1).value = "Board";
-  ws.getRow(3).getCell(1).font = { bold: true, size: 11 };
+  ws.getRow(3).getCell(1).font = META_BOLD;
   ws.getRow(3).getCell(2).value = opts.boardName;
-  ws.getRow(3).getCell(2).font = { bold: true, size: 11 };
+  ws.getRow(3).getCell(2).font = META_BOLD;
 
   ws.getRow(4).getCell(1).value = "Generated";
-  ws.getRow(4).getCell(1).font = META_FONT;
+  ws.getRow(4).getCell(1).font = META_BOLD;
   ws.getRow(4).getCell(2).value = ts;
-  ws.getRow(4).getCell(2).font = META_FONT;
+  ws.getRow(4).getCell(2).font = META_BOLD;
 
   // Filters row: only show if at least one filter is actually active
   const activeFilters: string[] = [];
@@ -241,9 +243,9 @@ function buildBoardSheet(
   let headerRowNum: number;
   if (activeFilters.length > 0) {
     ws.getRow(5).getCell(1).value = "Filters";
-    ws.getRow(5).getCell(1).font = META_FONT;
+    ws.getRow(5).getCell(1).font = META_BOLD;
     ws.getRow(5).getCell(2).value = activeFilters.join(", ");
-    ws.getRow(5).getCell(2).font = META_FONT;
+    ws.getRow(5).getCell(2).font = META_BOLD;
     headerRowNum = 6;
   } else {
     headerRowNum = 5;
@@ -513,15 +515,12 @@ function buildDefectDensitySheet(
 
   // Section 1: By Column
   let rowNum = 5;
-  applyHeaderRow(ws, rowNum, ["Board Column", "Bug Count", "% of Total"]);
+  applyHeaderRow(ws, rowNum, ["Board Column", "Bug Count"]);
   rowNum++;
   for (const [col, count] of [...byColumn.entries()].sort((a, b) => b[1] - a[1])) {
-    const pct = bugs.length > 0 ? Math.round((count / bugs.length) * 100) : 0;
     const dataRow = ws.getRow(rowNum);
     dataRow.getCell(1).value = col;
     dataRow.getCell(2).value = count;
-    dataRow.getCell(3).value = `${pct}%`;
-    // Conditional formatting: high density = red
     const fmt = count >= 5 ? { fill: CF_RED, font: CF_RED_FONT }
       : count >= 2 ? { fill: CF_AMBER, font: CF_AMBER_FONT }
         : { fill: CF_GREEN, font: CF_GREEN_FONT };
@@ -534,14 +533,12 @@ function buildDefectDensitySheet(
   rowNum += 2;
 
   // Section 2: By Sprint
-  applyHeaderRow(ws, rowNum, ["Sprint / Iteration", "Bug Count", "% of Total"]);
+  applyHeaderRow(ws, rowNum, ["Sprint / Iteration", "Bug Count"]);
   rowNum++;
   for (const [sprint, count] of [...bySprint.entries()].sort((a, b) => b[1] - a[1])) {
-    const pct = bugs.length > 0 ? Math.round((count / bugs.length) * 100) : 0;
     const dataRow = ws.getRow(rowNum);
     dataRow.getCell(1).value = sprint;
     dataRow.getCell(2).value = count;
-    dataRow.getCell(3).value = `${pct}%`;
     const fmt = count >= 5 ? { fill: CF_RED, font: CF_RED_FONT }
       : count >= 2 ? { fill: CF_AMBER, font: CF_AMBER_FONT }
         : { fill: CF_GREEN, font: CF_GREEN_FONT };

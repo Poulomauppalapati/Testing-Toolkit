@@ -333,12 +333,21 @@ def make_cover_pdf(wi_dir: Path, out_pdf: Path, paper: str, *, organization: str
     story: list = []
     wi_id_str = str(meta.get("wi_id", "?"))
     wi_url = meta.get("wi_url", "")
-    if not wi_url and organization and wi_id_str != "?":
-        wi_url = f"https://dev.azure.com/{organization}/_workitems/edit/{wi_id_str}"
+    if not wi_url and wi_id_str != "?":
+        # Resolve organization: caller param, then settings store fallback
+        org = organization
+        if not org:
+            try:
+                from core.settings_store import get_setting, KEY_ORG
+                org = get_setting(KEY_ORG) or ""
+            except Exception:
+                org = ""
+        if org:
+            wi_url = f"https://dev.azure.com/{org}/_workitems/edit/{wi_id_str}"
     wi_title = _safe_html(meta.get("title", "(no title)"))
     if wi_url:
         heading = (
-            f'<a href="{_safe_html(wi_url)}">'
+            f'<a href="{wi_url}">'
             f'<font color="blue"><u>WI {wi_id_str}</u></font></a>'
             f": {wi_title}"
         )
