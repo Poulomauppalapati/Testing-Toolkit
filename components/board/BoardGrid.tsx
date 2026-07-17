@@ -20,7 +20,6 @@ import {
   CheckCircle2,
   XCircle,
   Archive,
-  CircleDot,
 } from "lucide-react";
 import { useAppState } from "@/lib/app-state";
 import { usePreferences, getPreferences, setSizePref } from "@/lib/preferences";
@@ -110,6 +109,7 @@ export function BoardGrid() {
   const [fAssignee, setFAssignee] = useState(ALL);
   const [fSprint, setFSprint] = useState(ALL);
   const [fColumn, setFColumn] = useState(ALL);
+  const [fKpiBucket, setFKpiBucket] = useState(ALL);
 
   const rows = useMemo(() => boardView?.rows ?? [], [boardView?.rows]);
   const columns = useMemo(() => boardView?.columns ?? [], [boardView?.columns]);
@@ -160,6 +160,11 @@ export function BoardGrid() {
     return { types, assignees, sprints, cols };
   }, [rows, columns]);
 
+  const kpiBucketCols = useMemo(
+    () => fKpiBucket !== ALL ? columnsForBucket(columns, fKpiBucket) : null,
+    [columns, fKpiBucket]
+  );
+
   const passes = (r: WorkItemRow): boolean => {
     const needle = search.trim().toLowerCase();
     if (needle && !`#${r.wi_id} ${r.title.toLowerCase()}`.includes(needle))
@@ -174,6 +179,10 @@ export function BoardGrid() {
         r.board_column && known.has(r.board_column) ? r.board_column : NO_COLUMN;
       if (rc !== fColumn) return false;
     }
+    if (kpiBucketCols) {
+      const rc = r.board_column || NO_COLUMN;
+      if (!kpiBucketCols.has(rc)) return false;
+    }
     return true;
   };
 
@@ -181,7 +190,7 @@ export function BoardGrid() {
     const visible = rows.filter(passes);
     return groupRowsByColumn(visible, columns);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, columns, search, fType, fAssignee, fSprint, fColumn]);
+  }, [rows, columns, search, fType, fAssignee, fSprint, fColumn, fKpiBucket]);
 
   const visibleIds = groups.flatMap(([, rs]) => rs.map((r) => r.wi_id));
 
@@ -251,13 +260,13 @@ export function BoardGrid() {
           </div>
         </div>
 
-        {/* KPI tiles — dynamically discovered from board columns */}
+        {/* KPI tiles — 5 aggregate buckets from board columns */}
         {columns.length > 0 && (
           <KpiTiles
             columns={columns}
             rows={rows}
-            activeColumn={fColumn}
-            onSelect={(col) => setFColumn(col === fColumn ? ALL : col)}
+            activeBucket={fKpiBucket}
+            onSelect={(b) => setFKpiBucket(b === fKpiBucket ? ALL : b)}
           />
         )}
 
@@ -778,88 +787,136 @@ function LaneGroup({
 }
 
 // ---------------------------------------------------------------------------
-// KPI Tiles — dynamically mapped from board columns
+// KPI Tiles — 5 aggregate buckets dynamically mapped from board columns
 // ---------------------------------------------------------------------------
-type KpiDef = {
-  name: string;
-  icon: typeof Inbox;
-  color: string;
-  bg: string;
-};
+// Each bucket matches column names by keyword. Order matters: first match wins.
+// Works across ADO and JIRA boards — classification is purely by column name content.
+// ponytail: keyword matching; upgrade to configurable user-defined bucket map if
+// customers need per-board overrides.
+const KPI_BUCKETS = [
+  {
+    label: "Backlog",
+    icon: Inbox,
+    color: "var(--tt-text-secondary)",
+    bg: "var(--tt-surface-container)",
+    // ADO: New, Backlog, Ready for Estimation, Ready for Development, In Backlog
+    // JIRA: To Do, Open, Reopened, Selected for Development
+    match: [
+      "backlog", "new", "to do", "todo", "open", "reopened",
+      "estimation", "ready for development", "in backlog",
+      "selected for development", "funnel", "icebox", "parking lot",
+    ],
+  },
+  {
+    label: "Active",
+    icon: Play,
+    color: "var(--tt-primary)",
+    bg: "color-mix(in srgb, var(--tt-primary) 12%, transparent)",
+    // ADO: Active, In Development, Blocked in Development, Ready for QA,
+    //      In QA, Blocked in QA, Ready for Acceptance, In Acceptance, Blocked in Acceptance
+    // JIRA: In Progress, In Review, Code Review, In Testing, UAT
+    match: [
+      "active", "in development", "development", "in dev",
+      "blocked in dev", "ready for qa", "in qa", "blocked in qa",
+      "ready for acceptance", "in acceptance", "blocked in acceptance",
+      "in progress", "in review", "code review", "review",
+      "in testing", "testing", "uat", "doing", "wip",
+      "ready for review", "peer review", "blocked",
+    ],
+  },
+  {
+    label: "Passed",
+    icon: CheckCircle2,
+    color: "var(--tt-success)",
+    bg: "color-mix(in srgb, var(--tt-success) 12%, transparent)",
+    // ADO: Passed Business Review, Passed in QA
+    // JIRA: Verified, Validated
+    match: ["passed", "verified", "validated", "approved"],
+  },
+  {
+    label: "Failed",
+    icon: XCircle,
+    color: "var(--tt-danger)",
+    bg: "color-mix(in srgb, var(--tt-danger) 12%, transparent)",
+    // ADO: Failed Business Review, Rejected, Failed in QA
+    // JIRA: Rejected, Won't Do
+    match: ["failed", "rejected", "won't do", "wont do", "cancelled"],
+  },
+  {
+    label: "Closed",
+    icon: Archive,
+    color: "var(--tt-text-muted)",
+    bg: "color-mix(in srgb, var(--tt-text-muted) 12%, transparent)",
+    // ADO: Closed, Accepted
+    // JIRA: Done, Resolved, Closed, Released
+    match: ["closed", "accepted", "done", "resolved", "removed", "released", "completed"],
+  },
+] as const;
 
-const KPI_ICON_MAP: Record<string, { icon: typeof Inbox; color: string; bg: string }> = {
-  backlog:  { icon: Inbox,        color: "var(--tt-text-secondary)", bg: "var(--tt-surface-container)" },
-  new:      { icon: Inbox,        color: "var(--tt-info)",           bg: "color-mix(in srgb, var(--tt-info) 12%, transparent)" },
-  active:   { icon: Play,         color: "var(--tt-primary)",        bg: "color-mix(in srgb, var(--tt-primary) 12%, transparent)" },
-  resolved: { icon: CheckCircle2, color: "var(--tt-success)",        bg: "color-mix(in srgb, var(--tt-success) 12%, transparent)" },
-  passed:   { icon: CheckCircle2, color: "var(--tt-success)",        bg: "color-mix(in srgb, var(--tt-success) 12%, transparent)" },
-  done:     { icon: CheckCircle2, color: "var(--tt-success)",        bg: "color-mix(in srgb, var(--tt-success) 12%, transparent)" },
-  failed:   { icon: XCircle,      color: "var(--tt-danger)",         bg: "color-mix(in srgb, var(--tt-danger) 12%, transparent)" },
-  closed:   { icon: Archive,      color: "var(--tt-text-muted)",     bg: "color-mix(in srgb, var(--tt-text-muted) 12%, transparent)" },
-  removed:  { icon: XCircle,      color: "var(--tt-danger)",         bg: "color-mix(in srgb, var(--tt-danger) 12%, transparent)" },
-};
-
-function resolveKpiIcon(columnName: string): { icon: typeof Inbox; color: string; bg: string } {
-  const k = columnName.toLowerCase().replace(/[^a-z]/g, "");
-  for (const [key, val] of Object.entries(KPI_ICON_MAP)) {
-    if (k.includes(key)) return val;
+function classifyColumn(columnName: string): string {
+  const lower = columnName.toLowerCase();
+  for (const bucket of KPI_BUCKETS) {
+    if (bucket.match.some((kw) => lower.includes(kw))) return bucket.label;
   }
-  return { icon: CircleDot, color: "var(--tt-text-secondary)", bg: "var(--tt-surface-container)" };
+  // Unmatched columns fall into Active (the catch-all for in-progress work)
+  return "Active";
+}
+
+/** Returns the set of board column names that belong to a given KPI bucket. */
+function columnsForBucket(columns: { name: string }[], bucket: string): Set<string> {
+  const result = new Set<string>();
+  for (const c of columns) {
+    if (classifyColumn(c.name) === bucket) result.add(c.name);
+  }
+  return result;
 }
 
 function KpiTiles({
   columns,
   rows,
-  activeColumn,
+  activeBucket,
   onSelect,
 }: {
   columns: { name: string }[];
   rows: WorkItemRow[];
-  activeColumn: string;
-  onSelect: (col: string) => void;
+  activeBucket: string;
+  onSelect: (bucket: string) => void;
 }) {
   const tiles = useMemo(() => {
-    const countMap = new Map<string, number>();
+    const bucketCounts = new Map<string, number>();
     const known = new Set(columns.map((c) => c.name));
     for (const r of rows) {
       const col = r.board_column && known.has(r.board_column) ? r.board_column : NO_COLUMN;
-      countMap.set(col, (countMap.get(col) ?? 0) + 1);
+      const bucket = classifyColumn(col);
+      bucketCounts.set(bucket, (bucketCounts.get(bucket) ?? 0) + 1);
     }
-    // Deduplicate column names (split columns can repeat)
-    const seen = new Set<string>();
-    const result: KpiDef[] = [];
-    for (const c of columns) {
-      if (seen.has(c.name)) continue;
-      seen.add(c.name);
-      const { icon, color, bg } = resolveKpiIcon(c.name);
-      result.push({ name: c.name, icon, color, bg });
-    }
-    return result.map((t) => ({ ...t, count: countMap.get(t.name) ?? 0 }));
+    return KPI_BUCKETS.map((b) => ({
+      ...b,
+      count: bucketCounts.get(b.label) ?? 0,
+    }));
   }, [columns, rows]);
-
-  if (!tiles.length) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
       {tiles.map((t) => {
         const Icon = t.icon;
-        const isActive = activeColumn === t.name;
+        const isActive = activeBucket === t.label;
         return (
           <button
-            key={t.name}
+            key={t.label}
             type="button"
-            onClick={() => onSelect(t.name)}
+            onClick={() => onSelect(t.label)}
             className="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all hover:shadow-sm"
             style={{
               borderColor: isActive ? t.color : "var(--tt-outline)",
               background: isActive ? t.bg : "var(--tt-surface-base)",
               boxShadow: isActive ? `0 0 0 1px ${t.color}` : undefined,
             }}
-            title={`${t.name}: ${t.count} work item(s) — click to filter`}
+            title={`${t.label}: ${t.count} work item(s) — click to filter`}
           >
             <Icon className="h-3.5 w-3.5" style={{ color: t.color }} />
             <span style={{ color: isActive ? t.color : "var(--tt-text-primary)" }}>
-              {t.name}
+              {t.label}
             </span>
             <span
               className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
