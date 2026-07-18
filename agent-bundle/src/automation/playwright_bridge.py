@@ -348,6 +348,20 @@ def _wait_for_port(port: int, timeout: float = 15.0) -> bool:
     return False
 
 
+def _kill_stale_port_holder(port: int) -> None:
+    """Kill any process holding the CDP port so a fresh launch can bind it."""
+    try:
+        import psutil
+    except ImportError:
+        return
+    for conn in psutil.net_connections(kind="tcp"):
+        if conn.laddr and conn.laddr.port == port and conn.pid:
+            try:
+                psutil.Process(conn.pid).kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+
 # -------------------------------------------------------------------
 # Public API: async context manager
 # -------------------------------------------------------------------
@@ -419,18 +433,35 @@ async def browser_session(
                     _clear_session()
                     connected = False
 
-        # Launch fresh if not connected
+        # Launch fresh if not connected -- self-healing retry with backoff
         if not connected:
-            port = _find_free_port()
-            proc = _launch_browser(profile, port)
-            if not _wait_for_port(port, timeout=20.0):
+            last_err: Exception | None = None
+            for attempt in range(3):
+                port = _find_free_port()
+                proc = _launch_browser(profile, port)
+                if _wait_for_port(port, timeout=20.0):
+                    try:
+                        browser = await pw.chromium.connect_over_cdp(
+                            f"http://127.0.0.1:{port}"
+                        )
+                        last_err = None
+                        break
+                    except Exception as e:
+                        last_err = e
+                else:
+                    last_err = RuntimeError(
+                        f"Browser failed to start CDP on port {port}."
+                    )
+                # Kill stale holder and retry with backoff
+                _kill_stale_port_holder(port)
+                if attempt < 2:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+            if last_err is not None:
                 raise RuntimeError(
-                    f"Browser failed to start CDP on port {port}. "
+                    f"Browser CDP connection failed after 3 attempts. "
                     "Close any existing browser windows and retry."
-                )
-            browser = await pw.chromium.connect_over_cdp(
-                f"http://127.0.0.1:{port}"
-            )
+                ) from last_err
             _save_session(CdpSession(
                 pid=proc.pid,
                 port=port,

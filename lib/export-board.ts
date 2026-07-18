@@ -28,7 +28,7 @@ function formatTimestamp(): string {
       : day % 10 === 2 && day !== 12
         ? "nd"
         : day % 10 === 3 && day !== 13
-          ? "th"
+          ? "rd"
           : "th";
   const month = now.toLocaleString("en-US", { month: "long" });
   const year = now.getFullYear();
@@ -41,7 +41,7 @@ function formatTimestamp(): string {
     Intl.DateTimeFormat("en-US", { timeZoneName: "short" })
       .formatToParts(now)
       .find((p) => p.type === "timeZoneName")?.value ?? "";
-  return `Generated on ${day}${suffix} ${month}, ${year} ${time} ${tz}`.trim();
+  return `${day}${suffix} ${month}, ${year} ${time} ${tz}`.trim();
 }
 
 function wiUrl(
@@ -153,7 +153,7 @@ function applyMetaBlock(
   ws.getRow(2).getCell(2).value = source;
   ws.getRow(2).getCell(2).font = META_BOLD;
 
-  ws.getRow(3).getCell(1).value = "Generated";
+  ws.getRow(3).getCell(1).value = "Generated on";
   ws.getRow(3).getCell(1).font = META_BOLD;
   ws.getRow(3).getCell(2).value = ts;
   ws.getRow(3).getCell(2).font = META_BOLD;
@@ -227,18 +227,19 @@ function buildBoardSheet(
   ws.getRow(3).getCell(2).value = opts.boardName;
   ws.getRow(3).getCell(2).font = META_BOLD;
 
-  ws.getRow(4).getCell(1).value = "Generated";
+  ws.getRow(4).getCell(1).value = "Generated on";
   ws.getRow(4).getCell(1).font = META_BOLD;
   ws.getRow(4).getCell(2).value = ts;
   ws.getRow(4).getCell(2).font = META_BOLD;
 
-  // Filters row: only show if at least one filter is actually active
+  // Filters row: only show if at least one filter is genuinely active (not "all"/"(all)")
+  const _isAll = (v: string) => !v || v.toLowerCase() === "all" || v.toLowerCase() === "(all)";
   const activeFilters: string[] = [];
   if (opts.filters.search) activeFilters.push(`Search: "${opts.filters.search}"`);
-  if (opts.filters.type && opts.filters.type !== "(all)") activeFilters.push(`Type: ${opts.filters.type}`);
-  if (opts.filters.assignee && opts.filters.assignee !== "(all)") activeFilters.push(`Assignee: ${opts.filters.assignee}`);
-  if (opts.filters.sprint && opts.filters.sprint !== "(all)") activeFilters.push(`Sprint: ${opts.filters.sprint}`);
-  if (opts.filters.column && opts.filters.column !== "(all)") activeFilters.push(`Column: ${opts.filters.column}`);
+  if (!_isAll(opts.filters.type)) activeFilters.push(`Type: ${opts.filters.type}`);
+  if (!_isAll(opts.filters.assignee)) activeFilters.push(`Assignee: ${opts.filters.assignee}`);
+  if (!_isAll(opts.filters.sprint)) activeFilters.push(`Sprint: ${opts.filters.sprint}`);
+  if (!_isAll(opts.filters.column)) activeFilters.push(`Column: ${opts.filters.column}`);
 
   let headerRowNum: number;
   if (activeFilters.length > 0) {
@@ -299,16 +300,22 @@ function buildBoardSheet(
         dataRow.getCell(11).font = { color: { argb: "FF0563C1" }, underline: true, size: 11 };
       }
     }
+    // Hyperlink child IDs
+    if (hasRels && childStr) {
+      const childLinks = rels!.children.get(key) ?? [];
+      if (childLinks.length === 1 && childLinks[0].url) {
+        dataRow.getCell(12).value = { text: childStr, hyperlink: childLinks[0].url };
+        dataRow.getCell(12).font = { color: { argb: "FF0563C1" }, underline: true, size: 11 };
+      } else if (childLinks.length > 1) {
+        // Multiple children: hyperlink first, show all IDs as text
+        dataRow.getCell(12).value = { text: childStr, hyperlink: childLinks[0].url };
+        dataRow.getCell(12).font = { color: { argb: "FF0563C1" }, underline: true, size: 11 };
+      }
+    }
   });
 
   // Freeze through the header row (meta + header visible when scrolling)
   ws.views = [{ state: "frozen", xSplit: 0, ySplit: headerRowNum, topLeftCell: `A${headerRowNum + 1}` }];
-
-  // Autofilter on data header row
-  ws.autoFilter = {
-    from: { row: headerRowNum, column: 1 },
-    to: { row: headerRowNum + opts.rows.length, column: headers.length },
-  };
 
   autoFitColumns(ws);
 }
@@ -740,6 +747,44 @@ export async function exportAllBoards(opts: ExportAllBoardsOpts): Promise<void> 
 
   const buf = await wb.xlsx.writeBuffer();
   downloadBuffer(buf, `${opts.projectName}_AllBoards_${fileTimestamp()}.xlsx`);
+}
+
+// ---------------------------------------------------------------------------
+// All projects export (one sheet per board across all projects)
+// ---------------------------------------------------------------------------
+
+export interface ExportAllProjectsOpts {
+  projects: Array<{
+    projectName: string;
+    boards: Array<{
+      board: Board;
+      rows: WorkItemRow[];
+    }>;
+  }>;
+  settings: SettingsResponse | null;
+}
+
+export async function exportAllProjects(opts: ExportAllProjectsOpts): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+
+  for (const project of opts.projects) {
+    for (let idx = 0; idx < project.boards.length; idx++) {
+      const b = project.boards[idx];
+      const boardName = b.board.team_name || b.board.name || b.board.label;
+      const sheetLabel = `${project.projectName} - ${boardName || `Board ${idx + 1}`}`.slice(0, 31);
+      buildBoardSheet(wb, sheetLabel, {
+        projectName: project.projectName,
+        boardName: boardName || `Board ${idx + 1}`,
+        rows: b.rows,
+        kpiCounts: {},
+        filters: { type: "All", assignee: "All", sprint: "All", column: "All", search: "" },
+        settings: opts.settings,
+      });
+    }
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
+  downloadBuffer(buf, `AllProjects_${fileTimestamp()}.xlsx`);
 }
 
 // ---------------------------------------------------------------------------
