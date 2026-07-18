@@ -47,10 +47,5 @@
     "typescript": "^5",
     "vitest": "^4.1.10"
   },
-  "pnpm": {
-    "overrides": {
-      "postcss@<8.5.10": ">=8.5.10"
-    },
-    "onlyBuiltDependencies": ["sharp", "unrs-resolver"]
-  }
+  "packageManager": "pnpm@9.15.9"
 }
