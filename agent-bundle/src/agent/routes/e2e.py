@@ -589,7 +589,7 @@ async def _compile_with_healing(
     candidate: dict[str, Any],
     *,
     cred: Any,
-    kb_context_text: str,
+    proj_ctx: Any,
     plan_cache: Path,
     compiler_client: Any,
     compiler_model: str,
@@ -602,12 +602,14 @@ async def _compile_with_healing(
     """
     from automation.e2e_plan import PlanValidationError, compile_test_case
 
-    enriched_instructions = cred.ai_instructions
-    if kb_context_text:
-        enriched_instructions = (
-            f"{cred.ai_instructions}\n\n"
-            f"APPLICATION KNOWLEDGE BASE:\n{kb_context_text}"
-        )
+    # Per-TC selective project context
+    tc_project_ctx = ""
+    if proj_ctx:
+        try:
+            tc_text = f"{tc.get('title', '')} {' '.join(str(s) for s in tc.get('steps', []))}"
+            tc_project_ctx = proj_ctx.to_prompt_section_selective(tc_text) or ""
+        except Exception:  # noqa: BLE001
+            pass
 
     last_error = ""
     for attempt in range(1, MAX_PLAN_COMPILE_RETRIES + 1):
@@ -616,11 +618,12 @@ async def _compile_with_healing(
                 candidate,
                 login_url=cred.login_url,
                 username=cred.user_id,
-                ai_instructions=enriched_instructions,
+                ai_instructions=cred.ai_instructions,
                 cache_dir=plan_cache,
                 client=compiler_client,
                 model=compiler_model,
                 on_log=job.log,
+                project_context=tc_project_ctx,
             )
             if attempt > 1:
                 job.log(
@@ -642,25 +645,20 @@ async def _compile_with_healing(
                     json.dumps(
                         {"schema": 3, "test_case": candidate,
                          "login_url": cred.login_url,
-                         "ai_instructions": enriched_instructions},
+                         "ai_instructions": cred.ai_instructions},
                         sort_keys=True, ensure_ascii=True,
                     ).encode()
                 ).hexdigest()
                 stale = plan_cache / f"{cache_key}.json"
                 stale.unlink(missing_ok=True)
-                # Broaden: use full KB context on retry
-                try:
-                    from core.project_store import read_context_summary
-                    ctx = read_context_summary(job.project or "")
-                    if ctx:
-                        broader = ctx.to_prompt_section()
-                        if broader and len(broader) > len(kb_context_text):
-                            enriched_instructions = (
-                                f"{cred.ai_instructions}\n\n"
-                                f"APPLICATION KNOWLEDGE BASE (FULL):\n{broader}"
-                            )
-                except Exception:
-                    pass
+                # Broaden: use full (non-selective) KB context on retry
+                if proj_ctx:
+                    try:
+                        broader = proj_ctx.to_prompt_section()
+                        if broader and len(broader) > len(tc_project_ctx):
+                            tc_project_ctx = broader
+                    except Exception:  # noqa: BLE001
+                        pass
                 await asyncio.sleep(1.0)
             else:
                 job.log(
@@ -737,7 +735,7 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
             plan_result = await _compile_with_healing(
                 tc, candidate,
                 cred=cred,
-                kb_context_text=kb_context_text,
+                proj_ctx=_proj_ctx,
                 plan_cache=plan_cache,
                 compiler_client=compiler_client,
                 compiler_model=compiler_model,

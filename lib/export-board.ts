@@ -696,21 +696,13 @@ export async function exportSingleBoard(opts: ExportBoardOpts): Promise<void> {
     rels = await fetchRelationships(opts.rows, fetchDetail, onProgress);
   }
 
-  // Phase 2: Build workbook
-  onProgress?.(0, 5, "Building workbook");
+  // Phase 2: Build workbook (single main sheet only)
+  onProgress?.(0, 1, "Building workbook");
   const wb = new ExcelJS.Workbook();
   buildBoardSheet(wb, opts.boardName || "Board", opts, rels);
-  onProgress?.(1, 5, "Building workbook");
-  buildTestCoverageSheet(wb, opts);
-  onProgress?.(2, 5, "Building workbook");
-  buildTraceabilitySheet(wb, opts);
-  onProgress?.(3, 5, "Building workbook");
-  buildDefectDensitySheet(wb, opts);
-  onProgress?.(4, 5, "Building workbook");
-  buildExecutionHistorySheet(wb, opts);
 
   const buf = await wb.xlsx.writeBuffer();
-  onProgress?.(5, 5, "Downloading");
+  onProgress?.(1, 1, "Downloading");
   downloadBuffer(
     buf,
     `${opts.projectName}_${opts.boardName}_${fileTimestamp()}.xlsx`
@@ -732,31 +724,9 @@ export interface ExportAllBoardsOpts {
 
 export async function exportAllBoards(opts: ExportAllBoardsOpts): Promise<void> {
   const wb = new ExcelJS.Workbook();
-  const ts = formatTimestamp();
-
-  // Sheet 1: Summary
-  const summary = wb.addWorksheet("Summary");
-  summary.getRow(1).getCell(1).value = opts.projectName;
-  summary.getRow(1).getCell(1).font = { bold: true, size: 11 };
-  summary.getRow(2).getCell(1).value = ts;
-  summary.getRow(2).getCell(1).font = META_FONT;
-  summary.getRow(3).getCell(1).value = `Boards exported: ${opts.boards.length}`;
-  summary.getRow(3).getCell(1).font = META_FONT;
-
-  // Summary table header
-  const sHeaders = ["Board Name", "Work Items"];
-  const sHeaderRow = summary.getRow(5);
-  sHeaders.forEach((h, i) => {
-    const cell = sHeaderRow.getCell(i + 1);
-    cell.value = h;
-    cell.font = HEADER_FONT_WHITE;
-    cell.fill = HEADER_FILL;
-  });
 
   opts.boards.forEach((b, idx) => {
     const name = b.board.team_name || b.board.name || b.board.label;
-    summary.addRow([name, b.rows.length]);
-
     const sheetName = (name || `Board ${idx + 1}`).slice(0, 31);
     buildBoardSheet(wb, sheetName, {
       projectName: opts.projectName,
@@ -767,9 +737,6 @@ export async function exportAllBoards(opts: ExportAllBoardsOpts): Promise<void> 
       settings: opts.settings,
     });
   });
-
-  summary.views = [{ state: "frozen", xSplit: 0, ySplit: 4, topLeftCell: "A5" }];
-  autoFitColumns(summary);
 
   const buf = await wb.xlsx.writeBuffer();
   downloadBuffer(buf, `${opts.projectName}_AllBoards_${fileTimestamp()}.xlsx`);
