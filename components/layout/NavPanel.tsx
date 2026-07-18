@@ -78,21 +78,58 @@ export function NavPanel() {
         projectName: string;
         boards: Array<{ board: Board; rows: import("@/lib/agent-client").WorkItemRow[] }>;
       }> = [];
-      for (let p = 0; p < projects.length; p++) {
-        const proj = projects[p];
+      let totalBoards = 0;
+      let fetchedBoards = 0;
+
+      // Phase 1: Enumerate all boards across projects (fast, small payloads)
+      const projectBoardMap: Array<{ proj: string; projName: string; boards: Board[] }> = [];
+      for (const proj of projects) {
         const projName = displayName(proj);
-        setExportAllProjectsProgress(`${p + 1}/${projects.length}: ${projName}`);
-        const projBoards = await agent.listBoards(proj);
+        setExportAllProjectsProgress(`Listing boards: ${projName}`);
+        try {
+          const projBoards = await agent.listBoards(proj);
+          projectBoardMap.push({ proj, projName, boards: projBoards });
+          totalBoards += projBoards.length;
+        } catch {
+          pushLog("WARN", `Skipped project ${projName} (boards unavailable)`);
+        }
+      }
+
+      // Phase 2: Staggered fetch — one board at a time with delay between requests
+      for (const { proj, projName, boards: projBoards } of projectBoardMap) {
         const boardResults: Array<{ board: Board; rows: import("@/lib/agent-client").WorkItemRow[] }> = [];
         for (const b of projBoards) {
-          const view = await agent.boardView(proj, b);
-          boardResults.push({ board: b, rows: view.rows });
+          const boardName = b.team_name || b.name || b.label;
+          fetchedBoards++;
+          setExportAllProjectsProgress(`${fetchedBoards}/${totalBoards}: ${projName} / ${boardName}`);
+          try {
+            const view = await agent.boardView(proj, b, { timeoutMs: 90_000 });
+            boardResults.push({ board: b, rows: view.rows });
+          } catch {
+            pushLog("WARN", `Skipped board ${boardName} in ${projName} (timeout)`);
+          }
+          // Stagger: 500ms pause between requests to avoid overwhelming agent
+          if (fetchedBoards < totalBoards) {
+            await new Promise(r => setTimeout(r, 500));
+          }
         }
-        allProjectData.push({ projectName: projName, boards: boardResults });
+        if (boardResults.length > 0) {
+          allProjectData.push({ projectName: projName, boards: boardResults });
+        }
       }
+
+      if (allProjectData.length === 0) {
+        pushLog("ERROR", "No project data could be fetched.");
+        return;
+      }
+
       setExportAllProjectsProgress("Building workbook...");
       await exportAllProjects({ projects: allProjectData, settings });
-      pushLog("SUCCESS", `Exported ${projects.length} project(s) to Excel.`);
+      const skipped = totalBoards - allProjectData.reduce((s, p) => s + p.boards.length, 0);
+      const msg = skipped > 0
+        ? `Exported ${allProjectData.length} project(s) to Excel (${skipped} board(s) skipped due to timeout).`
+        : `Exported ${allProjectData.length} project(s) to Excel.`;
+      pushLog("SUCCESS", msg);
     } catch (e) {
       pushLog("ERROR", `Export all projects failed: ${(e as Error).message}`);
     } finally {

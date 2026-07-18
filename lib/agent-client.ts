@@ -939,7 +939,7 @@ export const agent = {
     );
   },
 
-  async boardView(project: string, board: Board): Promise<BoardView> {
+  async boardView(project: string, board: Board, opts?: { timeoutMs?: number }): Promise<BoardView> {
     const raw = await agentFetch<RawWorkItemsResponse>("/sources/workitems", {
       method: "POST",
       body: JSON.stringify({
@@ -949,6 +949,7 @@ export const agent = {
         team_id: board.team_id,
         team_name: board.team_name,
       }),
+      timeoutMs: opts?.timeoutMs,
     });
     const columns: BoardColumn[] = (raw.columns ?? []).map((name) => ({
       id: name,
