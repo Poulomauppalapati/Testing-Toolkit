@@ -731,10 +731,17 @@ export interface ExportAllBoardsOpts {
 
 export async function exportAllBoards(opts: ExportAllBoardsOpts): Promise<void> {
   const wb = new ExcelJS.Workbook();
+  const usedNames = new Set<string>();
 
   opts.boards.forEach((b, idx) => {
     const name = b.board.team_name || b.board.name || b.board.label;
-    const sheetName = (name || `Board ${idx + 1}`).slice(0, 31);
+    let sheetName = (name || `Board ${idx + 1}`).slice(0, 31);
+    if (usedNames.has(sheetName)) {
+      let n = 2;
+      while (usedNames.has(sheetName.slice(0, 28) + ` ${n}`)) n++;
+      sheetName = sheetName.slice(0, 28) + ` ${n}`;
+    }
+    usedNames.add(sheetName);
     buildBoardSheet(wb, sheetName, {
       projectName: opts.projectName,
       boardName: name,
@@ -766,12 +773,19 @@ export interface ExportAllProjectsOpts {
 
 export async function exportAllProjects(opts: ExportAllProjectsOpts): Promise<void> {
   const wb = new ExcelJS.Workbook();
+  const usedNames = new Set<string>();
 
   for (const project of opts.projects) {
     for (let idx = 0; idx < project.boards.length; idx++) {
       const b = project.boards[idx];
       const boardName = b.board.team_name || b.board.name || b.board.label;
-      const sheetLabel = `${project.projectName} - ${boardName || `Board ${idx + 1}`}`.slice(0, 31);
+      let sheetLabel = `${project.projectName} - ${boardName || `Board ${idx + 1}`}`.slice(0, 31);
+      if (usedNames.has(sheetLabel)) {
+        let n = 2;
+        while (usedNames.has(sheetLabel.slice(0, 28) + ` ${n}`)) n++;
+        sheetLabel = sheetLabel.slice(0, 28) + ` ${n}`;
+      }
+      usedNames.add(sheetLabel);
       buildBoardSheet(wb, sheetLabel, {
         projectName: project.projectName,
         boardName: boardName || `Board ${idx + 1}`,
