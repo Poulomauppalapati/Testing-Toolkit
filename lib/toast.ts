@@ -14,7 +14,7 @@ function getContainer(): HTMLElement {
     top: "16px",
     left: "50%",
     transform: "translateX(-50%)",
-    zIndex: "9999",
+    zIndex: "99999",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",

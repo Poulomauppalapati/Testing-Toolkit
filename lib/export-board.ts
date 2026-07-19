@@ -731,16 +731,13 @@ export interface ExportAllBoardsOpts {
 
 export async function exportAllBoards(opts: ExportAllBoardsOpts): Promise<void> {
   const wb = new ExcelJS.Workbook();
-  const usedNames = new Set<string>();
+  const summaryWs = wb.addWorksheet("Summary");
+  const usedNames = new Set<string>(["Summary"]);
+  const index: Array<{ sheetName: string; boardName: string; rowCount: number }> = [];
 
   opts.boards.forEach((b, idx) => {
     const name = b.board.team_name || b.board.name || b.board.label;
-    let sheetName = (name || `Board ${idx + 1}`).slice(0, 31);
-    if (usedNames.has(sheetName)) {
-      let n = 2;
-      while (usedNames.has(sheetName.slice(0, 28) + ` ${n}`)) n++;
-      sheetName = sheetName.slice(0, 28) + ` ${n}`;
-    }
+    const sheetName = _safeSheetName(name || `Board ${idx + 1}`, usedNames);
     usedNames.add(sheetName);
     buildBoardSheet(wb, sheetName, {
       projectName: opts.projectName,
@@ -750,7 +747,10 @@ export async function exportAllBoards(opts: ExportAllBoardsOpts): Promise<void> 
       filters: { type: "All", assignee: "All", sprint: "All", column: "All", search: "" },
       settings: opts.settings,
     });
+    index.push({ sheetName, boardName: name || `Board ${idx + 1}`, rowCount: b.rows.length });
   });
+
+  _populateSummary(summaryWs, opts.projectName, index.map(i => ({ ...i, project: opts.projectName })));
 
   const buf = await wb.xlsx.writeBuffer();
   downloadBuffer(buf, `${opts.projectName}_AllBoards_${fileTimestamp()}.xlsx`);
@@ -773,32 +773,93 @@ export interface ExportAllProjectsOpts {
 
 export async function exportAllProjects(opts: ExportAllProjectsOpts): Promise<void> {
   const wb = new ExcelJS.Workbook();
-  const usedNames = new Set<string>();
+  const summaryWs = wb.addWorksheet("Summary");
+  const usedNames = new Set<string>(["Summary"]);
+  const index: Array<{ sheetName: string; project: string; boardName: string; rowCount: number }> = [];
 
   for (const project of opts.projects) {
     for (let idx = 0; idx < project.boards.length; idx++) {
       const b = project.boards[idx];
-      const boardName = b.board.team_name || b.board.name || b.board.label;
-      let sheetLabel = `${project.projectName} - ${boardName || `Board ${idx + 1}`}`.slice(0, 31);
-      if (usedNames.has(sheetLabel)) {
-        let n = 2;
-        while (usedNames.has(sheetLabel.slice(0, 28) + ` ${n}`)) n++;
-        sheetLabel = sheetLabel.slice(0, 28) + ` ${n}`;
-      }
+      const boardName = b.board.team_name || b.board.name || b.board.label || `Board ${idx + 1}`;
+      const sheetLabel = _safeSheetName(`${project.projectName} - ${boardName}`, usedNames);
       usedNames.add(sheetLabel);
       buildBoardSheet(wb, sheetLabel, {
         projectName: project.projectName,
-        boardName: boardName || `Board ${idx + 1}`,
+        boardName,
         rows: b.rows,
         kpiCounts: {},
         filters: { type: "All", assignee: "All", sprint: "All", column: "All", search: "" },
         settings: opts.settings,
       });
+      index.push({ sheetName: sheetLabel, project: project.projectName, boardName, rowCount: b.rows.length });
     }
   }
 
+  _populateSummary(summaryWs, null, index);
+
   const buf = await wb.xlsx.writeBuffer();
   downloadBuffer(buf, `AllProjects_${fileTimestamp()}.xlsx`);
+}
+
+// ---------------------------------------------------------------------------
+// Sheet naming + Summary helpers
+// ---------------------------------------------------------------------------
+
+const _INVALID_SHEET_CHARS = /[\\/*?:\[\]]/g;
+
+function _safeSheetName(raw: string, used: Set<string>): string {
+  let name = raw.replace(_INVALID_SHEET_CHARS, "").trim().slice(0, 31);
+  if (!name) name = "Sheet";
+  if (used.has(name)) {
+    let n = 2;
+    const base = name.slice(0, 28);
+    while (used.has(`${base} ${n}`)) n++;
+    name = `${base} ${n}`;
+  }
+  return name;
+}
+
+function _populateSummary(
+  ws: ExcelJS.Worksheet,
+  projectName: string | null,
+  index: Array<{ sheetName: string; project?: string; boardName: string; rowCount: number }>,
+): void {
+  ws.getRow(1).getCell(1).value = projectName ? `${projectName} - Export Summary` : "All Projects - Export Summary";
+  ws.getRow(1).getCell(1).font = { bold: true, size: 14 };
+  ws.getRow(2).getCell(1).value = `Generated: ${formatTimestamp()}`;
+  ws.getRow(2).getCell(1).font = { italic: true, size: 11, color: { argb: "FF666666" } };
+  ws.getRow(3).getCell(1).value = `Total sheets: ${index.length}`;
+
+  const hasProject = index.some(i => i.project && i.project !== projectName);
+  const headers = hasProject
+    ? ["#", "Project", "Board", "Work Items", "Sheet Link"]
+    : ["#", "Board", "Work Items", "Sheet Link"];
+
+  const headerRow = ws.getRow(5);
+  headers.forEach((h, col) => {
+    headerRow.getCell(col + 1).value = h;
+    headerRow.getCell(col + 1).font = { bold: true, size: 11 };
+    headerRow.getCell(col + 1).fill = {
+      type: "pattern", pattern: "solid",
+      fgColor: { argb: "FF2563EB" },
+    };
+    headerRow.getCell(col + 1).font = { bold: true, size: 11, color: { argb: "FFFFFFFF" } };
+  });
+
+  index.forEach((entry, i) => {
+    const row = ws.getRow(6 + i);
+    let col = 1;
+    row.getCell(col++).value = i + 1;
+    if (hasProject) row.getCell(col++).value = entry.project || "";
+    row.getCell(col++).value = entry.boardName;
+    row.getCell(col++).value = entry.rowCount;
+    const linkCell = row.getCell(col);
+    linkCell.value = { text: entry.sheetName, hyperlink: `#'${entry.sheetName}'!A1` };
+    linkCell.font = { color: { argb: "FF0563C1" }, underline: true, size: 11 };
+  });
+
+  ws.views = [{ state: "frozen", xSplit: 0, ySplit: 5, topLeftCell: "A6" }];
+  autoFitColumns(ws);
 }
 
 // ---------------------------------------------------------------------------
