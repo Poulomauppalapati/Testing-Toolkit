@@ -18,8 +18,10 @@ _WINDOW_OVERLAP_CHARS: Final[int] = 2000
 _MAX_TOKENS: Final[int] = 8192
 _MAX_CONCURRENCY: Final[int] = 4
 _MAX_WINDOW_CONCURRENCY: Final[int] = 5
-_MAX_DOC_RETRIES: Final[int] = 3
+_MAX_DOC_RETRIES: Final[int] = 5
 _DOC_TIMEOUT_SEC: Final[float] = 120.0  # per-document base cap (scaled by windows)
+_POST_PASS_ROUNDS: Final[int] = 5
+_RETRY_WINDOW_CONCURRENCY: Final[int] = 2
 # Documents exceeding this character count are routed to the frontier model
 # instead of the medium tier, because they produce more windows whose JSON
 # merge complexity exceeds Sonnet's reliable extraction depth.
@@ -496,7 +498,11 @@ async def _extract_window(client: Any, model: str, source: str, text: str) -> Pr
             last_error = exc
             if attempt < 3:
                 await asyncio.sleep(0.5 * attempt)
-    raise RuntimeError(f"invalid context JSON after 3 attempts: {last_error}")
+        except Exception as exc:  # noqa: BLE001 - LLM timeout/rate-limit
+            last_error = exc
+            if attempt < 3:
+                await asyncio.sleep(2.0 * attempt)
+    raise RuntimeError(f"window extraction failed after 3 attempts: {last_error}")
 
 
 class _DocRetryExhausted(Exception):
@@ -511,12 +517,13 @@ async def _process_doc_retries(
     semaphore: asyncio.Semaphore, client: Any, model: str,
     maps_dir: Path, completed: dict[str, "ProjectContext"],
     log: LogFn,
+    window_concurrency: int = _MAX_WINDOW_CONCURRENCY,
 ) -> None:
     """Retry loop for a single document, separated so wait_for can wrap it."""
     for attempt in range(1, _MAX_DOC_RETRIES + 1):
         try:
             async with semaphore:
-                window_sem = asyncio.Semaphore(_MAX_WINDOW_CONCURRENCY)
+                window_sem = asyncio.Semaphore(window_concurrency)
 
                 async def _throttled(w: str) -> "ProjectContext":
                     async with window_sem:
@@ -533,7 +540,7 @@ async def _process_doc_retries(
             return
         except Exception as exc:  # noqa: BLE001
             if attempt < _MAX_DOC_RETRIES:
-                delay = min(float(2 ** (attempt - 1)), 30.0)
+                delay = min(float(2 ** attempt), 60.0)
                 log(
                     f"[WARN] Context map retry {attempt}/{_MAX_DOC_RETRIES} "
                     f"for {source} in {delay:.0f}s: "
@@ -544,11 +551,16 @@ async def _process_doc_retries(
                 raise _DocRetryExhausted(exc) from exc
 
 
-def _timeout_for_doc(text: str) -> float:
+def _timeout_for_doc(text: str, retry: bool = False) -> float:
     """Scale the per-document timeout by the number of windows it produces.
-    A single-window doc gets the base 120s; a 10-window doc gets 360s."""
+    A single-window doc gets the base 120s; large docs scale up to 900s.
+    Retries double the base to absorb transient slowness."""
     n_windows = max(1, len(_windows(text)))
-    return min(_DOC_TIMEOUT_SEC * max(1.0, n_windows * 0.5), 600.0)
+    base = _DOC_TIMEOUT_SEC * max(1.0, n_windows * 0.6)
+    if retry:
+        base *= 2.0
+    cap = 900.0 if retry else 720.0
+    return min(base, cap)
 
 
 async def build_context_incremental_async(
@@ -601,7 +613,11 @@ async def build_context_incremental_async(
                 f"(>{_LARGE_DOC_CHARS:,}); escalating to frontier model."
             )
         doc_timeout = _timeout_for_doc(text)
-        log(f"[INFO] Context map queued {position}/{len(wanted)}: {source} (timeout={doc_timeout:.0f}s)")
+        # Add queuing headroom: docs waiting for the semaphore burn timeout
+        # budget idly. Scale by position / concurrency to account for queue.
+        queue_headroom = (position / _MAX_CONCURRENCY) * 30.0
+        effective_timeout = doc_timeout + min(queue_headroom, 300.0)
+        log(f"[INFO] Context map queued {position}/{len(wanted)}: {source} (timeout={effective_timeout:.0f}s)")
         last_error: Exception | None = None
         try:
             await asyncio.wait_for(
@@ -609,15 +625,15 @@ async def build_context_incremental_async(
                     signature, source, text, semaphore, client, effective_model,
                     maps_dir, completed, log,
                 ),
-                timeout=doc_timeout,
+                timeout=effective_timeout,
             )
         except asyncio.TimeoutError:
             last_error = TimeoutError(
-                f"document exceeded {doc_timeout:.0f}s hard cap"
+                f"document exceeded {effective_timeout:.0f}s hard cap"
             )
             log(
                 f"[ERROR] Context map timed out for {source} "
-                f"after {doc_timeout:.0f}s"
+                f"after {effective_timeout:.0f}s"
             )
         except _DocRetryExhausted as exc:
             last_error = exc.cause
@@ -634,13 +650,15 @@ async def build_context_incremental_async(
         for position, (signature, (source, text)) in enumerate(wanted.items(), 1)
     ))
 
-    # Post-pass retry: cooldown then re-attempt only failed docs (max 3 rounds).
-    for retry_round in range(1, 4):
+    # Post-pass retry: exponential cooldown, serialize to avoid rate-limit
+    # cascades, reduced window concurrency for gentler throughput.
+    retry_sem = asyncio.Semaphore(_RETRY_WINDOW_CONCURRENCY)
+    for retry_round in range(1, _POST_PASS_ROUNDS + 1):
         if not failures:
             break
-        cooldown = 10.0 * retry_round
+        cooldown = min(15.0 * (2 ** (retry_round - 1)), 120.0)
         log(
-            f"[INFO] Context retry round {retry_round}/3: "
+            f"[INFO] Context retry round {retry_round}/{_POST_PASS_ROUNDS}: "
             f"{len(failures)} failed doc(s), cooldown {cooldown:.0f}s..."
         )
         if on_progress:
@@ -654,16 +672,18 @@ async def build_context_incremental_async(
         for sig in retry_sigs:
             failures.remove(wanted[sig][0])
 
-        async def retry_one(sig: str) -> None:
+        # Serialize retries: process one doc at a time to stay within rate
+        # limits. Each doc gets extended timeout and reduced concurrency.
+        for sig in retry_sigs:
             src, txt = wanted[sig]
-            # Retries always escalate to frontier model when available
             retry_model = large_model or model
-            retry_timeout = _timeout_for_doc(txt) * 1.5  # 50% extra headroom
+            retry_timeout = _timeout_for_doc(txt, retry=True)
             try:
                 await asyncio.wait_for(
                     _process_doc_retries(
-                        sig, src, txt, semaphore, client, retry_model,
+                        sig, src, txt, retry_sem, client, retry_model,
                         maps_dir, completed, log,
+                        window_concurrency=_RETRY_WINDOW_CONCURRENCY,
                     ),
                     timeout=retry_timeout,
                 )
@@ -675,7 +695,6 @@ async def build_context_incremental_async(
             if on_progress:
                 on_progress("context-retry", len(completed), len(wanted))
 
-        await asyncio.gather(*(retry_one(s) for s in retry_sigs))
         failures.extend(retry_failures)
 
     aggregate = merge_context_maps(list(completed.values()), kb_fingerprint)
