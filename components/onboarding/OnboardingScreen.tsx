@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useAgent } from "@/lib/agent-context";
+import { isAgentOutdated } from "@/lib/agent-version";
 import type { ReinstallReason } from "@/lib/reinstall";
 
 function getOS(): "windows" | "mac" | "linux" {
@@ -43,11 +44,12 @@ export function OnboardingScreen({
   onReinstallCancel?: () => void;
 }) {
   const isUpdate = reinstall && reason === "update";
-  const { status } = useAgent();
+  const { status, health } = useAgent();
   const [os, setOS] = useState<"windows" | "mac" | "linux">("windows");
   const [downloaded, setDownloaded] = useState(false);
   // Did we observe the old agent drop after the user started the reinstall?
   const sawDrop = useRef(false);
+  const agentVersion = health?.version ?? null;
 
   useEffect(() => {
     setOS(getOS());
@@ -64,6 +66,18 @@ export function OnboardingScreen({
       onReinstallComplete?.();
     }
   }, [reinstall, downloaded, status, onReinstallComplete]);
+
+  // Version-aware fallback: if the agent restarts faster than the polling can
+  // detect the drop (sawDrop never fires), dismiss once the connected agent
+  // reports a version that satisfies the floor. This handles the race where a
+  // fast restart means we never see "offline".
+  useEffect(() => {
+    if (!reinstall || !downloaded) return;
+    if (status !== "connected" || !agentVersion) return;
+    if (!isAgentOutdated(agentVersion)) {
+      onReinstallComplete?.();
+    }
+  }, [reinstall, downloaded, status, agentVersion, onReinstallComplete]);
 
   const installer = INSTALLER_MAP[os];
 
