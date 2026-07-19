@@ -499,7 +499,7 @@ export type AgentStatus = "connected" | "offline" | "connecting";
 // ---------------------------------------------------------------------------
 // Low-level fetch helpers
 // ---------------------------------------------------------------------------
-const AGENT_FETCH_TIMEOUT_MS = 30_000;
+const AGENT_FETCH_TIMEOUT_MS = 60_000;
 const AGENT_FETCH_RETRIES = 1;
 const RETRYABLE_STATUSES = new Set([408, 429, 502, 503, 504]);
 
@@ -549,7 +549,7 @@ async function agentFetch<T>(path: string, options?: RequestInit & { timeoutMs?:
         continue;
       }
       if (isTimeout) {
-        throw new Error(`Agent timeout: ${path} did not respond within ${AGENT_FETCH_TIMEOUT_MS / 1000}s`);
+        throw new Error(`Agent timeout: ${path} did not respond within ${timeout / 1000}s`);
       }
       throw err;
     }

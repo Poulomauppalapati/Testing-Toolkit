@@ -16,10 +16,10 @@ SCHEMA_VERSION: Final[int] = 3
 _MAX_WINDOW_CHARS: Final[int] = 36000
 _WINDOW_OVERLAP_CHARS: Final[int] = 2000
 _MAX_TOKENS: Final[int] = 8192
-_MAX_CONCURRENCY: Final[int] = 5
+_MAX_CONCURRENCY: Final[int] = 3  # reduced for Sonnet tier; avoids rate-limit cascades
 _MAX_WINDOW_CONCURRENCY: Final[int] = 4
 _MAX_DOC_RETRIES: Final[int] = 10
-_DOC_TIMEOUT_SEC: Final[float] = 180.0  # per-document hard cap prevents infinite hangs
+_DOC_TIMEOUT_SEC: Final[float] = 300.0  # per-document hard cap; allows large multi-window docs
 CATEGORIES: Final[tuple[str, ...]] = (
     "actors",
     "entities",

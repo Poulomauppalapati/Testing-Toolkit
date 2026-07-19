@@ -272,7 +272,7 @@ def _run_context_job(
             from core.model_router import Task, route
             from core.settings_store import build_llm_client
             client = build_llm_client()
-            model = route(Task.CONTEXTUALIZE_CHUNK)
+            model = route(Task.MAP_EXTRACT)
         import time
         from agent.jobs import JOBS
 
