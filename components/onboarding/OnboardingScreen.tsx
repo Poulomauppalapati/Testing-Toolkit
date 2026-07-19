@@ -44,16 +44,27 @@ export function OnboardingScreen({
   onReinstallCancel?: () => void;
 }) {
   const isUpdate = reinstall && reason === "update";
-  const { status, health } = useAgent();
+  const { status, health, retry } = useAgent();
   const [os, setOS] = useState<"windows" | "mac" | "linux">("windows");
   const [downloaded, setDownloaded] = useState(false);
   // Did we observe the old agent drop after the user started the reinstall?
   const sawDrop = useRef(false);
   const agentVersion = health?.version ?? null;
+  // Capture the version at download time so we can detect when it changes.
+  const versionAtDownload = useRef<string | null>(null);
 
   useEffect(() => {
     setOS(getOS());
   }, []);
+
+  // Fast-poll: once the installer is downloaded, poll health every 2s so we
+  // catch the brief offline window even though the normal connected cadence is
+  // 30s. Without this, a fast agent restart is invisible to the poller.
+  useEffect(() => {
+    if (!reinstall || !downloaded) return;
+    const id = window.setInterval(() => retry(), 2000);
+    return () => window.clearInterval(id);
+  }, [reinstall, downloaded, retry]);
 
   // Reinstall completion: once the user has downloaded the new installer, watch
   // for the agent going offline (installer replacing/restarting it) and then
@@ -69,11 +80,12 @@ export function OnboardingScreen({
 
   // Version-aware fallback: if the agent restarts faster than the polling can
   // detect the drop (sawDrop never fires), dismiss once the connected agent
-  // reports a version that satisfies the floor. This handles the race where a
-  // fast restart means we never see "offline".
+  // reports a DIFFERENT version than at download time. For same-version
+  // reinstalls, only sawDrop can dismiss (requires seeing the offline state).
   useEffect(() => {
     if (!reinstall || !downloaded) return;
     if (status !== "connected" || !agentVersion) return;
+    if (agentVersion === versionAtDownload.current) return;
     if (!isAgentOutdated(agentVersion)) {
       onReinstallComplete?.();
     }
@@ -87,6 +99,7 @@ export function OnboardingScreen({
     // the agent bundle from GitHub at install time. On a reinstall we request a
     // fresh download (fresh=1) so the installer ignores any cached bundle parts
     // and re-downloads everything from scratch.
+    versionAtDownload.current = agentVersion;
     const link = document.createElement("a");
     link.href = `/api/installer?os=${os}${reinstall ? "&fresh=1" : ""}`;
     document.body.appendChild(link);

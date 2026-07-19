@@ -1,18 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useAgent } from "@/lib/agent-context";
 import { agent, type SettingsResponse } from "@/lib/agent-client";
 import { AppStateProvider } from "@/lib/app-state";
 import { OnboardingScreen } from "@/components/onboarding/OnboardingScreen";
 import { AppShell } from "@/components/layout/AppShell";
 import { getPreferences, setPendingReinstallPref } from "@/lib/preferences";
-import { isAgentOutdated } from "@/lib/agent-version";
 import { getReinstallReason, clearReinstallReason } from "@/lib/reinstall";
 import type { ReinstallReason } from "@/lib/reinstall";
 
 export default function Home() {
-  const { status, health } = useAgent();
+  const { status } = useAgent();
   const [reinstalling, setReinstalling] = useState(false);
   const [reason, setReason] = useState<ReinstallReason>("reinstall");
   useEffect(() => {
@@ -21,30 +20,9 @@ export default function Home() {
     if (prefs.pendingReinstall) setReason(getReinstallReason());
   }, []);
 
-  // Auto-dismiss: if the agent reconnects at an acceptable version while the
-  // installer screen is showing, let OnboardingScreen handle the dismiss via
-  // its own sawDrop + version-aware fallback (both gated on downloaded=true).
-  // The page-level effect only handles the edge case where the screen was
-  // entered for a plain "reinstall" and the agent never went offline — the
-  // original-version check prevents an immediate dismiss on entry.
-  const agentVersion = health?.version ?? null;
-  const entryVersion = useRef<string | null>(null);
-  useEffect(() => {
-    if (reinstalling && agentVersion && !entryVersion.current) {
-      entryVersion.current = agentVersion;
-    }
-  }, [reinstalling, agentVersion]);
-  useEffect(() => {
-    if (!reinstalling || status !== "connected" || !agentVersion) return;
-    // Never dismiss if the agent version hasn't changed since entry — the
-    // user hasn't run the installer yet.
-    if (agentVersion === entryVersion.current) return;
-    if (!isAgentOutdated(agentVersion)) {
-      setPendingReinstallPref(false);
-      clearReinstallReason();
-      setReinstalling(false);
-    }
-  }, [reinstalling, status, agentVersion, reason]);
+  // No page-level auto-dismiss — the OnboardingScreen owns the full
+  // lifecycle (download → sawDrop → reconnect → onReinstallComplete). The
+  // page only clears the flag when OnboardingScreen fires its callback.
 
   if (reinstalling) {
     return (
