@@ -21,17 +21,20 @@ export default function Home() {
     if (prefs.pendingReinstall) setReason(getReinstallReason());
   }, []);
 
-  // Auto-dismiss: if the reinstall/update screen is showing but the agent is
+  // Auto-dismiss: if a plain reinstall screen is showing but the agent is
   // already connected at an acceptable version, clear the flag and proceed.
+  // Never auto-dismiss an explicit "update" request — the user wants the
+  // installer to run and pull the newer version.
   const agentVersion = health?.version ?? null;
   useEffect(() => {
     if (!reinstalling || status !== "connected" || !agentVersion) return;
+    if (reason === "update") return;
     if (!isAgentOutdated(agentVersion)) {
       setPendingReinstallPref(false);
       clearReinstallReason();
       setReinstalling(false);
     }
-  }, [reinstalling, status, agentVersion]);
+  }, [reinstalling, status, agentVersion, reason]);
 
   if (reinstalling) {
     return (
