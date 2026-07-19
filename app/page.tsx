@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAgent } from "@/lib/agent-context";
 import { agent, type SettingsResponse } from "@/lib/agent-client";
 import { AppStateProvider } from "@/lib/app-state";
@@ -21,13 +21,24 @@ export default function Home() {
     if (prefs.pendingReinstall) setReason(getReinstallReason());
   }, []);
 
-  // Auto-dismiss: if the reinstall/update screen is showing and the agent is
-  // connected at an acceptable version, clear the flag and proceed. This
-  // covers both "reinstall" and "update" — once the agent satisfies the
-  // version floor the operation succeeded regardless of reason.
+  // Auto-dismiss: if the agent reconnects at an acceptable version while the
+  // installer screen is showing, let OnboardingScreen handle the dismiss via
+  // its own sawDrop + version-aware fallback (both gated on downloaded=true).
+  // The page-level effect only handles the edge case where the screen was
+  // entered for a plain "reinstall" and the agent never went offline — the
+  // original-version check prevents an immediate dismiss on entry.
   const agentVersion = health?.version ?? null;
+  const entryVersion = useRef<string | null>(null);
+  useEffect(() => {
+    if (reinstalling && agentVersion && !entryVersion.current) {
+      entryVersion.current = agentVersion;
+    }
+  }, [reinstalling, agentVersion]);
   useEffect(() => {
     if (!reinstalling || status !== "connected" || !agentVersion) return;
+    // Never dismiss if the agent version hasn't changed since entry — the
+    // user hasn't run the installer yet.
+    if (agentVersion === entryVersion.current) return;
     if (!isAgentOutdated(agentVersion)) {
       setPendingReinstallPref(false);
       clearReinstallReason();
