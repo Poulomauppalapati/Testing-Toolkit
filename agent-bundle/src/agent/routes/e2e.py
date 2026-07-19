@@ -34,6 +34,10 @@ from core.project_store import ensure_project
 router = APIRouter()
 _VAULT = CredentialVault()
 
+MAX_PLAN_COMPILE_RETRIES: int = 3
+MAX_TC_RETRIES: int = 2
+MAX_SUITE_RECOVERY: int = 1
+
 
 # ---------------------------------------------------------------------
 # Test-case discovery (from the generation JSON sidecar)
@@ -845,6 +849,47 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
     except Exception as e:  # noqa: BLE001
         job.fail(f"{type(e).__name__}: {e}")
         job.log(f"[ERROR] {job.error}")
+
+# ---------------------------------------------------------------------------
+# Suite-level recovery helpers
+# ---------------------------------------------------------------------------
+
+_BROWSER_ERROR_MARKERS: frozenset[str] = frozenset({
+    "timeout", "browser has been closed", "target closed",
+    "navigation failed", "net::err_", "session closed",
+    "browser disconnected", "crashed",
+})
+
+
+def _is_browser_failure(result: Any) -> bool:
+    """True if a TestCaseResult failed due to a transient browser issue."""
+    if getattr(result, "overall_status", "") != "error":
+        return False
+    for step in getattr(result, "steps", []):
+        actual = getattr(step, "actual", "").lower()
+        if any(marker in actual for marker in _BROWSER_ERROR_MARKERS):
+            return True
+    return False
+
+
+def _is_suite_level_failure(results: list[Any], total: int) -> bool:
+    """True if the entire suite crashed (>80% errors or zero executed)."""
+    if not results:
+        return True
+    error_count = sum(1 for r in results if getattr(r, "overall_status", "") == "error")
+    return error_count > total * 0.8
+
+
+def _diagnose_suite_failure(results: list[Any]) -> str:
+    """Return a short diagnosis from the first error result's step messages."""
+    for r in results:
+        if getattr(r, "overall_status", "") == "error":
+            for step in getattr(r, "steps", []):
+                actual = getattr(step, "actual", "")
+                if actual:
+                    return actual[:200]
+    return "Unknown suite-level failure"
+
 
 # ---------------------------------------------------------------------------
 # Suite-level recovery and per-TC retry
