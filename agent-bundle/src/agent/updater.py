@@ -23,7 +23,7 @@ from agent.version import AGENT_VERSION
 DEFAULT_REPO = "nrcharanvignesh/Testing-Toolkit"
 DEFAULT_REF = "parts"
 
-_CACHE_TTL_SEC: int = 300
+_CACHE_TTL_SEC: int = 60
 _cached_config: dict[str, Any] | None = None
 _cached_config_mtime: float = 0.0
 _cached_result: dict[str, Any] | None = None
