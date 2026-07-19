@@ -10,8 +10,8 @@ describe("REQUIRED_AGENT_VERSION", () => {
     expect(REQUIRED_AGENT_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it("equals 2.29.0", () => {
-    expect(REQUIRED_AGENT_VERSION).toBe("2.29.0");
+  it("equals 3.0.0", () => {
+    expect(REQUIRED_AGENT_VERSION).toBe("3.0.0");
   });
 });
 
@@ -175,7 +175,7 @@ describe("isAgentOutdated", () => {
       expect(isAgentOutdated("2.26.0")).toBe(true);
     });
 
-    it("returns true for 2.28.0 (one minor below 2.29.0)", () => {
+    it("returns true for 2.28.0 (below 3.0.0)", () => {
       expect(isAgentOutdated("2.28.0")).toBe(true);
     });
 
@@ -197,22 +197,22 @@ describe("isAgentOutdated", () => {
       expect(isAgentOutdated(REQUIRED_AGENT_VERSION)).toBe(false);
     });
 
-    it("returns false for 2.29.0", () => {
-      expect(isAgentOutdated("2.29.0")).toBe(false);
+    it("returns false for 3.0.0", () => {
+      expect(isAgentOutdated("3.0.0")).toBe(false);
     });
   });
 
   describe("version above required -> false", () => {
-    it("returns false for 2.29.1 (patch above)", () => {
-      expect(isAgentOutdated("2.29.1")).toBe(false);
+    it("returns false for 3.0.1 (patch above)", () => {
+      expect(isAgentOutdated("3.0.1")).toBe(false);
     });
 
-    it("returns false for 2.30.0 (minor above)", () => {
-      expect(isAgentOutdated("2.30.0")).toBe(false);
+    it("returns false for 3.1.0 (minor above)", () => {
+      expect(isAgentOutdated("3.1.0")).toBe(false);
     });
 
-    it("returns false for 3.0.0 (major above)", () => {
-      expect(isAgentOutdated("3.0.0")).toBe(false);
+    it("returns false for 4.0.0 (major above)", () => {
+      expect(isAgentOutdated("4.0.0")).toBe(false);
     });
 
     it("returns false for 99.99.99", () => {
@@ -221,16 +221,16 @@ describe("isAgentOutdated", () => {
   });
 
   describe("version with extra parts", () => {
-    it("returns false for 2.29.0.1 (extra patch part, still >= required)", () => {
-      expect(isAgentOutdated("2.29.0.1")).toBe(false);
+    it("returns false for 3.0.0.1 (extra patch part, still >= required)", () => {
+      expect(isAgentOutdated("3.0.0.1")).toBe(false);
     });
 
-    it("returns false for 2.29.0.0 (extra zero part)", () => {
-      expect(isAgentOutdated("2.29.0.0")).toBe(false);
+    it("returns false for 3.0.0.0 (extra zero part)", () => {
+      expect(isAgentOutdated("3.0.0.0")).toBe(false);
     });
 
-    it("returns true for 2.22.9.99 (still below despite extra part)", () => {
-      expect(isAgentOutdated("2.22.9.99")).toBe(true);
+    it("returns true for 2.99.9.99 (still below despite extra part)", () => {
+      expect(isAgentOutdated("2.99.9.99")).toBe(true);
     });
   });
 });
@@ -250,7 +250,7 @@ describe("edge cases", () => {
     });
 
     it("isAgentOutdated trims whitespace on valid version", () => {
-      expect(isAgentOutdated("  2.29.0  ")).toBe(false);
+      expect(isAgentOutdated("  3.0.0  ")).toBe(false);
     });
 
     it("isAgentOutdated trims whitespace on outdated version", () => {
@@ -260,7 +260,7 @@ describe("edge cases", () => {
     it("whitespace-only string is falsy, treated as outdated", () => {
       // "   " is truthy in JS but parseVersion trims to "" which splits to [""]
       // However isAgentOutdated checks !agentVersion first -- "   " is truthy
-      // so it passes the null check, then compareVersions("   ", "2.29.0")
+      // so it passes the null check, then compareVersions("   ", "3.0.0")
       // parseVersion trims "   " to "", splits to [""], parseInt("") = NaN -> 0
       // so it becomes [0] vs [2,23,0] -> -1 -> outdated
       expect(isAgentOutdated("   ")).toBe(true);

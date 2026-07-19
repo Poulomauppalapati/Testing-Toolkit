@@ -29,6 +29,7 @@ import base64
 import logging
 import re
 import ssl as _ssl
+import time
 from dataclasses import dataclass, field, replace as _dc_replace
 from pathlib import Path
 from typing import Any, Callable, Final
@@ -57,6 +58,19 @@ _DEFAULT_WIT_TYPES: Final[tuple[str, ...]] = (
     "Epic", "Feature", "User Story", "Product Backlog Item",
     "Requirement", "Bug", "Issue",
 )
+
+# Board list cache: boards rarely change, so cache for 5 min to avoid
+# repeated N+1 API roundtrips on every project switch / UI reload.
+_BOARD_CACHE_TTL: Final[float] = 300.0
+_board_cache: dict[str, tuple[float, list[Any]]] = {}
+_board_cache_lock: asyncio.Lock | None = None
+
+
+def _get_board_cache_lock() -> asyncio.Lock:
+    global _board_cache_lock
+    if _board_cache_lock is None:
+        _board_cache_lock = asyncio.Lock()
+    return _board_cache_lock
 
 _GRID_FIELDS: Final[list[str]] = [
     "System.Id",
@@ -243,6 +257,23 @@ async def list_teams(
     )
     async with _client(cfg) as client:
         data = await _get_json(client, url, cfg)
+    return _parse_teams(data)
+
+
+async def _list_teams_with_client(
+    org: str, project: str, cfg: RuntimeConfig,
+    client: httpx.AsyncClient,
+) -> list[Team]:
+    """list_teams variant that reuses a shared client."""
+    url = (
+        f"https://dev.azure.com/{org}/_apis/projects/{project}/teams"
+        f"?api-version={API_VER_CORE}&$top=200"
+    )
+    data = await _get_json(client, url, cfg)
+    return _parse_teams(data)
+
+
+def _parse_teams(data: dict[str, Any]) -> list[Team]:
     out: list[Team] = []
     for t in data.get("value", []) or []:
         tid = str(t.get("id", "")).strip()
@@ -255,13 +286,17 @@ async def list_teams(
 
 async def list_boards_for_team(
     org: str, project: str, team: Team, cfg: RuntimeConfig,
+    shared_client: httpx.AsyncClient | None = None,
 ) -> list[Board]:
     url = (
         f"https://dev.azure.com/{org}/{project}/{team.id}"
         f"/_apis/work/boards?api-version={_API_WORK}"
     )
-    async with _client(cfg) as client:
-        data = await _get_json(client, url, cfg)
+    if shared_client is not None:
+        data = await _get_json(shared_client, url, cfg)
+    else:
+        async with _client(cfg) as client:
+            data = await _get_json(client, url, cfg)
     out: list[Board] = []
     for b in data.get("value", []) or []:
         bid = str(b.get("id", "")).strip()
@@ -277,27 +312,59 @@ async def list_boards_for_project_async(
     org: str, project: str, cfg: RuntimeConfig,
     on_log: LogFn | None = None,
 ) -> list[Board]:
-    """All boards across all teams in the project."""
-    teams = await list_teams(org, project, cfg)
-    if on_log:
-        on_log(f"[INFO] {len(teams)} team(s) in {project}")
-    sem = asyncio.Semaphore(6)
+    """All boards across all teams in the project. Cached for 5 min."""
+    cache_key = f"{org}/{project}"
+    now = time.monotonic()
 
-    async def _one(team: Team) -> list[Board]:
-        async with sem:
-            try:
-                return await list_boards_for_team(org, project, team, cfg)
-            except Exception as e:  # one team failing must not kill all
+    # Check cache first (hot path -- no HTTP calls at all)
+    lock = _get_board_cache_lock()
+    async with lock:
+        entry = _board_cache.get(cache_key)
+        if entry is not None:
+            ts, cached_boards = entry
+            if (now - ts) < _BOARD_CACHE_TTL:
                 if on_log:
-                    on_log(f"[WARN] boards for team '{team.name}': {e!r}")
-                return []
+                    on_log(f"[INFO] {len(cached_boards)} board(s) from cache")
+                return list(cached_boards)
 
-    results = await asyncio.gather(*[_one(t) for t in teams])
+    # Cache miss: fetch with a shared client (connection reuse across teams)
+    async with _client(cfg) as shared:
+        teams = await _list_teams_with_client(org, project, cfg, shared)
+        if on_log:
+            on_log(f"[INFO] {len(teams)} team(s) in {project}")
+        sem = asyncio.Semaphore(6)
+
+        async def _one(team: Team) -> list[Board]:
+            async with sem:
+                try:
+                    return await list_boards_for_team(
+                        org, project, team, cfg, shared_client=shared,
+                    )
+                except Exception as e:
+                    if on_log:
+                        on_log(f"[WARN] boards for team '{team.name}': {e!r}")
+                    return []
+
+        results = await asyncio.gather(*[_one(t) for t in teams])
+
     boards: list[Board] = []
     for r in results:
         boards.extend(r)
     boards.sort(key=lambda b: (b.team_name.lower(), b.name.lower()))
+
+    # Store in cache
+    async with lock:
+        _board_cache[cache_key] = (time.monotonic(), list(boards))
+
     return boards
+
+
+def invalidate_board_cache(org: str = "", project: str = "") -> None:
+    """Clear board cache. No args = clear all; with args = clear one project."""
+    if org and project:
+        _board_cache.pop(f"{org}/{project}", None)
+    else:
+        _board_cache.clear()
 
 
 async def get_board_columns(
