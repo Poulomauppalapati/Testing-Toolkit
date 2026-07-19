@@ -39,7 +39,7 @@ test.describe("Shell dialogs", () => {
 
     await page.getByText("About").click();
     await expect(page.getByText(/^Version \d+\.\d+\.\d+$/)).toBeVisible();
-    await page.getByRole("button", { name: "OK" }).click();
+    await page.getByRole("button", { name: "OK", exact: true }).click();
     await expect(page.getByText(/^Version \d+\.\d+\.\d+$/)).toHaveCount(0);
   });
 
