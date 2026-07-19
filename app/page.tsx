@@ -7,26 +7,45 @@ import { AppStateProvider } from "@/lib/app-state";
 import { OnboardingScreen } from "@/components/onboarding/OnboardingScreen";
 import { AppShell } from "@/components/layout/AppShell";
 import { getPreferences, setPendingReinstallPref } from "@/lib/preferences";
+import { isAgentOutdated } from "@/lib/agent-version";
+import { getReinstallReason, clearReinstallReason } from "@/lib/reinstall";
+import type { ReinstallReason } from "@/lib/reinstall";
 
 export default function Home() {
-  const { status } = useAgent();
-  // Read the persisted reinstall flag once on mount. When set, we force the
-  // Step 1 download/install screen even if the old agent is still connected.
+  const { status, health } = useAgent();
   const [reinstalling, setReinstalling] = useState(false);
+  const [reason, setReason] = useState<ReinstallReason>("reinstall");
   useEffect(() => {
-    setReinstalling(getPreferences().pendingReinstall);
+    const prefs = getPreferences();
+    setReinstalling(prefs.pendingReinstall);
+    if (prefs.pendingReinstall) setReason(getReinstallReason());
   }, []);
+
+  // Auto-dismiss: if the reinstall/update screen is showing but the agent is
+  // already connected at an acceptable version, clear the flag and proceed.
+  const agentVersion = health?.version ?? null;
+  useEffect(() => {
+    if (!reinstalling || status !== "connected" || !agentVersion) return;
+    if (!isAgentOutdated(agentVersion)) {
+      setPendingReinstallPref(false);
+      clearReinstallReason();
+      setReinstalling(false);
+    }
+  }, [reinstalling, status, agentVersion]);
 
   if (reinstalling) {
     return (
       <OnboardingScreen
         reinstall
+        reason={reason}
         onReinstallComplete={() => {
           setPendingReinstallPref(false);
+          clearReinstallReason();
           setReinstalling(false);
         }}
         onReinstallCancel={() => {
           setPendingReinstallPref(false);
+          clearReinstallReason();
           setReinstalling(false);
         }}
       />

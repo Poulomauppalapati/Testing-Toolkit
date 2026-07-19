@@ -50,7 +50,7 @@ export function AgentUpdateRequired({ status }: { status: UpdateStatus }) {
         <div className="mt-6 flex justify-end">
           <button
             className="tt-btn-primary flex items-center justify-center gap-2"
-            onClick={requestReinstall}
+            onClick={() => requestReinstall("update")}
           >
             <Download className="h-4 w-4" strokeWidth={2} />
             Update application

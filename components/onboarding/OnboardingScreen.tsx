@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useAgent } from "@/lib/agent-context";
+import type { ReinstallReason } from "@/lib/reinstall";
 
 function getOS(): "windows" | "mac" | "linux" {
   if (typeof navigator === "undefined") return "windows";
@@ -32,13 +33,16 @@ const INSTALLER_MAP = {
  */
 export function OnboardingScreen({
   reinstall = false,
+  reason = "reinstall",
   onReinstallComplete,
   onReinstallCancel,
 }: {
   reinstall?: boolean;
+  reason?: ReinstallReason;
   onReinstallComplete?: () => void;
   onReinstallCancel?: () => void;
 }) {
+  const isUpdate = reinstall && reason === "update";
   const { status } = useAgent();
   const [os, setOS] = useState<"windows" | "mac" | "linux">("windows");
   const [downloaded, setDownloaded] = useState(false);
@@ -107,7 +111,11 @@ export function OnboardingScreen({
             </svg>
           </div>
           <h1 className="text-3xl font-bold tracking-tight">
-            {reinstall ? "Reinstall Testing Toolkit" : "Testing Toolkit"}
+            {reinstall
+              ? isUpdate
+                ? "Update Testing Toolkit"
+                : "Reinstall Testing Toolkit"
+              : "Testing Toolkit"}
           </h1>
           <p className="text-muted-foreground">
             AI-powered testing and quality automation
@@ -118,7 +126,7 @@ export function OnboardingScreen({
         {reinstall && (
           <div className="w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-left">
             <p className="text-sm font-semibold text-amber-300">
-              You&apos;re reinstalling the agent
+              {isUpdate ? "You're updating the agent" : "You're reinstalling the agent"}
             </p>
             <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
               <li>
@@ -230,20 +238,22 @@ export function OnboardingScreen({
                 reconnects and the onboarding screen closes automatically. */}
             <div className="flex w-full flex-col gap-2 text-left">
               <div className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
-                <span>{reinstall ? "Reinstalling agent" : "Installing agent"}</span>
+                <span>{reinstall ? (isUpdate ? "Updating agent" : "Reinstalling agent") : "Installing agent"}</span>
                 <span className="animate-pulse">In progress</span>
               </div>
               <div
                 className="h-2 w-full overflow-hidden rounded-full bg-[var(--tt-outline)]"
                 role="progressbar"
-                aria-label={reinstall ? "Reinstalling agent" : "Installing agent"}
+                aria-label={reinstall ? (isUpdate ? "Updating agent" : "Reinstalling agent") : "Installing agent"}
                 aria-valuetext="In progress"
               >
                 <span className="tt-progress-indeterminate block h-full w-2/5 rounded-full bg-primary" />
               </div>
               <p className="text-center text-xs text-muted-foreground">
                 {reinstall
-                  ? "Keep the installer open. This page will resume when the agent restarts."
+                  ? isUpdate
+                    ? "Keep the installer open. This page will resume when the updated agent connects."
+                    : "Keep the installer open. This page will resume when the agent restarts."
                   : "Keep the installer open. This page will continue when the agent connects."}
               </p>
             </div>
