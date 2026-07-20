@@ -1,6 +1,6 @@
 # Testing Toolkit — Feature Reference
 
-> Web v3.6.0 / Agent v2.28.0 — July 2026
+> Web v3.0.1 / Agent v3.0.1 — July 2026
 
 This document is the complete feature reference for the Testing Toolkit
 platform: what every feature does, how to use it, workspace layout, runtime

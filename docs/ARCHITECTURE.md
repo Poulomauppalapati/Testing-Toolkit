@@ -1,6 +1,6 @@
 # Testing Toolkit — Architecture
 
-> Web v3.0.0 / Agent v2.16.x — July 2026
+> Web v3.0.1 / Agent v3.0.1 — July 2026
 
 This document describes the end-to-end architecture: what problem the platform
 solves, how the pieces fit together, and how data and secrets flow through the
@@ -32,11 +32,11 @@ GenAI gateway when an AI operation requires it.
 The system is split into two cooperating halves plus a distribution channel:
 
 ```
-Browser (Vercel web app — web 3.0.0)
+Browser (Vercel web app — web 3.0.1)
     |
     | HTTP (CORS, loopback only)
     v
-Local compute agent (FastAPI @ 127.0.0.1:7842 — agent 2.8.2)
+Local compute agent (FastAPI @ 127.0.0.1:7842 — agent 3.0.1)
     |-- OS secret store  (PAT, LLM API key)
     |-- ~/TestingToolkit workspace  (projects, runs, outputs, logs)
     |-- LanceDB embedded vector store  (local, per-project)
@@ -200,7 +200,7 @@ Upload approved test cases to ADO
 
 ---
 
-## 6. E2E automation engine (agent 2.8.2)
+## 6. E2E automation engine (agent 3.0.1)
 
 The `automation/` module generates Playwright Python scripts from test case steps
 and executes them via a self-healing runner:
