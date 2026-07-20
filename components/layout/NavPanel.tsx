@@ -52,7 +52,7 @@ export function NavPanel({ hidden }: { hidden?: boolean } = {}) {
         const b = boards[i];
         const name = b.team_name || b.name || b.label;
         setExportAllProgress(`${i + 1}/${boards.length}: ${name}`);
-        const view = await agent.boardView(currentProject, b, { scopeToTeamArea: false });
+        const view = await agent.boardView(currentProject, b, { scopeToTeamArea: true });
         results.push({ board: b, rows: view.rows });
       }
       setExportAllProgress("Building workbook...");
@@ -107,7 +107,7 @@ export function NavPanel({ hidden }: { hidden?: boolean } = {}) {
           fetchedBoards++;
           setExportAllProjectsProgress(`${fetchedBoards}/${totalBoards}: ${projName} / ${boardName}`);
           try {
-            const view = await agent.boardView(proj, b, { timeoutMs: 120_000, scopeToTeamArea: false });
+            const view = await agent.boardView(proj, b, { timeoutMs: 120_000, scopeToTeamArea: true });
             const rows = (view.rows ?? []).filter((r) => r && r.wi_id != null);
             if (rows.length > 0) {
               boardResults.push({ board: b, rows });
