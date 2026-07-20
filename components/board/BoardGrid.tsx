@@ -317,6 +317,8 @@ export function BoardGrid() {
                   },
                 }).then(() => {
                   showToast(`Exported 1 board from ${projectName} to Excel`);
+                }).catch((err: unknown) => {
+                  showToast(`Export failed: ${(err as Error).message || String(err)}`);
                 }).finally(() => {
                   setExporting(false);
                   setExportProgress("");

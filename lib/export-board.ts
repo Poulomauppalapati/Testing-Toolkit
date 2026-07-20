@@ -729,8 +729,8 @@ export async function exportSingleBoard(opts: ExportBoardOpts): Promise<void> {
   buildBoardSheet(wb, opts.boardName || "Board", opts, rels);
 
   const buf = await wb.xlsx.writeBuffer();
-  onProgress?.(1, 1, "Downloading");
-  downloadBuffer(
+  onProgress?.(1, 1, "Saving");
+  await downloadBuffer(
     buf,
     `${opts.projectName}_${opts.boardName}_${fileTimestamp()}.xlsx`,
     opts.projectName
@@ -794,73 +794,7 @@ export async function exportAllBoards(opts: ExportAllBoardsOpts): Promise<void> 
   }
 
   const buf = await wb.xlsx.writeBuffer();
-  downloadBuffer(buf, `${opts.projectName}_AllBoards_${fileTimestamp()}.xlsx`, opts.projectName);
-}
-
-// ---------------------------------------------------------------------------
-// All projects export (one sheet per board across all projects)
-// ---------------------------------------------------------------------------
-
-export interface ExportAllProjectsOpts {
-  projects: Array<{
-    projectName: string;
-    boards: Array<{
-      board: Board;
-      rows: WorkItemRow[];
-    }>;
-  }>;
-  settings: SettingsResponse | null;
-}
-
-export async function exportAllProjects(opts: ExportAllProjectsOpts): Promise<void> {
-  // Reuse the exact same per-project workbook logic as exportAllBoards,
-  // just stitched across multiple projects into one combined workbook.
-  const wb = new ExcelJS.Workbook();
-  const summaryWs = wb.addWorksheet("Summary");
-  const usedNames = new Set<string>(["Summary"]);
-  const index: Array<{ sheetName: string; project: string; boardName: string; rowCount: number }> = [];
-  const ignored: Array<{ boardName: string; project?: string }> = [];
-
-  for (const project of opts.projects) {
-    project.boards.forEach((b, idx) => {
-      try {
-        const rawName = b.board?.team_name || b.board?.name || b.board?.label || "";
-        const shortName = _stripProjectPrefix(rawName || `Board ${idx + 1}`, project.projectName);
-        const rows = (b.rows ?? []).filter((r) => r && r.wi_id != null);
-        if (rows.length === 0) {
-          ignored.push({ boardName: shortName, project: project.projectName });
-          return;
-        }
-        const sheetName = _safeSheetName(shortName, usedNames, project.projectName);
-        usedNames.add(sheetName);
-        try {
-          buildBoardSheet(wb, sheetName, {
-            projectName: project.projectName,
-            boardName: rawName,
-            rows,
-            kpiCounts: {},
-            filters: { type: "All", assignee: "All", sprint: "All", column: "All", search: "" },
-            settings: opts.settings,
-          });
-          _addBackToSummaryLink(wb, sheetName);
-        } catch {
-          ignored.push({ boardName: `${shortName} (build error)`, project: project.projectName });
-        }
-        index.push({ sheetName, project: project.projectName, boardName: shortName, rowCount: rows.length });
-      } catch {
-        ignored.push({ boardName: `Board ${idx + 1}`, project: project.projectName });
-      }
-    });
-  }
-
-  try {
-    _populateSummary(summaryWs, null, index, ignored);
-  } catch {
-    summaryWs.getRow(1).getCell(2).value = "All Projects - Export Summary";
-  }
-
-  const buf = await wb.xlsx.writeBuffer();
-  downloadBuffer(buf, `AllProjects_${fileTimestamp()}.xlsx`, "AllProjects");
+  await downloadBuffer(buf, `${opts.projectName}_AllBoards_${fileTimestamp()}.xlsx`, opts.projectName);
 }
 
 // ---------------------------------------------------------------------------
@@ -984,18 +918,10 @@ function _populateSummary(
 // Browser download helper + save to agent Outputs folder
 // ---------------------------------------------------------------------------
 
-function downloadBuffer(buf: ExcelJS.Buffer, filename: string, project?: string): void {
+async function downloadBuffer(buf: ExcelJS.Buffer, filename: string, project?: string): Promise<string> {
   const blob = new Blob([buf], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  // Best-effort save to agent Outputs folder
-  agent.uploadArtifact(blob, filename, project || "").catch(() => {});
+  const res = await agent.uploadArtifact(blob, filename, project || "");
+  return res.path;
 }

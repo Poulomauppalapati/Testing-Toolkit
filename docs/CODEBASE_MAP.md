@@ -60,7 +60,7 @@
 | `lib/board-columns.ts` | Column definitions (`BOARD_COLUMNS`), localStorage-backed resize/collapse |
 | `lib/board-lanes.ts` | Swim-lane collapse state |
 | `lib/board-utils.ts` | Board data helpers |
-| `lib/export-board.ts` | `exportSingleBoard`, `exportAllBoards`, `exportAllProjects` — client-side ExcelJS workbook generation + browser download |
+| `lib/export-board.ts` | `exportSingleBoard`, `exportAllBoards` — client-side ExcelJS workbook generation + browser download |
 | `lib/event-bus.ts` | Global pub/sub event bus |
 | `lib/preferences.ts` | localStorage preferences |
 | `lib/theme.tsx` | Theme context (dark/light) |
@@ -241,12 +241,10 @@
 |------|------|--------|
 | Single-board export | `lib/export-board.ts:716` | `exportSingleBoard()` |
 | All-boards export | `lib/export-board.ts:753` | `exportAllBoards()` |
-| All-projects export | `lib/export-board.ts:814` | `exportAllProjects()` |
 | Testgen review xlsx (write) | `agent-bundle/src/testgen/testcase_excel.py:87` | `payload_to_xlsx()` |
 | Testgen review xlsx (read) | `agent-bundle/src/testgen/testcase_excel.py:194` | `xlsx_to_payload()` |
 | ADO board/WI fetch | `agent-bundle/src/ado/boards.py:509` | `load_board_view_async()` |
 | NavPanel trigger | `components/layout/NavPanel.tsx:59` | `exportAllBoards()` call |
-| NavPanel all-projects trigger | `components/layout/NavPanel.tsx:130` | `exportAllProjects()` call |
 
 ### (b) Web grid + column-header handling
 

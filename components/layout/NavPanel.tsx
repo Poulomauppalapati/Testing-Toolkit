@@ -8,12 +8,12 @@ import { useTheme } from "@/lib/theme";
 import { Dropdown } from "@/components/ui/dropdown";
 import { agent, type Board } from "@/lib/agent-client";
 import { getPreferences, setSizePref } from "@/lib/preferences";
-import { exportAllBoards, exportAllProjects } from "@/lib/export-board";
+import { exportAllBoards } from "@/lib/export-board";
 import { showToast } from "@/lib/toast";
 import { ResizeHandle } from "@/components/ui/resizer";
 import { useAppUpdate } from "@/lib/use-app-update";
 import { SourceLogo } from "@/components/ui/source-logo";
-import { projectSourceType, dedupeStoryBoards } from "@/lib/board-utils";
+import { projectSourceType } from "@/lib/board-utils";
 
 export function NavPanel({ hidden }: { hidden?: boolean } = {}) {
   const {
@@ -38,8 +38,36 @@ export function NavPanel({ hidden }: { hidden?: boolean } = {}) {
   const [width, setWidth] = useState(() => getPreferences().sizes.navWidth);
   const [exportingAll, setExportingAll] = useState(false);
   const [exportAllProgress, setExportAllProgress] = useState("");
-  const [exportingAllProjects, setExportingAllProjects] = useState(false);
-  const [exportAllProjectsProgress, setExportAllProjectsProgress] = useState("");
+
+  async function fetchBoardWithDegradationCheck(
+    proj: string,
+    board: Board,
+    projName: string,
+    boardName: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<import("@/lib/agent-client").WorkItemRow[]> {
+    let view = await agent.boardView(proj, board, {
+      timeoutMs: opts?.timeoutMs,
+      scopeToTeamArea: true,
+    });
+    if (view.possibly_degraded && (view.rows ?? []).length === 0) {
+      pushLog("WARN", `${boardName} in ${projName}: ADO returned empty results (suspected throttling) — retrying after 8s...`);
+      await new Promise(r => setTimeout(r, 8000));
+      view = await agent.boardView(proj, board, {
+        timeoutMs: opts?.timeoutMs,
+        scopeToTeamArea: true,
+      });
+    }
+    const rows = (view.rows ?? []).filter((r) => r && r.wi_id != null);
+    if (rows.length === 0) {
+      if (view.possibly_degraded) {
+        pushLog("ERROR", `${boardName} in ${projName} returned 0 rows after retry — ADO is likely throttling this board's query. This is NOT an empty board.`);
+      } else {
+        pushLog("WARN", `${boardName} in ${projName} returned 0 valid rows — skipped (genuinely empty board).`);
+      }
+    }
+    return rows;
+  }
 
   async function onExportAllBoards() {
     if (!currentProject || boards.length === 0) return;
@@ -48,20 +76,26 @@ export function NavPanel({ hidden }: { hidden?: boolean } = {}) {
     pushLog("INFO", `Exporting ${boards.length} board(s) to Excel...`);
     try {
       const results: Array<{ board: Board; rows: import("@/lib/agent-client").WorkItemRow[] }> = [];
+      const projName = displayName(currentProject);
       for (let i = 0; i < boards.length; i++) {
         const b = boards[i];
         const name = b.team_name || b.name || b.label;
         setExportAllProgress(`${i + 1}/${boards.length}: ${name}`);
-        const view = await agent.boardView(currentProject, b, { scopeToTeamArea: true });
-        results.push({ board: b, rows: view.rows });
+        try {
+          const rows = await fetchBoardWithDegradationCheck(currentProject, b, projName, name);
+          if (rows.length > 0) {
+            results.push({ board: b, rows });
+          }
+        } catch (err) {
+          pushLog("ERROR", `Skipped ${name} in ${projName} (fetch error: ${(err as Error).message || String(err)})`);
+        }
       }
       setExportAllProgress("Building workbook...");
       await exportAllBoards({
-        projectName: displayName(currentProject),
+        projectName: projName,
         boards: results,
         settings,
       });
-      const projName = displayName(currentProject);
       pushLog("SUCCESS", `Exported ${boards.length} board(s) from ${projName} to Excel.`);
       showToast(`Exported ${boards.length} board(s) from ${projName} to Excel`);
     } catch (e) {
@@ -69,90 +103,6 @@ export function NavPanel({ hidden }: { hidden?: boolean } = {}) {
     } finally {
       setExportingAll(false);
       setExportAllProgress("");
-    }
-  }
-
-  async function onExportAllProjects() {
-    if (projects.length === 0) return;
-    setExportingAllProjects(true);
-    pushLog("INFO", `Exporting all projects (${projects.length}) to Excel...`);
-    try {
-      // Local temp cache: accumulate all board data one at a time
-      const allProjectData: Array<{
-        projectName: string;
-        boards: Array<{ board: Board; rows: import("@/lib/agent-client").WorkItemRow[] }>;
-      }> = [];
-      let totalBoards = 0;
-      let fetchedBoards = 0;
-
-      // Phase 1: Enumerate boards per project
-      const projectBoardMap: Array<{ proj: string; projName: string; boards: Board[] }> = [];
-      for (const proj of projects) {
-        const projName = displayName(proj);
-        setExportAllProjectsProgress(`Listing boards: ${projName}`);
-        try {
-          const rawBoards = await agent.listBoards(proj);
-          const projBoards = dedupeStoryBoards(rawBoards);
-          projectBoardMap.push({ proj, projName, boards: projBoards });
-          totalBoards += projBoards.length;
-        } catch {
-          pushLog("WARN", `Skipped project ${projName} (boards unavailable)`);
-        }
-      }
-
-      // Phase 2: Fetch one board at a time, 3s rest between each
-      for (const { proj, projName, boards: projBoards } of projectBoardMap) {
-        const boardResults: Array<{ board: Board; rows: import("@/lib/agent-client").WorkItemRow[] }> = [];
-        for (const b of projBoards) {
-          const boardName = b.team_name || b.name || b.label;
-          fetchedBoards++;
-          setExportAllProjectsProgress(`${fetchedBoards}/${totalBoards}: ${projName} / ${boardName}`);
-          try {
-            let view = await agent.boardView(proj, b, { timeoutMs: 120_000, scopeToTeamArea: true });
-            // Backend flags boards where WIQL returned 0 items despite the board
-            // being configured for specific WIT types -- probable ADO throttling.
-            // Retry once with extra backoff before giving up.
-            if (view.possibly_degraded && (view.rows ?? []).length === 0) {
-              pushLog("WARN", `${boardName} in ${projName}: ADO returned empty results (suspected throttling) — retrying after 8s...`);
-              await new Promise(r => setTimeout(r, 8000));
-              view = await agent.boardView(proj, b, { timeoutMs: 120_000, scopeToTeamArea: true });
-            }
-            const rows = (view.rows ?? []).filter((r) => r && r.wi_id != null);
-            if (rows.length > 0) {
-              boardResults.push({ board: b, rows });
-            } else if (view.possibly_degraded) {
-              pushLog("ERROR", `${boardName} in ${projName} returned 0 rows after retry — ADO is likely throttling this board's query. This is NOT an empty board.`);
-            } else {
-              pushLog("WARN", `${boardName} in ${projName} returned 0 valid rows — skipped (genuinely empty board).`);
-            }
-          } catch (err) {
-            pushLog("ERROR", `Skipped ${boardName} in ${projName} (fetch error: ${(err as Error).message || String(err)})`);
-          }
-          // 3s rest between requests — gives the agent time to release resources
-          if (fetchedBoards < totalBoards) {
-            await new Promise(r => setTimeout(r, 3000));
-          }
-        }
-        allProjectData.push({ projectName: projName, boards: boardResults });
-      }
-
-      // Phase 3: Build the combined polished workbook from cached data
-      setExportAllProjectsProgress("Building workbook...");
-      await exportAllProjects({ projects: allProjectData, settings });
-      const exportedBoards = allProjectData.reduce((s, p) => s + p.boards.filter(b => (b.rows?.length ?? 0) > 0).length, 0);
-      const skipped = totalBoards - exportedBoards;
-      const msg = skipped > 0
-        ? `Exported ${exportedBoards} board(s) from ${allProjectData.length} project(s) to Excel (${skipped} skipped).`
-        : `Exported ${exportedBoards} board(s) from ${allProjectData.length} project(s) to Excel.`;
-      pushLog("SUCCESS", msg);
-      showToast(msg);
-    } catch (e) {
-      const msg = (e as Error).message || String(e);
-      pushLog("ERROR", `Export all projects failed: ${msg}`);
-      showToast(`Export failed: ${msg}`);
-    } finally {
-      setExportingAllProjects(false);
-      setExportAllProjectsProgress("");
     }
   }
 
@@ -185,35 +135,14 @@ export function NavPanel({ hidden }: { hidden?: boolean } = {}) {
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center justify-between px-1 pb-1.5">
             <span className="tt-section-header shrink-0">Projects</span>
-            <div className="flex min-w-0 items-center gap-1">
-              <button
-                className="tt-btn-ghost flex min-w-0 items-center justify-center !p-0 gap-1"
-                style={{ height: 20, minWidth: 20, paddingInline: exportAllProjectsProgress ? 6 : 0 }}
-                onClick={() => void onExportAllProjects()}
-                disabled={exportingAllProjects || projects.length === 0}
-                title={exportingAllProjects ? exportAllProjectsProgress : "Export all projects to Excel workbook"}
-                aria-label="Export all projects to Excel workbook"
-              >
-                {exportingAllProjects ? (
-                  <RefreshCw className="h-2.5 w-2.5 shrink-0 animate-spin" />
-                ) : (
-                  <Download className="h-2.5 w-2.5 shrink-0" />
-                )}
-                {exportAllProjectsProgress && (
-                  <span className="truncate text-[9px]" style={{ color: "var(--tt-text-muted)", maxWidth: "8rem" }}>
-                    {exportAllProjectsProgress}
-                  </span>
-                )}
-              </button>
-              <button
-                className="tt-btn-ghost shrink-0 !px-1.5 !py-0.5 !text-[10px] !gap-1"
-                onClick={reloadProjects}
-                title="Refresh project list"
-              >
-                <RefreshCw className="h-2.5 w-2.5" />
-                Refresh
-              </button>
-            </div>
+            <button
+              className="tt-btn-ghost shrink-0 !px-1.5 !py-0.5 !text-[10px] !gap-1"
+              onClick={reloadProjects}
+              title="Refresh project list"
+            >
+              <RefreshCw className="h-2.5 w-2.5" />
+              Refresh
+            </button>
           </div>
           <div className="min-h-[60px] flex-1 overflow-auto rounded-[8px] border border-[var(--tt-outline-soft)] bg-[var(--tt-surface-base)] p-1">
             {projects.length === 0 ? (
