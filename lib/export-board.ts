@@ -778,18 +778,21 @@ export async function exportAllBoards(opts: ExportAllBoardsOpts): Promise<void> 
           settings: opts.settings,
         });
         _addBackToSummaryLink(wb, sheetName);
-      } catch {
+      } catch (e) {
+        console.error(`[ERROR] Sheet build failed for ${shortName}:`, e);
         ignored.push({ boardName: `${shortName} (build error)` });
       }
       index.push({ sheetName, boardName: shortName, rowCount: rows.length });
-    } catch {
+    } catch (e) {
+      console.error(`[ERROR] Board ${idx + 1} export failed:`, e);
       ignored.push({ boardName: `Board ${idx + 1}` });
     }
   });
 
   try {
     _populateSummary(summaryWs, opts.projectName, index.map(i => ({ ...i, project: opts.projectName })), ignored);
-  } catch {
+  } catch (e) {
+    console.error(`[ERROR] Summary population failed for ${opts.projectName}:`, e);
     summaryWs.getRow(1).getCell(2).value = `${opts.projectName} - Export Summary`;
   }
 

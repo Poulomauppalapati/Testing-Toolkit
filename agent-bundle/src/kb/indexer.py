@@ -181,6 +181,10 @@ def _dicts_to_chunks(items: list[dict[str, Any]]) -> list[KbChunk]:
     ]
 
 
+_INDEX_FILE_MAX_RETRIES: int = 3
+_INDEX_FILE_BACKOFF_BASE: float = 2.0
+
+
 def _process_one_file(
     p: Path,
     doc_index: int,
@@ -196,7 +200,11 @@ def _process_one_file(
     chunks, so it is safe to run for many files concurrently. ``doc_index`` is
     the file's fixed position in the sorted scan, which keeps chunk ids stable
     and deterministic regardless of completion order. Never raises.
+    Retries up to _INDEX_FILE_MAX_RETRIES times with exponential backoff
+    for transient failures.
     """
+    import time as _time
+
     def _log(msg: str) -> None:
         if on_log is not None:
             try:
@@ -211,67 +219,77 @@ def _process_one_file(
     except Exception:
         pass
 
-    try:
-        if is_multimedia:
-            from kb.multimedia import extract_multimedia_text
-            _log(f"[INFO] Processing multimedia: '{p.name}'...")
-            text = extract_multimedia_text(
-                p, on_log=on_log, on_sub_progress=on_sub_progress
-            )
-        else:
-            text = standardize_to_text(p, on_log=on_log)
-
-        if not text.strip():
-            try:
-                file_size_kb = p.stat().st_size / 1024
-            except OSError:
-                file_size_kb = 0.0
-            _log(f"[WARN] '{p.name}' ({file_size_kb:.0f} KB) yielded no "
-                 f"text - may need OCR or is binary/encrypted.")
-            return []
-
-        from kb.retrieval_config import RetrievalConfig, document_role
-
-        text_kb = len(text) / 1024
-        cfg = retrieval_config or RetrievalConfig()
-        role = document_role(p)
-        new_chunks = chunk_document(
-            p.name, doc_index, text, config=cfg,
-            source_path=p.name, document_role=role,
-            source_priority=cfg.priority_for(p.name, role),
-        )
-        if llm_client is not None and llm_model and new_chunks:
-            try:
-                from kb.contextual import contextualize_document
-                chunk_dicts = [
-                    {"text": c.text, "chunk_id": c.chunk_id}
-                    for c in new_chunks
-                ]
-                n_ctx = contextualize_document(
-                    llm_client, llm_model, text, chunk_dicts, on_log=on_log,
+    for _attempt in range(1, _INDEX_FILE_MAX_RETRIES + 1):
+        try:
+            if is_multimedia:
+                from kb.multimedia import extract_multimedia_text
+                _log(f"[INFO] Processing multimedia: '{p.name}'...")
+                text = extract_multimedia_text(
+                    p, on_log=on_log, on_sub_progress=on_sub_progress
                 )
-                if n_ctx > 0:
-                    ctx_map = {
-                        d["chunk_id"]: d.get("context", "")
-                        for d in chunk_dicts if d.get("context")
-                    }
-                    for c in new_chunks:
-                        if c.chunk_id in ctx_map:
-                            c.context = ctx_map[c.chunk_id]
-            except Exception as e:  # noqa: BLE001
-                _log(f"[WARN] Contextual retrieval failed for '{p.name}': "
-                     f"{e!r}; using plain chunks.")
-        _log(f"[INFO] '{p.name}': {text_kb:.0f} KB text -> "
-             f"{len(new_chunks)} chunk(s)")
-        return new_chunks
-    except MemoryError:
-        _log(f"[WARN] Out of memory indexing '{p.name}'; skipping. "
-             "Consider closing other applications.")
-        gc.collect()
-        return []
-    except Exception as e:  # noqa: BLE001 - one bad file must not abort
-        _log(f"[WARN] Could not index '{p.name}': {e!r}; skipping.")
-        return []
+            else:
+                text = standardize_to_text(p, on_log=on_log)
+
+            if not text.strip():
+                try:
+                    file_size_kb = p.stat().st_size / 1024
+                except OSError:
+                    file_size_kb = 0.0
+                _log(f"[WARN] '{p.name}' ({file_size_kb:.0f} KB) yielded no "
+                     f"text - may need OCR or is binary/encrypted.")
+                return []
+
+            from kb.retrieval_config import RetrievalConfig, document_role
+
+            text_kb = len(text) / 1024
+            cfg = retrieval_config or RetrievalConfig()
+            role = document_role(p)
+            new_chunks = chunk_document(
+                p.name, doc_index, text, config=cfg,
+                source_path=p.name, document_role=role,
+                source_priority=cfg.priority_for(p.name, role),
+            )
+            if llm_client is not None and llm_model and new_chunks:
+                try:
+                    from kb.contextual import contextualize_document
+                    chunk_dicts = [
+                        {"text": c.text, "chunk_id": c.chunk_id}
+                        for c in new_chunks
+                    ]
+                    n_ctx = contextualize_document(
+                        llm_client, llm_model, text, chunk_dicts, on_log=on_log,
+                    )
+                    if n_ctx > 0:
+                        ctx_map = {
+                            d["chunk_id"]: d.get("context", "")
+                            for d in chunk_dicts if d.get("context")
+                        }
+                        for c in new_chunks:
+                            if c.chunk_id in ctx_map:
+                                c.context = ctx_map[c.chunk_id]
+                except Exception as e:  # noqa: BLE001
+                    _log(f"[WARN] Contextual retrieval failed for '{p.name}': "
+                         f"{e!r}; using plain chunks.")
+            _log(f"[INFO] '{p.name}': {text_kb:.0f} KB text -> "
+                 f"{len(new_chunks)} chunk(s)")
+            return new_chunks
+        except MemoryError:
+            _log(f"[WARN] Out of memory indexing '{p.name}'; skipping. "
+                 "Consider closing other applications.")
+            gc.collect()
+            return []
+        except Exception as e:  # noqa: BLE001
+            if _attempt < _INDEX_FILE_MAX_RETRIES:
+                delay = _INDEX_FILE_BACKOFF_BASE ** _attempt
+                _log(f"[WARN] Indexing '{p.name}' failed (attempt "
+                     f"{_attempt}/{_INDEX_FILE_MAX_RETRIES}): {e!r}; "
+                     f"retrying in {delay:.0f}s...")
+                _time.sleep(delay)
+            else:
+                _log(f"[WARN] Could not index '{p.name}' after "
+                     f"{_INDEX_FILE_MAX_RETRIES} attempts: {e!r}; skipping.")
+                return []
+    return []
 
 
 def build_index_resumable(

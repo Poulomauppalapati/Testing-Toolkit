@@ -216,8 +216,8 @@ def generate_playwright_script(
         "  $env:E2E_PASSWORD = 'your_password'   # PowerShell",
         "  export E2E_PASSWORD='your_password'    # Bash/zsh",
         "",
-        "Requires the real browser running with --remote-debugging-port=9222:",
-        "  chrome.exe --remote-debugging-port=9222 --user-data-dir=...",
+        "Uses Playwright bundled Chromium with an isolated automation profile.",
+        "Set E2E_HEADED=1 to run in headed mode for debugging.",
         '"""',
         "",
         "from __future__ import annotations",
@@ -232,24 +232,27 @@ def generate_playwright_script(
         "",
         f"TARGET_URL = {_esc(login_url)}",
         f"USERNAME = {_esc(username)}",
-        "CDP_PORT = int(os.environ.get('CDP_PORT', '9222'))",
+        "AUTOMATION_PROFILE = os.path.join(",
+        "    os.environ.get('LOCALAPPDATA', os.path.expanduser('~')),",
+        "    '.testing-toolkit', 'automation-profile',",
+        ")",
         "",
         "",
         "async def main() -> None:",
-        '    """Execute test case steps via CDP attach."""',
+        '    """Execute test case steps in bundled Chromium with isolated profile."""',
         "    password = os.environ.get('E2E_PASSWORD')",
         "    if not password:",
         "        print('[ERROR] E2E_PASSWORD environment variable not set.')",
         "        sys.exit(1)",
         "",
         "    async with async_playwright() as pw:",
-        "        browser = await pw.chromium.connect_over_cdp(",
-        "            f'http://127.0.0.1:{CDP_PORT}'",
-        "        )",
-        "        context = await browser.new_context(",
+        "        context = await pw.chromium.launch_persistent_context(",
+        "            AUTOMATION_PROFILE,",
+        "            headless=os.environ.get('E2E_HEADED', '') == '',",
         "            viewport={'width': 1920, 'height': 1080},",
+        "            args=['--disable-blink-features=AutomationControlled'],",
         "        )",
-        "        page = await context.new_page()",
+        "        page = context.pages[0] if context.pages else await context.new_page()",
         "",
     ]
 
@@ -304,10 +307,10 @@ def generate_playwright_script(
 # It mirrors the e2e_runner waterfall: CSS -> role -> label -> text -> iframe.
 _SELF_HEAL_HELPER = '''
 async def _find_element(page, selector, *, name="", role="", timeout=12000):
-    """Self-healing locator waterfall: CSS -> role -> label -> text -> iframe.
+    """Self-healing locator waterfall: role -> label -> text -> CSS -> iframe.
 
-    Falls back through multiple strategies if the primary CSS selector breaks
-    due to page changes between recording and replay.
+    Prefers stable, user-facing locators per spec. CSS is a last resort
+    before iframe traversal.
     """
     import asyncio as _aio
 
@@ -325,33 +328,33 @@ async def _find_element(page, selector, *, name="", role="", timeout=12000):
             pass
         return None
 
-    # Strategy 1: Original CSS selector (most specific)
-    if selector:
-        loc = await _try_visible(page, page.locator(selector))
-        if loc:
-            return loc
-
-    # Strategy 2: Role + name (accessible, resilient to DOM changes)
+    # Strategy 1: Role + name (accessible, resilient to DOM changes)
     if role and name:
         loc = await _try_visible(page, page.get_by_role(role, name=name))
         if loc:
             return loc
 
-    # Strategy 3: Label match
+    # Strategy 2: Label match
     if name:
         loc = await _try_visible(page, page.get_by_label(name, exact=True))
         if loc:
             return loc
 
-    # Strategy 4: Placeholder match
+    # Strategy 3: Placeholder match
     if name:
         loc = await _try_visible(page, page.get_by_placeholder(name, exact=True))
         if loc:
             return loc
 
-    # Strategy 5: Text match (loose)
+    # Strategy 4: Text match (loose)
     if name:
         loc = await _try_visible(page, page.get_by_text(name, exact=False))
+        if loc:
+            return loc
+
+    # Strategy 5: CSS selector (last resort before iframe)
+    if selector:
+        loc = await _try_visible(page, page.locator(selector))
         if loc:
             return loc
 

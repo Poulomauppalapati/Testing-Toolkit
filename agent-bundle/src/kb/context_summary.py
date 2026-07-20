@@ -554,12 +554,13 @@ async def _process_doc_retries(
 def _timeout_for_doc(text: str, retry: bool = False) -> float:
     """Scale the per-document timeout by the number of windows it produces.
     A single-window doc gets the base 120s; large docs scale up to 900s.
-    Retries double the base to absorb transient slowness."""
+    Retries double the base AND raise the cap to guarantee the retry
+    timeout is always >= the initial effective timeout."""
     n_windows = max(1, len(_windows(text)))
     base = _DOC_TIMEOUT_SEC * max(1.0, n_windows * 0.6)
     if retry:
         base *= 2.0
-    cap = 900.0 if retry else 720.0
+    cap = 1200.0 if retry else 720.0
     return min(base, cap)
 
 

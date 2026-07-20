@@ -55,6 +55,7 @@ import {
   groupRowsByColumn,
   testCaseCountsByWorkItem,
   uniqueSorted,
+  workItemUrl,
 } from "@/lib/board-utils";
 import { DetailPane } from "./DetailPane";
 
@@ -1127,13 +1128,7 @@ function WiIdLink({
   settings: SettingsResponse | null;
 }) {
   const isJira = typeof wiId === "string";
-  let href: string | null = null;
-  if (isJira) {
-    const base = (settings?.jira_url ?? "").replace(/\/+$/, "");
-    if (base) href = `${base}/browse/${encodeURIComponent(String(wiId))}`;
-  } else if (settings?.organization) {
-    href = `https://dev.azure.com/${encodeURIComponent(settings.organization)}/_workitems/edit/${wiId}`;
-  }
+  const href = workItemUrl(wiId, settings ?? {});
   if (href) {
     return (
       <a

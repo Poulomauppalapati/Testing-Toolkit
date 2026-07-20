@@ -11,12 +11,15 @@ import ctypes.wintypes
 import hashlib
 import json
 import os
+import logging
 import sys
 import tempfile
 from pathlib import Path
 from typing import Final
 
 from core.credential_envelope import CredentialEnvelopeError, open_credentials, validate_credentials
+
+_log = logging.getLogger(__name__)
 
 _SERVICE: Final[str] = "TestingToolkit.GenAI.ReleaseCredential.v2"
 _ACCOUNT: Final[str] = "central-service"
@@ -202,8 +205,9 @@ def load_release_credentials(envelope_path: Path) -> tuple[dict[str, str], str]:
             pass
         envelope = envelope_path.read_bytes()
         release_id = hashlib.sha256(envelope).hexdigest()
-    except OSError:
+    except OSError as exc:
         if stored:
+            _log.warning("Envelope file unreadable (%s); using cached OS-bound credential", exc)
             return stored[0], "os-bound"
         return {}, "unavailable"
 
@@ -221,6 +225,11 @@ def load_release_credentials(envelope_path: Path) -> tuple[dict[str, str], str]:
         global _LAST_ENVELOPE_ERROR
         _LAST_ENVELOPE_ERROR = str(exc)
         if stored:
+            _log.warning(
+                "Envelope authentication failed (%s); falling back to "
+                "stale OS-bound credential. This is a DEGRADED state.",
+                exc,
+            )
             return stored[0], "os-bound-stale-release"
         return {}, "invalid-envelope"
 

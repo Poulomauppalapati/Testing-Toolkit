@@ -49,7 +49,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.worksheet import Worksheet
 
-from ado.testcase_creator import (
+from testgen.tc_schema import (
     VALID_CATEGORIES,
     VALID_PRIORITIES,
     clean_title,

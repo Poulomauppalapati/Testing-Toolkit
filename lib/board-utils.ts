@@ -85,6 +85,24 @@ export function projectSourceType(
   return "ado";
 }
 
+/**
+ * Build the URL to open a work item in its source system.
+ * Returns null if settings are insufficient to build a URL.
+ */
+export function workItemUrl(
+  wiId: string | number,
+  settings: { organization?: string; jira_url?: string }
+): string | null {
+  const isJira = typeof wiId === "string";
+  if (isJira) {
+    const base = (settings?.jira_url ?? "").replace(/\/+$/, "");
+    if (!base) return null;
+    return `${base}/browse/${encodeURIComponent(String(wiId))}`;
+  }
+  if (!settings?.organization) return null;
+  return `https://dev.azure.com/${encodeURIComponent(settings.organization)}/_workitems/edit/${wiId}`;
+}
+
 export const NO_COLUMN = "(no board column)";
 export const UNASSIGNED = "(unassigned)";
 export const NO_ITER = "(no iteration)";

@@ -834,7 +834,33 @@ def protect_release_credential(path: Path) -> None:
             if result.returncode != 0:
                 warn("Could not restrict the credential envelope ACL; authenticated encryption remains active.")
                 return
-    ok("Credential envelope installed with owner-restricted access.")
+            # Verify ACL actually took effect by reading back permissions
+            verify = _run(
+                ["icacls", str(path)],
+                capture_output=True,
+                text=True,
+            )
+            if verify.returncode == 0:
+                acl_out = verify.stdout.lower()
+                if username.lower() not in acl_out:
+                    warn("ACL verification failed: owner grant not confirmed in icacls output.")
+                    return
+                # Check that no other users have access (only owner + SYSTEM)
+                lines = [ln.strip() for ln in acl_out.splitlines() if ln.strip() and ":" in ln]
+                for ln in lines:
+                    if username.lower() in ln or "nt authority\\system" in ln:
+                        continue
+                    if "builtin" in ln or "everyone" in ln or "users" in ln:
+                        warn(f"ACL verification: unexpected access entry: {ln.strip()}")
+                        return
+    else:
+        # Unix: verify mode after chmod
+        import stat
+        actual_mode = path.stat().st_mode & 0o777
+        if actual_mode != 0o600:
+            warn(f"Permission verification failed: expected 0600, got {oct(actual_mode)}")
+            return
+    ok("Credential envelope installed with owner-restricted access (verified).")
 
 
 # --------------------------------------------------------------------------

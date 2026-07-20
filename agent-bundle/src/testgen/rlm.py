@@ -47,7 +47,7 @@ from typing import Any, Callable, Final
 
 from core.anthropic_client import AnthropicClient, AnthropicError
 from core.model_router import Task, route
-from ado.testcase_creator import normalize_payload, validate_payload
+from testgen.tc_schema import normalize_payload, validate_payload
 from core.app_config import (
     RLM_DECOMPOSE_MAX_TOKENS,
     RLM_DIRECT_CONTEXT_TOKENS,

@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import openpyxl
 from openpyxl.drawing.image import Image as XlImage
@@ -70,7 +73,8 @@ def defects_to_xlsx(
                 anchor = f"{get_column_letter(9)}{row_idx}"
                 ws.add_image(img, anchor)
                 ws.row_dimensions[row_idx].height = 60
-            except Exception:
+            except Exception as exc:
+                logger.warning("Image embed failed for row %d: %s", row_idx, exc)
                 ws.cell(row=row_idx, column=9,
                         value=f"({len(defect.images)} image(s))")
         else:

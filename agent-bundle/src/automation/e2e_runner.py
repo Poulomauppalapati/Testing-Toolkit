@@ -47,7 +47,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Final
 
 try:
     from playwright.async_api import Page, TimeoutError as PwTimeout
@@ -67,12 +67,12 @@ from .script_generator import generate_playwright_script
 # Constants
 # ---------------------------------------------------------------------------
 
-MAX_STEP_RETRIES: int = 3          # attempts before marking step as failure
-MAX_RECOMPILE_ATTEMPTS: int = 2    # LLM recompile retries on locator failure
-RETRY_BASE_MS: int = 600           # initial retry backoff (doubles each attempt)
-STABILITY_CHECK_MS: int = 50       # gap between two position checks for stability
-ELEMENT_TIMEOUT_MS: int = 12_000   # default per-element wait
-NAVIGATE_TIMEOUT_MS: int = 30_000  # goto() timeout
+MAX_STEP_RETRIES: Final[int] = 3          # attempts before marking step as failure
+MAX_RECOMPILE_ATTEMPTS: Final[int] = 2    # LLM recompile retries on locator failure
+RETRY_BASE_MS: Final[int] = 600           # initial retry backoff (doubles each attempt)
+STABILITY_CHECK_MS: Final[int] = 50       # gap between two position checks for stability
+ELEMENT_TIMEOUT_MS: Final[int] = 12_000   # default per-element wait
+NAVIGATE_TIMEOUT_MS: Final[int] = 30_000  # goto() timeout
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +85,9 @@ class StepResult:
     action: str
     expected: str
     actual: str
-    status: str            # "pass" | "fail" | "skip" | "error"
+    status: str            # "pass" | "pass_fallback" | "fail" | "skip" | "error" | "blocked"
     locator_strategy: str = ""   # which strategy won (for self-heal reporting)
+    locator_history: list[str] | None = None  # all strategies attempted (on failure)
     screenshot_path: Path | None = None
     duration_ms: int = 0
 
@@ -98,7 +99,7 @@ class TestCaseResult:
     steps: list[StepResult]
     video_path: Path | None = None
     script_path: Path | None = None
-    overall_status: str = "pass"   # "pass" | "fail" | "error"
+    overall_status: str = "pass"   # "pass" | "pass_fallback" | "fail" | "error" | "blocked"
     duration_ms: int = 0
 
 
@@ -210,6 +211,7 @@ async def _find_element(
     }
     ordered = compatible.get(preferred_strategy, (preferred_strategy,))
     deadline = time.monotonic() + timeout_ms / 1000
+    attempted: list[str] = []
 
     async def _unique_visible(root: Any, strategy: str) -> Any | None:
         remaining_ms = max(100, int((deadline - time.monotonic()) * 1000))
@@ -228,6 +230,7 @@ async def _find_element(
         return loc.nth(visible[0]) if visible else None
 
     for strategy in ordered:
+        attempted.append(strategy)
         loc = await _unique_visible(page, strategy)
         if loc is not None:
             return loc, strategy
@@ -235,10 +238,12 @@ async def _find_element(
         if frame == page.main_frame:
             continue
         for strategy in ordered:
+            attempted.append(f"iframe:{strategy}")
             loc = await _unique_visible(frame, strategy)
             if loc is not None:
                 return loc, f"iframe:{strategy}"
     if preferred_strategy == "css" and time.monotonic() < deadline:
+        attempted.append("shadow")
         try:
             loc = _shadow_locator(page, target)
             await loc.wait_for(state="visible", timeout=min(1000, timeout_ms))
@@ -247,7 +252,10 @@ async def _find_element(
             return loc, "shadow"
         except PwTimeout:
             pass
-    raise RuntimeError(f"Element not found: [{preferred_strategy}:{target}]")
+    raise RuntimeError(
+        f"Element not found: [{preferred_strategy}:{target}] "
+        f"| attempted: {' -> '.join(attempted)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -655,6 +663,7 @@ async def _execute_step(
                     )
                     if retry_result.status != "error":
                         retry_result.locator_strategy = "recompiled"
+                        retry_result.status = "pass_fallback"
                         retry_result.actual = f"[HEAL] {retry_result.actual}"
                         record_healing(step, original_step, corrected, True)
                         return retry_result
@@ -688,6 +697,11 @@ async def _execute_step(
     except Exception:
         pass
 
+    # Mark fallback-pass distinctly (E2E_SPEC Stage D)
+    if status == "pass" and winning_strategy != preferred_strategy:
+        status = "pass_fallback"
+        actual = f"[FALLBACK via {winning_strategy}] {actual}"
+
     elapsed_ms = int((time.perf_counter_ns() - t0) / 1_000_000)
     return StepResult(
         step_num=step_num,
@@ -710,11 +724,6 @@ _LOGIN_INDICATORS = frozenset({
     "authenticate", "credentials",
 })
 
-_LOGGED_IN_INDICATORS = frozenset({
-    "dashboard", "home", "welcome", "my tasks", "inbox", "sites",
-})
-
-
 async def _is_login_page(page: Any) -> bool:
     """Heuristic: true if the current page looks like a login/sign-in form."""
     try:
@@ -727,20 +736,21 @@ async def _is_login_page(page: Any) -> bool:
 async def _is_logged_in(page: Any, login_url: str) -> bool:
     """Heuristic: true if the page has moved past login.
 
-    IMPORTANT: must also confirm the page does NOT show login indicators,
-    because some apps (Appian) have login pages at the same URL path as
-    the authenticated app (e.g. /suite/sites/ihub serves both).
+    Target-app-agnostic: checks only that login form indicators are absent
+    and that the URL has changed from the login URL. No hardcoded page
+    content assumptions.
     """
     try:
         text = (await page.inner_text("body"))[:3000].lower()
-        # If login indicators are present, this is still a login page
         if any(ind in text for ind in _LOGIN_INDICATORS):
             return False
         current = page.url.lower()
-        login_host = login_url.split("//")[-1].split("/")[0].lower()
-        if login_host in current and "/suite/" in current:
+        login_normalized = login_url.lower().rstrip("/")
+        current_normalized = current.rstrip("/")
+        if current_normalized != login_normalized:
             return True
-        return any(ind in text for ind in _LOGGED_IN_INDICATORS)
+        # Same URL but no login indicators = likely authenticated (SPA)
+        return True
     except Exception:
         return False
 
@@ -750,9 +760,8 @@ async def _handle_provider_selection(
 ) -> None:
     """Click a login provider link/button based on ai_instructions.
 
-    Handles pages like Appian's provider chooser (Appian Native Login,
-    Abbott QA SSO, Abbott Entra SSO) by matching the instruction text
-    to visible links or buttons on the page.
+    Handles provider selection pages generically by matching the
+    instruction text to visible links or buttons on the page.
     """
     instruction_lower = ai_instructions.lower().strip()
     # Extract the provider name from common instruction patterns

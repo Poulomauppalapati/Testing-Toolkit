@@ -32,7 +32,7 @@ import {
   type WiId,
 } from "@/lib/agent-client";
 import { useAppState } from "@/lib/app-state";
-import { COLOR_MUTED } from "@/lib/board-utils";
+import { COLOR_MUTED, workItemUrl } from "@/lib/board-utils";
 
 interface DetailPaneProps {
   activeWiId: WiId | null;
@@ -75,21 +75,8 @@ export function DetailPane({ activeWiId }: DetailPaneProps) {
   // the JIRA browse URL; an ADO work item (numeric id) opens the ADO editor.
   const openInSource = () => {
     if (!detail) return;
-    const isJiraKey = typeof detail.wi_id === "string";
-    if (isJiraKey) {
-      const base = (settings?.jira_url ?? "").replace(/\/+$/, "");
-      if (!base) return;
-      window.open(
-        `${base}/browse/${encodeURIComponent(String(detail.wi_id))}`,
-        "_blank",
-        "noopener"
-      );
-      return;
-    }
-    if (!settings?.organization) return;
-    const url = `https://dev.azure.com/${encodeURIComponent(
-      settings.organization
-    )}/_workitems/edit/${detail.wi_id}`;
+    const url = workItemUrl(detail.wi_id, settings ?? {});
+    if (!url) return;
     window.open(url, "_blank", "noopener");
   };
 

@@ -27,7 +27,8 @@ from __future__ import annotations
 from typing import Final
 
 def _canonical_prompt() -> str:
-    # ponytail: lazy import breaks testgen->ado->core cycle; inline if perf matters
+    # ponytail: SYSTEM_PROMPT text still in ado/testcase_creator (mentions ADO in
+    # wording); move to tc_schema when prompt is made source-agnostic
     from ado.testcase_creator import SYSTEM_PROMPT
     return SYSTEM_PROMPT
 

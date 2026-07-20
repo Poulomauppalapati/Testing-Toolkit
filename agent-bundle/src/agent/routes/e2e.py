@@ -20,7 +20,7 @@ import json
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -34,9 +34,9 @@ from core.project_store import ensure_project
 router = APIRouter()
 _VAULT = CredentialVault()
 
-MAX_PLAN_COMPILE_RETRIES: int = 3
-MAX_TC_RETRIES: int = 2
-MAX_SUITE_RECOVERY: int = 1
+MAX_PLAN_COMPILE_RETRIES: Final[int] = 3
+MAX_TC_RETRIES: Final[int] = 2
+MAX_SUITE_RECOVERY: Final[int] = 1
 
 
 # ---------------------------------------------------------------------
@@ -443,7 +443,16 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
 
         if job.stopped:
             job.state = "stopped"
-            job.log("[WARN] E2E run stopped by user.")
+            job.log("[WARN] E2E run stopped by user. Generating partial report.")
+            if results:
+                try:
+                    from automation.report_excel import write_e2e_report
+                    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+                    rp = EXPORTS_DIR / f"e2e_report_partial_{int(time.time())}.xlsx"
+                    await asyncio.to_thread(write_e2e_report, results, rp)
+                    job.log(f"[INFO] Partial report saved: {rp.name}")
+                except Exception as e:  # noqa: BLE001
+                    job.log(f"[WARN] Partial report generation failed: {e}")
             return
 
         # 4) Excel report — saved directly to Downloads/Testing_Toolkit.
@@ -793,7 +802,26 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
 
         if job.stopped:
             job.state = "stopped"
-            job.log("[WARN] E2E run stopped by user.")
+            job.log("[WARN] E2E run stopped by user. Generating partial report.")
+            if results:
+                try:
+                    from automation.report_excel import write_e2e_report
+                    rp = output_dir / f"e2e_report_partial_{int(time.time())}.xlsx"
+                    await asyncio.to_thread(write_e2e_report, results, rp)
+                    job.log(f"[INFO] Partial report saved: {rp.name}")
+                    run_id = _persist_run(req.project, results, job.created_at)
+                    passed = sum(1 for r in results if r.overall_status == "pass")
+                    failed = sum(1 for r in results if r.overall_status in ("fail", "error"))
+                    job.finish({
+                        "run_id": run_id,
+                        "report_path": str(rp),
+                        "total": len(results),
+                        "passed": passed,
+                        "failed": failed,
+                        "partial": True,
+                    })
+                except Exception as e:  # noqa: BLE001
+                    job.log(f"[WARN] Partial report generation failed: {e}")
             return
 
         report_path = ""

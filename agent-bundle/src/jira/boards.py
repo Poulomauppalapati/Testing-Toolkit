@@ -6,6 +6,7 @@ Uses /rest/agile/1.0/board and /rest/api/2/search (JQL).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -14,6 +15,8 @@ import httpx
 from core.http_retry import request_with_retry, ssl_exception_types
 from core.runtime_config import RuntimeConfig
 from jira.api import build_auth_header
+
+_log = logging.getLogger(__name__)
 
 # Test-case type detection: match issue types that are explicitly test-related.
 # "test case", "test", "test execution", "test set", "xray test" all match.
@@ -233,38 +236,48 @@ async def search_issues(
         "summary", "issuetype", "status", "assignee",
         "priority", "labels", "sprint", "issuelinks", "subtasks",
     ]
-    try:
-        async with _client(url, user, pat, cfg) as client:
-            while start_at < max_results:
-                body = {
-                    "jql": jql,
-                    "startAt": start_at,
-                    "maxResults": min(page_size, max_results - start_at),
-                    "fields": fields_requested,
-                }
-                r = await request_with_retry(
-                    client, "POST", "/rest/api/2/search",
-                    json=body,
-                    headers={"Content-Type": "application/json"},
+    degraded = False
+    async with _client(url, user, pat, cfg) as client:
+        while start_at < max_results:
+            body = {
+                "jql": jql,
+                "startAt": start_at,
+                "maxResults": min(page_size, max_results - start_at),
+                "fields": fields_requested,
+            }
+            r = await request_with_retry(
+                client, "POST", "/rest/api/2/search",
+                json=body,
+                headers={"Content-Type": "application/json"},
+            )
+            if r.status_code == 429:
+                _log.warning("JIRA rate-limited (429) during search; results may be incomplete")
+                degraded = True
+                break
+            if r.status_code != 200:
+                raise httpx.HTTPStatusError(
+                    f"JIRA search failed: HTTP {r.status_code}",
+                    request=r.request, response=r,
                 )
-                if r.status_code != 200:
-                    break
-                data: dict[str, Any] = r.json()
-                raw_issues = data.get("issues", []) or []
-                if not raw_issues:
-                    break
-                batch: list[JiraIssue] = [
-                    _parse_issue(ri) for ri in raw_issues
-                ]
-                issues.extend(batch)
-                if on_batch and batch:
-                    on_batch(batch)
-                total = int(data.get("total", 0) or 0)
-                start_at += len(raw_issues)
-                if start_at >= total:
-                    break
-    except Exception:
-        pass
+            data: dict[str, Any] = r.json()
+            raw_issues = data.get("issues", []) or []
+            if not raw_issues:
+                break
+            batch: list[JiraIssue] = [
+                _parse_issue(ri) for ri in raw_issues
+            ]
+            issues.extend(batch)
+            if on_batch and batch:
+                on_batch(batch)
+            total = int(data.get("total", 0) or 0)
+            start_at += len(raw_issues)
+            if start_at >= total:
+                break
+    if degraded and not issues:
+        raise httpx.HTTPStatusError(
+            "JIRA query returned 0 results due to rate limiting (degraded)",
+            request=r.request, response=r,
+        )
     return issues
 
 
