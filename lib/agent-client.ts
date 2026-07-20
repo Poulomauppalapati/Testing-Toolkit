@@ -1902,6 +1902,18 @@ export const agent = {
     return agentFetch("/update/apply", { method: "POST" });
   },
 
+  async revertStatus(): Promise<{ available: boolean; revert_to_version?: string; file_count?: number }> {
+    try {
+      return await agentFetch("/update/revert/status");
+    } catch {
+      return { available: false };
+    }
+  },
+
+  async revertPatch(): Promise<{ ok: boolean; version?: string; error?: string }> {
+    return agentFetch("/update/revert", { method: "POST" });
+  },
+
 };
 
 /** True when an agent request failed because the route does not exist (404). */

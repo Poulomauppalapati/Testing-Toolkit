@@ -248,7 +248,7 @@ def apply_patch() -> dict[str, Any]:
     if not staged:
         return {"ok": False, "error": f"all files failed: {errors}"}
 
-    # Phase 2: apply with rollback on failure.
+    # Phase 2: apply with rollback on failure. Save backup for revert.
     backups: list[tuple[Path, bytes]] = []
     applied: list[str] = []
     try:
@@ -265,6 +265,9 @@ def apply_patch() -> dict[str, Any]:
                 pass
         return {"ok": False, "error": f"patch aborted, rolled back: {e}"}
 
+    # Persist revert snapshot so user can roll back later.
+    _save_revert_snapshot(AGENT_VERSION, backups, src_dir)
+
     _invalidate_update_cache()
     log.info("[INFO] Patch %s applied: %d file(s), %d skipped",
              latest, len(applied), len(errors))
@@ -272,6 +275,112 @@ def apply_patch() -> dict[str, Any]:
         "ok": True,
         "version": latest,
         "applied": applied,
+        "errors": errors,
+        "restart_required": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Release revert
+# ---------------------------------------------------------------------------
+
+_REVERT_DIR_NAME = ".patch_revert"
+
+
+def _revert_dir() -> Path:
+    import sys as _sys
+    src_dir = Path(_sys.modules["agent"].__file__ or "").resolve().parent.parent
+    return src_dir / _REVERT_DIR_NAME
+
+
+def _save_revert_snapshot(
+    prev_version: str,
+    backups: list[tuple[Path, bytes]],
+    src_dir: Path,
+) -> None:
+    """Persist file backups so they can be restored by revert_patch()."""
+    rd = _revert_dir()
+    rd.mkdir(parents=True, exist_ok=True)
+    meta: dict[str, Any] = {"version": prev_version, "files": []}
+    for target, data in backups:
+        rel = str(target.relative_to(src_dir))
+        backup_file = rd / rel.replace("/", "__").replace("\\", "__")
+        backup_file.write_bytes(data)
+        meta["files"].append({"rel": rel, "backup": backup_file.name})
+    (rd / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def can_revert() -> bool:
+    """True if a revert snapshot exists from a prior patch."""
+    meta_path = _revert_dir() / "meta.json"
+    return meta_path.exists()
+
+
+def revert_info() -> dict[str, Any]:
+    """Return info about the available revert snapshot."""
+    meta_path = _revert_dir() / "meta.json"
+    if not meta_path.exists():
+        return {"available": False}
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        return {
+            "available": True,
+            "revert_to_version": meta.get("version", "unknown"),
+            "file_count": len(meta.get("files", [])),
+        }
+    except Exception:
+        return {"available": False}
+
+
+def revert_patch() -> dict[str, Any]:
+    """Restore files from the revert snapshot (undo last patch)."""
+    import logging
+    import sys as _sys
+
+    log = logging.getLogger(__name__)
+    rd = _revert_dir()
+    meta_path = rd / "meta.json"
+    if not meta_path.exists():
+        return {"ok": False, "error": "no revert snapshot available"}
+
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"ok": False, "error": f"corrupt revert snapshot: {e}"}
+
+    src_dir = Path(_sys.modules["agent"].__file__ or "").resolve().parent.parent
+    prev_version = meta.get("version", "unknown")
+    restored: list[str] = []
+    errors: list[str] = []
+
+    for entry in meta.get("files", []):
+        rel = entry.get("rel", "")
+        backup_name = entry.get("backup", "")
+        if not rel or not backup_name:
+            continue
+        backup_file = rd / backup_name
+        target = src_dir / rel
+        if not backup_file.exists():
+            errors.append(f"{rel}: backup file missing")
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(backup_file.read_bytes())
+            restored.append(rel)
+        except Exception as e:
+            errors.append(f"{rel}: {type(e).__name__}")
+
+    # Clean up revert dir after successful restore.
+    if restored and not errors:
+        import shutil
+        shutil.rmtree(rd, ignore_errors=True)
+
+    _invalidate_update_cache()
+    log.info("[INFO] Reverted to %s: %d file(s) restored", prev_version, len(restored))
+    return {
+        "ok": bool(restored),
+        "version": prev_version,
+        "restored": restored,
         "errors": errors,
         "restart_required": True,
     }

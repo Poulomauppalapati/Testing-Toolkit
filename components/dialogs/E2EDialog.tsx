@@ -264,8 +264,10 @@ export function E2EDialog({ onClose }: { onClose: () => void }) {
     }
     for (const r of result.results) {
       if (r.video_path) {
+        const ext = r.video_path.endsWith(".mkv") ? ".mkv" : ".webm";
+        const safeName = (r.title || r.tc_id).replace(/[^\w\s-]/g, "").replace(/\s+/g, "_").slice(0, 80);
         items.push({
-          name: `${r.tc_id || r.title}.webm`,
+          name: `${safeName}${ext}`,
           url: agent.artifactDownloadUrl(r.video_path),
           note: "recording",
         });

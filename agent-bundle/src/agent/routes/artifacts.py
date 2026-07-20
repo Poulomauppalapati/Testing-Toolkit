@@ -113,33 +113,29 @@ async def upload_artifact(
     return {"ok": True, "path": str(dest), "size": len(content)}
 
 
+_ALLOWED_EXTENSIONS: set[str] = {".xlsx", ".pdf", ".mkv"}
+
+
 @router.get("/{project}")
 @trace
 async def list_artifacts(project: str) -> list[dict[str, Any]]:
-    from core.app_config import OUTPUTS_DIR
-    from core.project_store import ProjectPaths, _safe_name
+    from core.app_config import EXPORTS_DIR
 
     out: list[dict[str, Any]] = []
 
-    paths = ProjectPaths.for_name(project)
-    gen = paths.generated_dir
-    if gen.exists():
-        for f in gen.iterdir():
-            if f.is_file() and not f.name.startswith("."):
-                out.append(_describe(f, "testcases"))
-
-    packets = OUTPUTS_DIR / _safe_name(project) / "packets"
-    if packets.exists():
-        for f in packets.rglob("*.pdf"):
-            if f.is_file() and not f.name.startswith("_"):
-                out.append(_describe(f, "packets"))
-
-    from core.app_config import EXPORTS_DIR
-
+    # All user-facing outputs live under EXPORTS_DIR (~/Downloads/Testing_Toolkit)
     if EXPORTS_DIR.exists():
-        for f in EXPORTS_DIR.iterdir():
-            if f.is_file() and not f.name.startswith("."):
-                out.append(_describe(f, "exports"))
+        for f in EXPORTS_DIR.rglob("*"):
+            if not f.is_file() or f.name.startswith("."):
+                continue
+            if f.suffix.lower() not in _ALLOWED_EXTENSIONS:
+                continue
+            kind = (
+                "recording" if f.suffix.lower() == ".mkv"
+                else "report" if f.suffix.lower() == ".xlsx"
+                else "packets"
+            )
+            out.append(_describe(f, kind))
 
     out.sort(key=lambda r: r["modified"], reverse=True)
     return out

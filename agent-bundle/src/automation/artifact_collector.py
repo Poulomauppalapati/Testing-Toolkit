@@ -5,8 +5,39 @@ Manages artifact output directory structure and collection.
 
 from __future__ import annotations
 
+import logging
+import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
+
+
+def _safe_filename(title: str) -> str:
+    """Convert a test case title into a filesystem-safe filename."""
+    safe = re.sub(r"[^\w\s\-]", "", title)
+    safe = re.sub(r"\s+", "_", safe.strip())
+    return safe[:80] or "recording"
+
+
+def _remux_to_mkv(webm_path: Path, mkv_path: Path) -> bool:
+    """Remux a WebM file to MKV using ffmpeg (lossless copy)."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", str(webm_path), "-c", "copy", str(mkv_path)],
+            capture_output=True, timeout=60,
+        )
+        if mkv_path.exists() and mkv_path.stat().st_size > 0:
+            webm_path.unlink(missing_ok=True)
+            return True
+    except Exception as exc:
+        _log.debug("ffmpeg remux failed: %s", exc)
+    return False
 
 
 class ArtifactCollector:
@@ -18,11 +49,13 @@ class ArtifactCollector:
         output_dir/{tc_id}/scripts/
     """
 
-    def __init__(self, output_dir: Path, tc_id: str) -> None:
+    def __init__(self, output_dir: Path, tc_id: str, title: str = "") -> None:
         self._base = output_dir / tc_id
         self._screenshot_dir = self._base / "screenshots"
         self._video_dir = self._base / "video"
         self._script_dir = self._base / "scripts"
+        self._title = title
+        self._tc_id = tc_id
 
         # Create all dirs upfront
         self._screenshot_dir.mkdir(parents=True, exist_ok=True)
@@ -46,15 +79,29 @@ class ArtifactCollector:
         return self._script_dir
 
     def collect_video(self) -> Path | None:
-        """Find and return the first video file in the video directory.
+        """Find video, rename to title-based name, and convert to MKV.
 
-        Playwright saves videos as .webm files in the record_video_dir.
-        Returns the path if found, else None.
+        Playwright saves videos as .webm with UUID filenames. This method
+        renames to a human-readable title and attempts MKV remux via ffmpeg.
+        Falls back to renamed .webm if ffmpeg is unavailable.
         """
         video_files = list(self._video_dir.glob("*.webm"))
-        if video_files:
-            return video_files[0]
-        return None
+        mkv_files = list(self._video_dir.glob("*.mkv"))
+        if mkv_files:
+            return mkv_files[0]
+        if not video_files:
+            return None
+
+        source = video_files[0]
+        base_name = _safe_filename(self._title) if self._title else self._tc_id
+        mkv_dest = self._video_dir / f"{base_name}.mkv"
+        if _remux_to_mkv(source, mkv_dest):
+            return mkv_dest
+        # Fallback: rename webm with proper title
+        renamed = self._video_dir / f"{base_name}.webm"
+        if renamed != source:
+            source.rename(renamed)
+        return renamed
 
     def save_script(self, script_content: str, tc_id: str) -> Path:
         """Write a generated script to the scripts directory.

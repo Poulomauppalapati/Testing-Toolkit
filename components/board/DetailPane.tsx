@@ -782,10 +782,11 @@ function OutputsContent({
 
   useEffect(refresh, [project]);
 
-  // Parse + sort by stamp descending.
+  // Parse + sort by stamp descending. Only show xlsx, pdf, mkv files.
   const parsed = useMemo(
     () =>
       files
+        .filter((f) => /\.(xlsx|pdf|mkv)$/i.test(f.name))
         .map(parseArtifact)
         .sort((a, b) => (a.stamp < b.stamp ? 1 : a.stamp > b.stamp ? -1 : 0)),
     [files]

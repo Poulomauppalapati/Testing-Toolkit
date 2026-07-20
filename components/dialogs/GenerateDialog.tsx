@@ -47,8 +47,10 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
   const [pushed, setPushed] = useState<string>("");
   const [runLog, setRunLog] = useState<string[]>([]);
 
-  // Custom options (ADO target fields).
-  const [optsOpen, setOptsOpen] = useState(true);
+  // Custom options (ADO target fields) - hidden by default.
+  const [optsOpen, setOptsOpen] = useState(false);
+  // Log pane - hidden by default with toggle.
+  const [logVisible, setLogVisible] = useState(false);
   const [areaPath, setAreaPath] = useState("");
   const [iterationPath, setIterationPath] = useState("");
   const [testCategory, setTestCategory] = useState("");
@@ -394,33 +396,17 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
           />
         )}
 
-        {/* Quality + coverage summary (fresh runs only). */}
-        {result && (result.quality || result.coverage) && (
-          <div className="flex flex-wrap items-center gap-2">
-            {result.quality && (() => {
-              const ok = result.quality.avg_score >= 60;
-              return (
-                <span className={`tt-badge ${ok ? "tt-badge-success" : "tt-badge-warn"} !text-xs !px-3 !py-1`}>
-                  Quality {Math.round(result.quality.avg_score)}/100
-                  {result.quality.below_threshold > 0 &&
-                    ` · ${result.quality.below_threshold} below threshold`}
-                </span>
-              );
-            })()}
-            {result.coverage && (() => {
-              const ok = result.coverage.uncovered === 0;
-              return (
-                <span className={`tt-badge ${ok ? "tt-badge-success" : "tt-badge-warn"} !text-xs !px-3 !py-1`}>
-                  Coverage {result.coverage.covered}/{result.coverage.total_work_items}{" "}
-                  ({Math.round(result.coverage.coverage_pct)}%)
-                </span>
-              );
-            })()}
-          </div>
-        )}
 
         <>
-            {/* Generation log pane */}
+            {/* Generation log toggle + pane */}
+            <button
+              className="flex items-center gap-1.5 text-xs font-medium text-[var(--tt-text-muted)] hover:text-[var(--tt-text-secondary)]"
+              onClick={() => setLogVisible((v) => !v)}
+            >
+              {logVisible ? "Hide logs" : "Show logs"}
+              {runLog.length > 0 && <span className="text-[10px] opacity-60">({runLog.length})</span>}
+            </button>
+            {logVisible && (
             <div className="min-h-40 max-h-72 overflow-auto rounded-lg border border-[var(--tt-outline)] bg-[var(--tt-surface-deepest)] font-mono text-xs leading-relaxed">
               {runLog.length === 0 ? (
                 <p className="px-3 py-3 text-[var(--tt-text-faint)]">
@@ -457,6 +443,7 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
                 })
               )}
             </div>
+            )}
 
             {result && (
               <RegenerateSection

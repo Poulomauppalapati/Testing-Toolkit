@@ -42,3 +42,28 @@ async def apply_patch() -> dict:
 
         asyncio.get_event_loop().create_task(_restart())
     return result
+
+
+@router.get("/revert/status")
+@trace
+async def revert_status() -> dict:
+    """Check if a revert snapshot is available from a prior patch."""
+    return updater.revert_info()
+
+
+@router.post("/revert")
+@trace
+async def revert_release() -> dict:
+    """Revert the last applied patch, restoring the previous version."""
+    result = updater.revert_patch()
+    if result.get("ok") and result.get("restart_required"):
+        import asyncio
+        import os
+        import signal
+
+        async def _restart() -> None:
+            await asyncio.sleep(1.0)
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        asyncio.get_event_loop().create_task(_restart())
+    return result

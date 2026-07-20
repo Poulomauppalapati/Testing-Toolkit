@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from agent.jobs import JOBS, Job, spawn_job_task
 from automation.credential_vault import CredentialVault
-from core.app_config import OUTPUTS_DIR
+from core.app_config import EXPORTS_DIR, OUTPUTS_DIR
 from core.trace import trace
 from core.project_store import ensure_project
 
@@ -410,7 +410,7 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
             )
             return
 
-        output_dir = OUTPUTS_DIR / "e2e" / req.project
+        output_dir = EXPORTS_DIR / "e2e" / req.project
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Per-test-case status accumulates into the job result so the browser
@@ -446,12 +446,13 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
             job.log("[WARN] E2E run stopped by user.")
             return
 
-        # 4) Excel report (best-effort).
+        # 4) Excel report — saved directly to Downloads/Testing_Toolkit.
         report_path = ""
         try:
             from automation.report_excel import write_e2e_report
 
-            rp = output_dir / f"e2e_report_{int(time.time())}.xlsx"
+            EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+            rp = EXPORTS_DIR / f"e2e_report_{int(time.time())}.xlsx"
             await asyncio.to_thread(write_e2e_report, results, rp)
             report_path = str(rp)
             job.log(f"[INFO] Report saved: {rp.name}")
@@ -765,7 +766,7 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
             )
             return
 
-        output_dir = OUTPUTS_DIR / "e2e" / req.project
+        output_dir = EXPORTS_DIR / "e2e" / req.project
         output_dir.mkdir(parents=True, exist_ok=True)
 
         tc_statuses: dict[str, str] = {}

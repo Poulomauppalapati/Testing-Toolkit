@@ -190,8 +190,10 @@ export function BoardGrid() {
 
   const passes = (r: WorkItemRow): boolean => {
     const needle = search.trim().toLowerCase();
-    if (needle && !`#${r.wi_id} ${r.title.toLowerCase()}`.includes(needle))
-      return false;
+    if (needle) {
+      const haystack = `#${r.wi_id} ${r.title.toLowerCase()} ${(r.tags || []).join(" ").toLowerCase()}`;
+      if (!haystack.includes(needle)) return false;
+    }
     if (fType !== ALL && r.wi_type !== fType) return false;
     if (fAssignee !== ALL && (r.assigned_to || UNASSIGNED) !== fAssignee)
       return false;
@@ -360,7 +362,7 @@ export function BoardGrid() {
         <div className="flex items-center gap-2">
           <input
             className="tt-input flex-1"
-            placeholder="Filter by id or title..."
+            placeholder="Filter by id, title, or tag..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />

@@ -676,6 +676,203 @@ async def _execute_step(
 
 
 # ---------------------------------------------------------------------------
+# Pre-login: authenticate before running test cases
+# ---------------------------------------------------------------------------
+
+_LOGIN_INDICATORS = frozenset({
+    "sign in", "log in", "login", "username", "email", "password",
+    "authenticate", "credentials",
+})
+
+_LOGGED_IN_INDICATORS = frozenset({
+    "dashboard", "home", "welcome", "my tasks", "inbox", "sites",
+})
+
+
+async def _is_login_page(page: Any) -> bool:
+    """Heuristic: true if the current page looks like a login/sign-in form."""
+    try:
+        text = (await page.inner_text("body"))[:3000].lower()
+        return any(ind in text for ind in _LOGIN_INDICATORS)
+    except Exception:
+        return False
+
+
+async def _is_logged_in(page: Any, login_url: str) -> bool:
+    """Heuristic: true if the page has moved past login (URL changed or app content visible)."""
+    try:
+        current = page.url.lower()
+        login_host = login_url.split("//")[-1].split("/")[0].lower()
+        if login_host in current and "/suite/" in current:
+            return True
+        text = (await page.inner_text("body"))[:3000].lower()
+        return any(ind in text for ind in _LOGGED_IN_INDICATORS)
+    except Exception:
+        return False
+
+
+async def _perform_login(
+    page: Any, login_url: str, username: str, password: str,
+    log_fn: Callable[[str], None],
+) -> bool:
+    """Navigate to login_url and attempt form-based authentication.
+
+    Tries multiple strategies to find and fill username/password fields.
+    Returns True if login appears successful (page navigated away from login).
+    """
+    try:
+        await page.goto(login_url, wait_until="domcontentloaded",
+                        timeout=NAVIGATE_TIMEOUT_MS)
+        await page.wait_for_timeout(2000)
+    except Exception as exc:
+        log_fn(f"[WARN] Login navigation failed: {type(exc).__name__}")
+        return False
+
+    if await _is_logged_in(page, login_url):
+        log_fn("[INFO] Already authenticated (session persisted).")
+        return True
+
+    if not await _is_login_page(page):
+        await page.wait_for_timeout(3000)
+        if await _is_logged_in(page, login_url):
+            log_fn("[INFO] Already authenticated (SSO redirect).")
+            return True
+
+    # Attempt to fill login form fields
+    user_filled = False
+    pass_filled = False
+
+    # Strategy 1: role-based locators (accessible names)
+    user_locators = [
+        lambda: page.get_by_role("textbox", name="Username"),
+        lambda: page.get_by_role("textbox", name="Email"),
+        lambda: page.get_by_role("textbox", name="User ID"),
+        lambda: page.get_by_label("Username"),
+        lambda: page.get_by_label("Email"),
+        lambda: page.get_by_label("User ID"),
+        lambda: page.get_by_placeholder("Username"),
+        lambda: page.get_by_placeholder("Email"),
+        lambda: page.locator("input[type='text'], input[type='email'], input[name*='user'], input[name*='email'], input[id*='user'], input[id*='email']").first,
+    ]
+
+    pass_locators = [
+        lambda: page.get_by_role("textbox", name="Password"),
+        lambda: page.get_by_label("Password"),
+        lambda: page.get_by_placeholder("Password"),
+        lambda: page.locator("input[type='password']").first,
+    ]
+
+    for get_loc in user_locators:
+        try:
+            loc = get_loc()
+            await loc.wait_for(state="visible", timeout=3000)
+            await loc.clear()
+            await loc.fill(username)
+            user_filled = True
+            break
+        except Exception:
+            continue
+
+    for get_loc in pass_locators:
+        try:
+            loc = get_loc()
+            await loc.wait_for(state="visible", timeout=3000)
+            await loc.clear()
+            await loc.fill(password)
+            pass_filled = True
+            break
+        except Exception:
+            continue
+
+    if not user_filled and not pass_filled:
+        log_fn("[WARN] Could not locate login form fields. Page may use SSO or non-standard login.")
+        return False
+
+    if not pass_filled:
+        # Some flows show username first then password on next screen
+        submit_locators = [
+            lambda: page.get_by_role("button", name="Next"),
+            lambda: page.get_by_role("button", name="Continue"),
+            lambda: page.get_by_role("button", name="Submit"),
+            lambda: page.locator("button[type='submit'], input[type='submit']").first,
+        ]
+        for get_loc in submit_locators:
+            try:
+                loc = get_loc()
+                await loc.click(timeout=3000)
+                await page.wait_for_timeout(2000)
+                break
+            except Exception:
+                continue
+        # Try password field again after page transition
+        for get_loc in pass_locators:
+            try:
+                loc = get_loc()
+                await loc.wait_for(state="visible", timeout=5000)
+                await loc.clear()
+                await loc.fill(password)
+                pass_filled = True
+                break
+            except Exception:
+                continue
+
+    if not pass_filled:
+        log_fn("[WARN] Could not fill password field.")
+        return False
+
+    # Click submit/sign-in button
+    submit_locators = [
+        lambda: page.get_by_role("button", name="Sign In"),
+        lambda: page.get_by_role("button", name="Sign in"),
+        lambda: page.get_by_role("button", name="Log In"),
+        lambda: page.get_by_role("button", name="Log in"),
+        lambda: page.get_by_role("button", name="Login"),
+        lambda: page.get_by_role("button", name="Submit"),
+        lambda: page.locator("button[type='submit'], input[type='submit']").first,
+        lambda: page.get_by_text("Sign In", exact=False).first,
+    ]
+
+    clicked = False
+    for get_loc in submit_locators:
+        try:
+            loc = get_loc()
+            await loc.click(timeout=3000)
+            clicked = True
+            break
+        except Exception:
+            continue
+
+    if not clicked:
+        # Fallback: press Enter in the password field
+        try:
+            await page.keyboard.press("Enter")
+            clicked = True
+        except Exception:
+            pass
+
+    if clicked:
+        # Wait for navigation away from login page
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=15000)
+            await page.wait_for_timeout(3000)
+        except Exception:
+            pass
+
+    if await _is_logged_in(page, login_url):
+        log_fn("[SUCCESS] Login completed successfully.")
+        return True
+
+    # Give extra time for slow redirects
+    await page.wait_for_timeout(5000)
+    if await _is_logged_in(page, login_url):
+        log_fn("[SUCCESS] Login completed (delayed redirect).")
+        return True
+
+    log_fn("[WARN] Login attempt completed but could not confirm authentication.")
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------------------
 
@@ -704,14 +901,15 @@ async def run_e2e_tests(
 
     try:
         async with browser_session(profile=profile, output_dir=video_dir) as (_browser, page):
+            # Pre-login: authenticate before running any test case
+            login_ok = await _perform_login(page, login_url, username, password, _log)
+            if not login_ok:
+                _log("[WARN] Pre-login did not confirm success; proceeding anyway (session may be valid).")
+
             # Capture initial DOM snapshot for plan recompilation feedback.
-            # Only navigate early when an LLM client is available (avoids
-            # an extra goto in runs that never use the snapshot).
             _initial_snapshot: str = ""
             if client and model:
                 try:
-                    await page.goto(login_url, wait_until="domcontentloaded",
-                                    timeout=NAVIGATE_TIMEOUT_MS)
                     _snap_raw = await page.accessibility.snapshot()
                     _initial_snapshot = _format_snapshot(_snap_raw)
                 except Exception:
@@ -724,7 +922,7 @@ async def run_e2e_tests(
                 tc_id = str(tc.get("id", f"TC_{tc_index + 1:03d}"))
                 title = str(tc.get("title", "Untitled"))
                 steps = tc.get("steps") if isinstance(tc.get("steps"), list) else []
-                collector = ArtifactCollector(output_dir, tc_id)
+                collector = ArtifactCollector(output_dir, tc_id, title=title)
                 started = time.perf_counter_ns()
                 step_results: list[StepResult] = []
                 _log(f"[INFO] ({tc_index + 1}/{total}) Starting: {tc_id} - {title}")
@@ -806,12 +1004,25 @@ async def run_e2e_tests(
                 overall_status="error",
             ))
 
-    # Video is finalized only after the shared context closes. Reuse the suite
-    # recording path in each TC result instead of copying an in-progress file.
+    # Video is finalized only after the shared context closes. Rename to
+    # title-based MKV (or webm fallback) and assign to each result.
+    from .artifact_collector import _remux_to_mkv, _safe_filename
     videos = sorted(video_dir.glob("*.webm"), key=lambda path: path.stat().st_mtime)
     if videos:
         for result in results:
-            result.video_path = videos[-1]
+            src = videos[-1]
+            base_name = _safe_filename(result.title) if result.title else result.tc_id
+            mkv_dest = video_dir / f"{base_name}.mkv"
+            if _remux_to_mkv(src, mkv_dest):
+                result.video_path = mkv_dest
+            else:
+                renamed = video_dir / f"{base_name}.webm"
+                if renamed != src and not renamed.exists():
+                    import shutil
+                    shutil.copy2(str(src), str(renamed))
+                    result.video_path = renamed
+                else:
+                    result.video_path = src
     if on_progress:
         on_progress(len(results), total)
     _log(f"[INFO] Run complete. {len(results)}/{total} test cases executed.")
