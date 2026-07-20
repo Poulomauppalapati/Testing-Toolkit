@@ -5,7 +5,6 @@ import {
   type Board,
   type SettingsResponse,
   type E2ETestCase,
-  type E2ELastRun,
   type WiId,
   type WorkItemDetail,
 } from "./agent-client";
@@ -60,20 +59,6 @@ function wiUrl(
   return `https://dev.azure.com/${encodeURIComponent(org)}/_workitems/edit/${row.wi_id}`;
 }
 
-function wiUrlFromId(
-  wiId: string | number,
-  settings: SettingsResponse | null
-): string | null {
-  const isJira = typeof wiId === "string" && !/^\d+$/.test(wiId);
-  if (isJira) {
-    const base = (settings?.jira_url ?? "").replace(/\/+$/, "");
-    if (!base) return null;
-    return `${base}/browse/${encodeURIComponent(String(wiId))}`;
-  }
-  const org = settings?.organization;
-  if (!org) return null;
-  return `https://dev.azure.com/${encodeURIComponent(org)}/_workitems/edit/${wiId}`;
-}
 
 function autoFitColumns(ws: ExcelJS.Worksheet): void {
   ws.columns.forEach((col) => {
@@ -167,14 +152,6 @@ function coverageFmt(count: number): { fill: Partial<ExcelJS.Fill>; font: Partia
   return { fill: CF_GREEN, font: CF_GREEN_FONT };
 }
 
-// Pass/fail cell formatting
-function statusFmt(status: string | null): { fill: Partial<ExcelJS.Fill>; font: Partial<ExcelJS.Font> } {
-  if (!status) return { fill: CF_AMBER, font: CF_AMBER_FONT };
-  const s = status.toLowerCase();
-  if (s === "pass") return { fill: CF_GREEN, font: CF_GREEN_FONT };
-  if (s === "fail" || s === "error") return { fill: CF_RED, font: CF_RED_FONT };
-  return { fill: CF_AMBER, font: CF_AMBER_FONT };
-}
 
 // ---------------------------------------------------------------------------
 // Single board export
@@ -196,7 +173,6 @@ export interface ExportBoardOpts {
   filters: { type: string; assignee: string; sprint: string; column: string; search: string };
   settings: SettingsResponse | null;
   testCases?: E2ETestCase[];
-  lastRun?: E2ELastRun | null;
   // Streaming relationship fetch
   fetchDetail?: (wiId: WiId) => Promise<WorkItemDetail>;
   onProgress?: (done: number, total: number, phase: string) => void;
@@ -349,57 +325,37 @@ export function buildTestCoverageSheet(
   opts: ExportBoardOpts
 ): void {
   const testCases = opts.testCases ?? [];
-  const lastRun = opts.lastRun;
-  if (testCases.length === 0 && !lastRun) return;
+  if (testCases.length === 0) return;
 
   const ws = wb.addWorksheet("Test Coverage");
   const ts = formatTimestamp();
   applyMetaBlock(ws, opts, ts);
 
-  // Build lookup: wi_id -> { tcCount, passCount, failCount }
-  const tcByWi = new Map<string, { count: number; pass: number; fail: number }>();
+  // Build lookup: wi_id -> { tcCount }
+  const tcByWi = new Map<string, { count: number }>();
   for (const tc of testCases) {
     const key = String(tc.wi_id);
-    const entry = tcByWi.get(key) ?? { count: 0, pass: 0, fail: 0 };
+    const entry = tcByWi.get(key) ?? { count: 0 };
     if (tc.step_count > 0) entry.count++;
     tcByWi.set(key, entry);
   }
 
-  // Map last run results to parent WI via tc_id -> testCase -> wi_id
-  const tcIdToWi = new Map<string, string>();
-  for (const tc of testCases) {
-    if (tc.tc_id) tcIdToWi.set(tc.tc_id, String(tc.wi_id));
-    tcIdToWi.set(String(tc.index), String(tc.wi_id));
-  }
-  for (const r of lastRun?.results ?? []) {
-    const wiId = tcIdToWi.get(r.tc_id) ?? r.tc_id;
-    const entry = tcByWi.get(wiId) ?? { count: 0, pass: 0, fail: 0 };
-    const st = (r.status || "").toLowerCase();
-    if (st === "pass") entry.pass++;
-    else if (st === "fail" || st === "error") entry.fail++;
-    tcByWi.set(wiId, entry);
-  }
-
   // Header row at row 4
-  const headers = ["ID", "Title", "Type", "Test Cases", "Passed", "Failed", "Coverage Status"];
+  const headers = ["ID", "Title", "Type", "Test Cases"];
   applyHeaderRow(ws, 4, headers);
 
   // Data rows
   opts.rows.forEach((r) => {
     const key = String(r.wi_id);
-    const tc = tcByWi.get(key) ?? { count: 0, pass: 0, fail: 0 };
+    const tc = tcByWi.get(key) ?? { count: 0 };
     const linked = r.linked_test_case_count ?? 0;
     const totalTc = Math.max(tc.count, linked);
-    const status = totalTc === 0 ? "No Tests" : tc.fail > 0 ? "Failing" : tc.pass > 0 ? "Passing" : "Not Run";
 
     const dataRow = ws.addRow([
       String(r.wi_id),
       r.title,
       r.wi_type,
       totalTc,
-      tc.pass,
-      tc.fail,
-      status,
     ]);
 
     // Hyperlink
@@ -413,11 +369,6 @@ export function buildTestCoverageSheet(
     const fmt = coverageFmt(totalTc);
     dataRow.getCell(4).fill = fmt.fill as ExcelJS.Fill;
     dataRow.getCell(4).font = fmt.font;
-
-    // Conditional formatting on status
-    const sFmt = statusFmt(status === "No Tests" ? "fail" : status === "Failing" ? "fail" : status === "Passing" ? "pass" : null);
-    dataRow.getCell(7).fill = sFmt.fill as ExcelJS.Fill;
-    dataRow.getCell(7).font = sFmt.font;
   });
 
   ws.views = [{ state: "frozen", xSplit: 0, ySplit: 4, topLeftCell: "A5" }];
@@ -437,7 +388,6 @@ export function buildTraceabilitySheet(
   opts: ExportBoardOpts
 ): void {
   const testCases = opts.testCases ?? [];
-  const lastRun = opts.lastRun;
   if (testCases.length === 0) return;
 
   const ws = wb.addWorksheet("Traceability Matrix");
@@ -453,15 +403,8 @@ export function buildTraceabilitySheet(
     wiTcMap.set(key, arr);
   }
 
-  // Build run status lookup: tc_id -> status
-  const runStatusMap = new Map<string, string>();
-  for (const r of lastRun?.results ?? []) {
-    runStatusMap.set(r.tc_id, r.status);
-  }
-
   // Collect all unique TC titles as columns
   const allTcTitles = [...new Set(testCases.map((tc) => tc.title || `TC-${tc.index}`))];
-  // ponytail: flat column list; pivot table if > 50 TCs becomes unwieldy
   const maxTcCols = Math.min(allTcTitles.length, 30);
   const tcColHeaders = allTcTitles.slice(0, maxTcCols);
 
@@ -473,17 +416,11 @@ export function buildTraceabilitySheet(
   opts.rows.forEach((r) => {
     const key = String(r.wi_id);
     const tcs = wiTcMap.get(key) ?? [];
-    const tcStatusByTitle = new Map<string, string>();
-    for (const tc of tcs) {
-      const title = tc.title || `TC-${tc.index}`;
-      const tcId = tc.tc_id || String(tc.index);
-      const status = runStatusMap.get(tcId) ?? "—";
-      tcStatusByTitle.set(title, status);
-    }
+    const tcPresence = new Set(tcs.map((tc) => tc.title || `TC-${tc.index}`));
 
     const rowData: (string | number)[] = [String(r.wi_id), r.title, r.wi_type];
     for (const colTitle of tcColHeaders) {
-      rowData.push(tcStatusByTitle.get(colTitle) ?? "");
+      rowData.push(tcPresence.has(colTitle) ? "Y" : "");
     }
     const dataRow = ws.addRow(rowData);
 
@@ -492,16 +429,6 @@ export function buildTraceabilitySheet(
     if (url) {
       dataRow.getCell(1).value = { text: String(r.wi_id), hyperlink: url };
       dataRow.getCell(1).font = { color: { argb: "FF0563C1" }, underline: true, size: 11 };
-    }
-
-    // Conditional formatting on TC status cells
-    for (let i = 0; i < tcColHeaders.length; i++) {
-      const cellVal = String(dataRow.getCell(4 + i).value ?? "");
-      if (cellVal && cellVal !== "—") {
-        const fmt = statusFmt(cellVal);
-        dataRow.getCell(4 + i).fill = fmt.fill as ExcelJS.Fill;
-        dataRow.getCell(4 + i).font = fmt.font;
-      }
     }
   });
 
@@ -583,81 +510,6 @@ export function buildDefectDensitySheet(
   autoFitColumns(ws);
 }
 
-// ---------------------------------------------------------------------------
-// Execution Results sheet (last run dump)
-// ---------------------------------------------------------------------------
-
-export function buildExecutionHistorySheet(
-  wb: ExcelJS.Workbook,
-  opts: ExportBoardOpts
-): void {
-  const lastRun = opts.lastRun;
-  if (!lastRun || lastRun.results.length === 0) return;
-
-  const ws = wb.addWorksheet("Execution Results");
-  const ts = formatTimestamp();
-  applyMetaBlock(ws, opts, ts);
-
-  // Run summary row (after meta block rows 1-3)
-  const started = new Date(lastRun.started_at * 1000).toLocaleString();
-  const finished = new Date(lastRun.finished_at * 1000).toLocaleString();
-  ws.getRow(4).getCell(1).value =
-    `Run: ${lastRun.run_id}  |  Started: ${started}  |  Finished: ${finished}  |  ` +
-    `Total: ${lastRun.total}  Passed: ${lastRun.passed}  Failed: ${lastRun.failed}  Skipped: ${lastRun.skipped}`;
-  ws.getRow(4).getCell(1).font = META_FONT;
-
-  // Header
-  const headers = ["TC ID", "Title", "Status", "Duration (ms)", "Parent WI"];
-  applyHeaderRow(ws, 5, headers);
-
-  // Map tc_id to parent WI
-  const testCases = opts.testCases ?? [];
-  const tcIdToWi = new Map<string, string>();
-  for (const tc of testCases) {
-    if (tc.tc_id) tcIdToWi.set(tc.tc_id, String(tc.wi_id));
-    tcIdToWi.set(String(tc.index), String(tc.wi_id));
-  }
-
-  // Data rows, sorted by status (fail first) then duration desc
-  const sorted = [...lastRun.results].sort((a, b) => {
-    const aFail = (a.status || "").toLowerCase() === "fail" || (a.status || "").toLowerCase() === "error" ? 0 : 1;
-    const bFail = (b.status || "").toLowerCase() === "fail" || (b.status || "").toLowerCase() === "error" ? 0 : 1;
-    if (aFail !== bFail) return aFail - bFail;
-    return b.duration_ms - a.duration_ms;
-  });
-
-  for (const r of sorted) {
-    const parentWi = tcIdToWi.get(r.tc_id) ?? "";
-    const dataRow = ws.addRow([
-      r.tc_id,
-      r.tc_title,
-      r.status,
-      r.duration_ms,
-      parentWi,
-    ]);
-
-    // Conditional formatting on status
-    const fmt = statusFmt(r.status);
-    dataRow.getCell(3).fill = fmt.fill as ExcelJS.Fill;
-    dataRow.getCell(3).font = fmt.font;
-
-    // Hyperlink on parent WI
-    if (parentWi) {
-      const url = wiUrlFromId(parentWi, opts.settings);
-      if (url) {
-        dataRow.getCell(5).value = { text: parentWi, hyperlink: url };
-        dataRow.getCell(5).font = { color: { argb: "FF0563C1" }, underline: true, size: 11 };
-      }
-    }
-  }
-
-  ws.views = [{ state: "frozen", xSplit: 0, ySplit: 5, topLeftCell: "A6" }];
-  ws.autoFilter = {
-    from: { row: 5, column: 1 },
-    to: { row: 5 + sorted.length, column: headers.length },
-  };
-  autoFitColumns(ws);
-}
 
 // ---------------------------------------------------------------------------
 // Streaming relationship fetcher (batched parallel)

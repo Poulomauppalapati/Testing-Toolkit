@@ -23,8 +23,7 @@ export type BoardColumnId =
   | "state"
   | "assignee"
   | "sprint"
-  | "tests"
-  | "lastRun";
+  | "tests";
 
 export interface BoardColumnMeta {
   id: BoardColumnId;
@@ -44,7 +43,6 @@ export const BOARD_COLUMNS: readonly BoardColumnMeta[] = [
   { id: "assignee", label: "Assignee", width: 140, min: 90 },
   { id: "sprint", label: "Sprint", width: 150, min: 90 },
   { id: "tests", label: "Generated Tests", width: 120, min: 90 },
-  { id: "lastRun", label: "Last Run", width: 90, min: 70 },
 ] as const;
 
 /** Pixel width of a collapsed column (just enough for the expand caret). */

@@ -39,7 +39,6 @@ import {
   agent,
   type WorkItemRow,
   type WiId,
-  type E2ELastRun,
   type E2ETestCase,
   type SettingsResponse,
 } from "@/lib/agent-client";
@@ -138,19 +137,11 @@ export function BoardGrid() {
   const rows = useMemo(() => boardView?.rows ?? [], [boardView?.rows]);
   const columns = useMemo(() => boardView?.columns ?? [], [boardView?.columns]);
 
-  // Generated Tests + Last Run data (desktop parity: cols 6 & 7).
-  // This is generation traceability, not implementation or execution coverage.
+  // Generated Tests data (generation traceability, not execution coverage).
   const { data: testCases } = useSWR<E2ETestCase[]>(
     currentProject ? ["board-coverage", currentProject] : null,
     ([, proj]: [string, string]) => agent.e2eTestCases(proj),
     { revalidateOnFocus: false, shouldRetryOnError: false }
-  );
-  // Last Run: map parent WI id -> pass/fail from the latest execution run.
-  // Shares SWR cache key with CoverageBar so there's only one request.
-  const { data: lastRun } = useSWR<E2ELastRun | null>(
-    currentProject ? ["e2e-last-run", currentProject] : null,
-    ([, proj]: [string, string]) => agent.e2eLastRun(proj),
-    { refreshInterval: 60_000, revalidateOnFocus: false, shouldRetryOnError: false }
   );
 
   const testCounts = useMemo(
@@ -158,18 +149,6 @@ export function BoardGrid() {
     [rows, testCases]
   );
   const hasCoverageData = testCases !== undefined;
-
-  const runStatus = useMemo(() => {
-    const m = new Map<string, "pass" | "fail">();
-    for (const r of lastRun?.results ?? []) {
-      const id = String(r.tc_id);
-      const st = (r.status || "").toLowerCase();
-      if (st === "fail" || st === "error") m.set(id, "fail");
-      else if (st === "pass" && m.get(id) !== "fail") m.set(id, "pass");
-    }
-    return m;
-  }, [lastRun]);
-  const hasRunData = !!lastRun;
 
   const filterOptions = useMemo(() => {
     const types = uniqueSorted(rows.map((r) => r.wi_type));
@@ -217,10 +196,10 @@ export function BoardGrid() {
     const grouped = groupRowsByColumn(visible, columns);
     if (!sortCol) return grouped;
     const dir = sortDir === "asc" ? 1 : -1;
-    const cmp = buildRowComparator(sortCol, dir, testCounts, runStatus);
+    const cmp = buildRowComparator(sortCol, dir, testCounts);
     return grouped.map(([lane, laneRows]) => [lane, [...laneRows].sort(cmp)] as const);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, columns, search, fType, fAssignee, fSprint, fColumn, fKpiBucket, sortCol, sortDir, testCounts, runStatus]);
+  }, [rows, columns, search, fType, fAssignee, fSprint, fColumn, fKpiBucket, sortCol, sortDir, testCounts]);
 
   const visibleIds = groups.flatMap(([, rs]) => rs.map((r) => r.wi_id));
 
@@ -311,7 +290,6 @@ export function BoardGrid() {
                   filters: { type: fType, assignee: fAssignee, sprint: fSprint, column: fColumn, search },
                   settings,
                   testCases: testCases ?? [],
-                  lastRun: lastRun ?? null,
                   fetchDetail: currentProject
                     ? (wiId) => agent.workItemDetail(currentProject, wiId)
                     : undefined,
@@ -470,8 +448,6 @@ export function BoardGrid() {
                       testCounts={testCounts}
                       collapsedCols={colState.collapsed}
                       hasCoverageData={hasCoverageData}
-                      runStatus={runStatus}
-                      hasRunData={hasRunData}
                       settings={settings}
                       onToggleCollapsed={() => toggleLaneCollapsed(lane)}
                       onToggleLane={(on) => toggleLane(laneRows, on)}
@@ -524,7 +500,6 @@ function buildRowComparator(
   col: BoardColumnId,
   dir: number,
   testCounts: Map<string, number>,
-  runStatus: Map<string, "pass" | "fail">,
 ): (a: WorkItemRow, b: WorkItemRow) => number {
   return (a, b) => {
     let av: string | number;
@@ -550,13 +525,6 @@ function buildRowComparator(
         av = testCounts.get(String(a.wi_id)) ?? 0;
         bv = testCounts.get(String(b.wi_id)) ?? 0;
         return ((av as number) - (bv as number)) * dir;
-      case "lastRun": {
-        const rank = (s: "pass" | "fail" | undefined): number =>
-          s === "pass" ? 2 : s === "fail" ? 1 : 0;
-        av = rank(runStatus.get(String(a.wi_id)));
-        bv = rank(runStatus.get(String(b.wi_id)));
-        return ((av as number) - (bv as number)) * dir;
-      }
       default:
         return 0;
     }
@@ -733,21 +701,6 @@ function titleTypeColor(t: string): string {
   return <span style={{ color: "var(--tt-text-muted)" }}>None</span>;
   }
 
-/** Last-Run cell — "Pass" (green) / "Fail" (red) / "-" (no result). */
-function LastRunCell({
-  status,
-  hasData,
-}: {
-  status: "pass" | "fail" | null;
-  hasData: boolean;
-}) {
-  if (!hasData) return <span style={{ color: "var(--tt-text-faint)" }}>—</span>;
-  if (status === "pass")
-    return <span style={{ color: "var(--tt-success)" }}>Pass</span>;
-  if (status === "fail")
-    return <span style={{ color: "var(--tt-danger)" }}>Fail</span>;
-  return <span style={{ color: "var(--tt-text-muted)" }}>-</span>;
-}
 
 function wiStateBadgeClass(s: string): string {
   const k = (s || "").toLowerCase();
@@ -769,8 +722,6 @@ function LaneGroup({
   testCounts,
   collapsedCols,
   hasCoverageData,
-  runStatus,
-  hasRunData,
   settings,
   onToggleCollapsed,
   onToggleLane,
@@ -787,8 +738,6 @@ function LaneGroup({
   testCounts: Map<string, number>;
   collapsedCols: Partial<Record<BoardColumnId, boolean>>;
   hasCoverageData: boolean;
-  runStatus: Map<string, "pass" | "fail">;
-  hasRunData: boolean;
   settings: SettingsResponse | null;
   onToggleCollapsed: () => void;
   onToggleLane: (on: boolean) => void;
@@ -920,19 +869,6 @@ function LaneGroup({
                 <CoverageCell
                   count={testCounts.get(String(r.wi_id)) ?? 0}
                   hasData={hasCoverageData}
-                />
-              )}
-            </td>
-            {/* Last Run */}
-            <td className="truncate whitespace-nowrap px-2 py-1.5 text-xs">
-              {collapsedCols.lastRun ? (
-                dot(true)
-              ) : (
-                <LastRunCell
-                  status={
-                    hasRunData ? runStatus.get(String(r.wi_id)) ?? null : null
-                  }
-                  hasData={hasRunData}
                 />
               )}
             </td>
