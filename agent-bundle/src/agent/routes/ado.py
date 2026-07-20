@@ -154,11 +154,14 @@ async def list_work_items(req: WorkItemsRequest) -> dict[str, Any]:
         {"column": name, "items": [_row(r) for r in rows]}
         for name, rows in view.grouped()
     ]
-    return {
+    result: dict[str, Any] = {
         "columns": [c.name for c in view.columns],
         "groups": groups,
         "total": len(view.rows),
     }
+    if view.possibly_degraded:
+        result["possibly_degraded"] = True
+    return result
 
 
 def _serialize_row(r) -> dict[str, Any]:
@@ -221,13 +224,14 @@ async def list_work_items_stream(req: WorkItemsRequest) -> StreamingResponse:
             view = await load_board_view_streaming(
                 org, req.project, board, cfg, on_batch=_on_batch
             )
-            queue.put_nowait(
-                {
-                    "type": "done",
-                    "columns": [c.name for c in view.columns],
-                    "total": len(view.rows),
-                }
-            )
+            done_evt: dict[str, Any] = {
+                "type": "done",
+                "columns": [c.name for c in view.columns],
+                "total": len(view.rows),
+            }
+            if view.possibly_degraded:
+                done_evt["possibly_degraded"] = True
+            queue.put_nowait(done_evt)
         except Exception as e:  # noqa: BLE001
             queue.put_nowait({"type": "error", "message": str(e)})
         finally:

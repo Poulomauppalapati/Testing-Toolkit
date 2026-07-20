@@ -181,6 +181,10 @@ class WorkItemDetail:
 class BoardView:
     columns: list[BoardColumn] = field(default_factory=list)
     rows: list[WorkItemRow] = field(default_factory=list)
+    # True when WIQL returned 0 items but the board's columns prove it is
+    # configured for specific WIT types (i.e., items should exist). This
+    # signals a probable ADO transient failure rather than a true empty board.
+    possibly_degraded: bool = False
 
     def grouped(self) -> list[tuple[str, list[WorkItemRow]]]:
         return group_rows_by_column(self.rows, self.columns)
@@ -470,6 +474,15 @@ async def _run_wiql(
     )
     data = await _post_json(client, url, {"query": query}, cfg, label="WIQL")
     ids = [int(it["id"]) for it in data.get("workItems", []) or []]
+    if not ids:
+        # Diagnostic: log the raw response keys + truncated query so a future
+        # run can confirm whether ADO returned a well-formed empty result vs
+        # a degraded/malformed response.
+        _log.warning(
+            "WIQL returned 0 items for project=%r -- response keys=%r, "
+            "query prefix=%.120r",
+            project, list(data.keys()), query,
+        )
     if len(ids) == _WIQL_TOP:
         _log.warning(
             "WIQL returned exactly %d items for project=%r -- results may be "
@@ -552,11 +565,37 @@ async def load_board_view_async(
             f"types={wit_types}, area_scope={'ON' if scope_to_team_area else 'OFF'}"
             f"{', paths=' + repr(area_paths) if area_paths else ''}"
         )
+    # A board whose columns carry state mappings is actively configured for
+    # specific work item types -- a 0-result WIQL is suspicious under load.
+    board_expects_items = wit_types != list(_DEFAULT_WIT_TYPES)
+    possibly_degraded = False
     async with _client(cfg) as client:
         ids = await _run_wiql(client, org, project, query, cfg, on_log=on_log)
+        # Retry once after a brief pause when WIQL returns 0 items for a board
+        # whose column configuration proves items should exist. ADO returns
+        # HTTP 200 with empty results under sustained load (rate-limit soft
+        # degradation) -- indistinguishable from a true empty board without
+        # this heuristic.
+        if not ids and board_expects_items:
+            if on_log:
+                on_log(
+                    f"[WARN] 0 items from WIQL for configured board "
+                    f"'{board.label}' -- retrying after 4s (suspected ADO "
+                    f"transient degradation)"
+                )
+            await asyncio.sleep(4.0)
+            ids = await _run_wiql(client, org, project, query, cfg, on_log=on_log)
+            if not ids:
+                possibly_degraded = True
+                if on_log:
+                    on_log(
+                        f"[ERROR] WIQL still returned 0 items for board "
+                        f"'{board.label}' after retry -- marking as possibly "
+                        f"degraded (ADO may be throttling this query)"
+                    )
         if on_log:
             on_log(f"[INFO] WIQL matched {len(ids)} work item(s)")
-        if not ids and on_log:
+        if not ids and not possibly_degraded and on_log:
             on_log(
                 f"[WARN] 0 work items for board '{board.label}' -- "
                 f"wit_types={wit_types}, area_paths={area_paths or '(none)'}, "
@@ -566,7 +605,7 @@ async def load_board_view_async(
         if rows:
             counts = await _fetch_test_case_counts(client, org, project, ids, cfg)
             _apply_test_case_counts(rows, counts)
-    return BoardView(columns=columns, rows=rows)
+    return BoardView(columns=columns, rows=rows, possibly_degraded=possibly_degraded)
 
 
 # Batch callback type: receives (batch_rows, batch_index, total_batches)
@@ -886,11 +925,30 @@ async def load_board_view_streaming(
     # Emit columns first so UI can render the skeleton
     if on_batch:
         on_batch([], -1, 0)  # -1 signals "columns ready, rows incoming"
+    board_expects_items = wit_types != list(_DEFAULT_WIT_TYPES)
+    possibly_degraded = False
     async with _client(cfg) as client:
         ids = await _run_wiql(client, org, project, query, cfg, on_log=on_log)
+        if not ids and board_expects_items:
+            if on_log:
+                on_log(
+                    f"[WARN] 0 items from WIQL for configured board "
+                    f"'{board.label}' -- retrying after 4s (suspected ADO "
+                    f"transient degradation)"
+                )
+            await asyncio.sleep(4.0)
+            ids = await _run_wiql(client, org, project, query, cfg, on_log=on_log)
+            if not ids:
+                possibly_degraded = True
+                if on_log:
+                    on_log(
+                        f"[ERROR] WIQL still returned 0 items for board "
+                        f"'{board.label}' after retry -- marking as possibly "
+                        f"degraded (ADO may be throttling this query)"
+                    )
         if on_log:
             on_log(f"[INFO] WIQL matched {len(ids)} work item(s)")
-        if not ids and on_log:
+        if not ids and not possibly_degraded and on_log:
             on_log(
                 f"[WARN] 0 work items for board '{board.label}' -- "
                 f"wit_types={wit_types}, area_paths={area_paths or '(none)'}, "
@@ -914,7 +972,7 @@ async def load_board_view_streaming(
             )
             if ids else []
         )
-    return BoardView(columns=columns, rows=rows)
+    return BoardView(columns=columns, rows=rows, possibly_degraded=possibly_degraded)
 
 
 # ---------------------------------------------------------------------

@@ -242,6 +242,9 @@ export interface WorkItemRow {
 export interface BoardView {
   columns: BoardColumn[];
   rows: WorkItemRow[];
+  /** True when the backend suspects ADO returned empty results due to transient
+   *  degradation (rate limiting) rather than the board being genuinely empty. */
+  possibly_degraded?: boolean;
 }
 
 export interface Attachment {
@@ -669,6 +672,9 @@ interface RawWorkItemsResponse {
   columns: string[];
   groups: Array<{ column: string; items: WorkItemRow[] }>;
   total: number;
+  /** True when the backend suspects ADO returned empty results due to transient
+   *  degradation rather than the board being genuinely empty. */
+  possibly_degraded?: boolean;
 }
 
 interface RawWorkItemDetail {
@@ -964,7 +970,9 @@ export const agent = {
         rows.push({ ...item, board_column: item.board_column || g.column });
       }
     }
-    return { columns, rows };
+    const result: BoardView = { columns, rows };
+    if (raw.possibly_degraded) result.possibly_degraded = true;
+    return result;
   },
 
   /**

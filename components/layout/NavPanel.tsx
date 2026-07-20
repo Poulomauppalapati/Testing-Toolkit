@@ -108,12 +108,22 @@ export function NavPanel({ hidden }: { hidden?: boolean } = {}) {
           fetchedBoards++;
           setExportAllProjectsProgress(`${fetchedBoards}/${totalBoards}: ${projName} / ${boardName}`);
           try {
-            const view = await agent.boardView(proj, b, { timeoutMs: 120_000, scopeToTeamArea: true });
+            let view = await agent.boardView(proj, b, { timeoutMs: 120_000, scopeToTeamArea: true });
+            // Backend flags boards where WIQL returned 0 items despite the board
+            // being configured for specific WIT types -- probable ADO throttling.
+            // Retry once with extra backoff before giving up.
+            if (view.possibly_degraded && (view.rows ?? []).length === 0) {
+              pushLog("WARN", `${boardName} in ${projName}: ADO returned empty results (suspected throttling) — retrying after 8s...`);
+              await new Promise(r => setTimeout(r, 8000));
+              view = await agent.boardView(proj, b, { timeoutMs: 120_000, scopeToTeamArea: true });
+            }
             const rows = (view.rows ?? []).filter((r) => r && r.wi_id != null);
             if (rows.length > 0) {
               boardResults.push({ board: b, rows });
+            } else if (view.possibly_degraded) {
+              pushLog("ERROR", `${boardName} in ${projName} returned 0 rows after retry — ADO is likely throttling this board's query. This is NOT an empty board.`);
             } else {
-              pushLog("WARN", `${boardName} in ${projName} returned 0 valid rows — skipped (no matching work items without area-path filter).`);
+              pushLog("WARN", `${boardName} in ${projName} returned 0 valid rows — skipped (genuinely empty board).`);
             }
           } catch (err) {
             pushLog("ERROR", `Skipped ${boardName} in ${projName} (fetch error: ${(err as Error).message || String(err)})`);
