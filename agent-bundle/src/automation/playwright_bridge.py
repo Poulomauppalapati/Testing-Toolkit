@@ -265,27 +265,31 @@ def _kill_orphaned_automation_browsers() -> None:
 
     if _SYSTEM == "Windows":
         try:
-            out = subprocess.check_output(
-                ["wmic", "process", "where",
-                 "name='chrome.exe'", "get", "ProcessId,ExecutablePath"],
-                text=True, stderr=subprocess.DEVNULL,
+            # Use PowerShell Get-CimInstance (wmic removed in Win11 24H2+)
+            ps_cmd = (
+                "Get-CimInstance Win32_Process -Filter \"name='chrome.exe'\" "
+                "| Select-Object ProcessId,ExecutablePath "
+                "| ForEach-Object { \"$($_.ProcessId)|$($_.ExecutablePath)\" }"
             )
-            for line in out.splitlines()[1:]:
-                parts = line.strip().split()
-                if len(parts) >= 2:
-                    exe_path = " ".join(parts[:-1]).lower()
-                    pid_str = parts[-1]
-                    if pw_dir_str in exe_path:
-                        try:
-                            subprocess.run(
-                                ["taskkill", "/F", "/PID", pid_str],
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                            )
-                            _log.info("Killed orphaned automation browser PID %s", pid_str)
-                        except (subprocess.SubprocessError, OSError):
-                            pass
-        except (subprocess.SubprocessError, OSError):
+            out = subprocess.check_output(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                text=True, stderr=subprocess.DEVNULL, timeout=10,
+            )
+            for line in out.strip().splitlines():
+                if "|" not in line:
+                    continue
+                pid_str, exe_path = line.split("|", 1)
+                if pw_dir_str in exe_path.lower():
+                    try:
+                        subprocess.run(
+                            ["taskkill", "/F", "/PID", pid_str.strip()],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                        _log.info("Killed orphaned automation browser PID %s", pid_str.strip())
+                    except (subprocess.SubprocessError, OSError):
+                        pass
+        except (subprocess.SubprocessError, OSError, subprocess.TimeoutExpired):
             pass
     else:
         try:

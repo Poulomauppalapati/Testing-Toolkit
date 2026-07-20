@@ -108,6 +108,32 @@ class TestCaseResult:
 
 _SENSITIVE_KEYS = frozenset({"password", "passwd", "pwd", "secret", "token"})
 
+_AUTH_STEP_SIGNALS = frozenset({
+    "sign in", "sign-in", "signin", "log in", "log-in", "login",
+    "username", "password", "credentials", "authenticate",
+})
+
+
+def _is_auth_step(step: dict[str, Any]) -> bool:
+    """Detect plan steps that perform login (fill creds, wait for sign-in page).
+
+    These are redundant when _perform_login() already authenticated.
+    """
+    action = step.get("action", "").lower()
+    value = step.get("value", "").lower()
+    target = step.get("target", "").lower()
+    expected = step.get("expected", "").lower()
+
+    if action == "fill" and ("{{username}}" in value or "{{password}}" in value):
+        return True
+    if action in ("wait_for_text", "assert_text"):
+        check = value or expected or target
+        if any(sig in check for sig in _AUTH_STEP_SIGNALS):
+            return True
+    if action == "click" and any(sig in target for sig in _AUTH_STEP_SIGNALS):
+        return True
+    return False
+
 
 def _is_password_target(label: str) -> bool:
     return any(s in label.lower() for s in _SENSITIVE_KEYS)
@@ -936,10 +962,14 @@ async def run_e2e_tests(
                         status="error",
                     ))
                 else:
-                    first_action = str(steps[0].get("action", "")).lower()
+                    # Filter out auth steps from cached plans when already logged in
+                    exec_steps = [s for s in steps if not (login_ok and _is_auth_step(s))]
+                    if not exec_steps:
+                        exec_steps = steps
+                    first_action = str(exec_steps[0].get("action", "")).lower()
                     if first_action != "navigate":
                         await page.goto(login_url, wait_until="domcontentloaded", timeout=NAVIGATE_TIMEOUT_MS)
-                    for step_num, step in enumerate(steps, 1):
+                    for step_num, step in enumerate(exec_steps, 1):
                         if stop_fn and stop_fn():
                             break
                         step_result = await _execute_step(
@@ -1006,23 +1036,29 @@ async def run_e2e_tests(
 
     # Video is finalized only after the shared context closes. Rename to
     # title-based MKV (or webm fallback) and assign to each result.
-    from .artifact_collector import _remux_to_mkv, _safe_filename
-    videos = sorted(video_dir.glob("*.webm"), key=lambda path: path.stat().st_mtime)
-    if videos:
-        for result in results:
-            src = videos[-1]
-            base_name = _safe_filename(result.title) if result.title else result.tc_id
-            mkv_dest = video_dir / f"{base_name}.mkv"
-            if _remux_to_mkv(src, mkv_dest):
-                result.video_path = mkv_dest
-            else:
-                renamed = video_dir / f"{base_name}.webm"
-                if renamed != src and not renamed.exists():
-                    import shutil
-                    shutil.copy2(str(src), str(renamed))
-                    result.video_path = renamed
+    try:
+        from .artifact_collector import _remux_to_mkv, _safe_filename
+        videos = sorted(
+            (v for v in video_dir.glob("*.webm") if v.exists()),
+            key=lambda path: path.stat().st_mtime,
+        )
+        if videos:
+            for result in results:
+                src = videos[-1]
+                base_name = _safe_filename(result.title) if result.title else result.tc_id
+                mkv_dest = video_dir / f"{base_name}.mkv"
+                if _remux_to_mkv(src, mkv_dest):
+                    result.video_path = mkv_dest
                 else:
-                    result.video_path = src
+                    renamed = video_dir / f"{base_name}.webm"
+                    if renamed != src and not renamed.exists():
+                        import shutil
+                        shutil.copy2(str(src), str(renamed))
+                        result.video_path = renamed
+                    else:
+                        result.video_path = src
+    except (OSError, FileNotFoundError) as exc:
+        _log(f"[WARN] Video post-processing skipped: {type(exc).__name__}")
     if on_progress:
         on_progress(len(results), total)
     _log(f"[INFO] Run complete. {len(results)}/{total} test cases executed.")
