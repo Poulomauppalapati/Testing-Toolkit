@@ -20,32 +20,18 @@ export function coveredWorkItemIds(
 }
 
 /**
- * Total test cases traced to each work item, combining:
- *  - tool-generated test cases (from the E2E/generation sidecar, matched by
- *    parent wi_id with at least one step), and
- *  - test cases already linked in the tracker (ADO "Tested By" relations /
- *    JIRA test issue links), carried on the row as linked_test_case_count.
+ * Test cases linked in the tracker (ADO "Tested By" relations / JIRA test
+ * issue links), carried on the row as linked_test_case_count.
  * Returns a map of wi_id -> count (only entries with count > 0).
  */
 export function testCaseCountsByWorkItem(
-  rows: WorkItemRow[],
-  testCases: Array<{ wi_id: string; step_count: number }>
+  rows: WorkItemRow[]
 ): Map<string, number> {
   const counts = new Map<string, number>();
-  const currentIds = new Set(rows.map((row) => String(row.wi_id)));
-  // Tool-generated (sidecar) test cases.
-  for (const testCase of testCases) {
-    const wiId = String(testCase.wi_id || "");
-    if (wiId && currentIds.has(wiId) && testCase.step_count > 0) {
-      counts.set(wiId, (counts.get(wiId) ?? 0) + 1);
-    }
-  }
-  // Test cases already linked in the tracker.
   for (const row of rows) {
     const linked = Number(row.linked_test_case_count ?? 0);
     if (linked > 0) {
-      const wiId = String(row.wi_id);
-      counts.set(wiId, (counts.get(wiId) ?? 0) + linked);
+      counts.set(String(row.wi_id), linked);
     }
   }
   return counts;

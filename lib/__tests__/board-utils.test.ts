@@ -128,56 +128,26 @@ describe("coveredWorkItemIds", () => {
 // ---------------------------------------------------------------------------
 
 describe("testCaseCountsByWorkItem", () => {
-  it("returns empty map when both inputs are empty", () => {
-    const result = testCaseCountsByWorkItem([], []);
+  it("returns empty map when rows are empty", () => {
+    const result = testCaseCountsByWorkItem([]);
     expect(result.size).toBe(0);
   });
 
-  it("counts generated test cases with steps > 0", () => {
-    const rows = [makeRow({ wi_id: "1" })];
-    const testCases = [
-      { wi_id: "1", step_count: 2 },
-      { wi_id: "1", step_count: 4 },
-    ];
-    const result = testCaseCountsByWorkItem(rows, testCases);
-    expect(result.get("1")).toBe(2);
-  });
-
-  it("skips generated test cases with step_count === 0", () => {
-    const rows = [makeRow({ wi_id: "1" })];
-    const testCases = [
-      { wi_id: "1", step_count: 0 },
-      { wi_id: "1", step_count: 3 },
-    ];
-    const result = testCaseCountsByWorkItem(rows, testCases);
-    expect(result.get("1")).toBe(1);
-  });
-
-  it("adds linked_test_case_count from the row", () => {
+  it("counts linked_test_case_count from the row", () => {
     const rows = [makeRow({ wi_id: "1", linked_test_case_count: 5 })];
-    const result = testCaseCountsByWorkItem(rows, []);
+    const result = testCaseCountsByWorkItem(rows);
     expect(result.get("1")).toBe(5);
   });
 
-  it("combines generated + linked counts", () => {
-    const rows = [makeRow({ wi_id: "1", linked_test_case_count: 3 })];
-    const testCases = [{ wi_id: "1", step_count: 1 }];
-    const result = testCaseCountsByWorkItem(rows, testCases);
-    // 1 generated + 3 linked = 4
-    expect(result.get("1")).toBe(4);
-  });
-
   it("handles missing linked_test_case_count (undefined)", () => {
-    const rows = [makeRow({ wi_id: "1" })]; // no linked_test_case_count
-    const testCases = [{ wi_id: "1", step_count: 2 }];
-    const result = testCaseCountsByWorkItem(rows, testCases);
-    expect(result.get("1")).toBe(1);
+    const rows = [makeRow({ wi_id: "1" })];
+    const result = testCaseCountsByWorkItem(rows);
+    expect(result.has("1")).toBe(false);
   });
 
-  it("does not include work items with zero total", () => {
+  it("does not include work items with zero linked count", () => {
     const rows = [makeRow({ wi_id: "1", linked_test_case_count: 0 })];
-    const testCases = [{ wi_id: "1", step_count: 0 }];
-    const result = testCaseCountsByWorkItem(rows, testCases);
+    const result = testCaseCountsByWorkItem(rows);
     expect(result.has("1")).toBe(false);
   });
 });

@@ -152,8 +152,8 @@ export function BoardGrid() {
   );
 
   const testCounts = useMemo(
-    () => testCaseCountsByWorkItem(rows, testCases ?? []),
-    [rows, testCases]
+    () => testCaseCountsByWorkItem(rows),
+    [rows]
   );
   const hasCoverageData = testCases !== undefined;
 

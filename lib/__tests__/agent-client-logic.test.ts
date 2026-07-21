@@ -199,30 +199,22 @@ describe("board coverage traceability", () => {
   });
 });
 
-describe("testCaseCountsByWorkItem (Generated Tests column)", () => {
-  it("sums tool-generated and tracker-linked test cases per work item", () => {
+describe("testCaseCountsByWorkItem (board-only linked counts)", () => {
+  it("returns only tracker-linked test case counts from rows", () => {
     const rows = [
       { wi_id: 1536952, linked_test_case_count: 6 },
       { wi_id: 1536939, linked_test_case_count: 0 },
       { wi_id: 1536942 },
     ] as WorkItemRow[];
-    const counts = testCaseCountsByWorkItem(rows, [
-      // Two tool-generated with steps for 1536952 -> 2 + 6 linked = 8.
-      { wi_id: "1536952", step_count: 3 },
-      { wi_id: "1536952", step_count: 5 },
-      // Stepless generated is ignored.
-      { wi_id: "1536939", step_count: 0 },
-      // Generated-only for 1536942 -> 1.
-      { wi_id: "1536942", step_count: 4 },
-    ] as never[]);
-    expect(counts.get("1536952")).toBe(8);
-    expect(counts.get("1536942")).toBe(1);
+    const counts = testCaseCountsByWorkItem(rows);
+    expect(counts.get("1536952")).toBe(6);
     expect(counts.has("1536939")).toBe(false);
+    expect(counts.has("1536942")).toBe(false);
   });
 
-  it("counts tracker-linked test cases even without any generated ones", () => {
+  it("counts tracker-linked test cases for JIRA rows", () => {
     const rows = [{ wi_id: "PROJ-1", linked_test_case_count: 3 }] as WorkItemRow[];
-    const counts = testCaseCountsByWorkItem(rows, [] as never[]);
+    const counts = testCaseCountsByWorkItem(rows);
     expect(counts.get("PROJ-1")).toBe(3);
   });
 });
