@@ -167,7 +167,7 @@ async def run_agentic_test_case(
 
     # Create tool executor
     executor = AgenticToolExecutor(page, context, credentials, screenshot_dir)
-    tools = executor.tool_definitions()
+    tools = executor.get_tool_definitions()
 
     # Initial observation
     try:
