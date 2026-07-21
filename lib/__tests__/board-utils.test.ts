@@ -153,17 +153,18 @@ describe("testCaseCountsByWorkItem", () => {
     expect(result.get("1")).toBe(1);
   });
 
-  it("ignores linked_test_case_count (sidecar-only)", () => {
+  it("adds linked_test_case_count from the row", () => {
     const rows = [makeRow({ wi_id: "1", linked_test_case_count: 5 })];
     const result = testCaseCountsByWorkItem(rows, []);
-    expect(result.get("1")).toBeUndefined();
+    expect(result.get("1")).toBe(5);
   });
 
-  it("counts only sidecar, not linked", () => {
+  it("combines generated + linked counts", () => {
     const rows = [makeRow({ wi_id: "1", linked_test_case_count: 3 })];
     const testCases = [{ wi_id: "1", step_count: 1 }];
     const result = testCaseCountsByWorkItem(rows, testCases);
-    expect(result.get("1")).toBe(1);
+    // 1 generated + 3 linked = 4
+    expect(result.get("1")).toBe(4);
   });
 
   it("handles missing linked_test_case_count (undefined)", () => {

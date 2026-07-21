@@ -671,9 +671,17 @@ def _norm(s: Any) -> str:
 
 def _is_test_relation(rel: dict[str, Any]) -> bool:
     """True when a relation directly denotes test coverage (Tested By, Tests,
-    or a custom/renamed test link type)."""
+    or a custom/renamed test link type).
+
+    Only the FORWARD direction counts: "Tested By" on a User Story means the
+    target is a test case that tests it.  The Reverse direction ("Tests") means
+    the WI itself tests something else -- excluded.
+    """
     ref = _norm(rel.get("rel", ""))
     name = _norm((rel.get("attributes") or {}).get("name", ""))
+    # Reverse direction: the WI "Tests" another item -- not its own coverage.
+    if "reverse" in ref:
+        return False
     return any(h in ref or h in name for h in _TEST_REL_HINTS)
 
 
