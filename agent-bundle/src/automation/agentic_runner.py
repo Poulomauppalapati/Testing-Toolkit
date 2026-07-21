@@ -40,7 +40,7 @@ LogFn = Callable[[str], None]
 class AgenticConfig:
     """Tuning knobs for the agentic loop."""
 
-    max_steps: int = 40                 # hard limit per test case
+    max_steps: int = 500                # hard limit per test case
     max_consecutive_fails: int = 3      # stuck detection threshold
     history_window: int = 8             # full messages kept in context
     screenshot_every_action: bool = True
