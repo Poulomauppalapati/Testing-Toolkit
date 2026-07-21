@@ -237,6 +237,8 @@ export interface WorkItemRow {
   area_path: string;
   /** Count of linked Test Case work items (ADO "Tested By" / JIRA test links). */
   linked_test_case_count?: number;
+  /** ISO-8601 created date from the tracker (ADO System.CreatedDate). */
+  created_date?: string;
 }
 
 export interface BoardView {

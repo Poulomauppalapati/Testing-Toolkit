@@ -48,7 +48,7 @@ describe("columnWidth pure function", () => {
 
   it("returns default width when column is not in state", async () => {
     const { columnWidth, BOARD_COLUMNS } = await import("../board-columns");
-    const emptyState = { widths: {}, collapsed: {} };
+    const emptyState = { widths: {}, collapsed: {}, fieldMap: {} };
     // Each column should return its defined default width
     for (const col of BOARD_COLUMNS) {
       expect(columnWidth(emptyState, col.id)).toBe(col.width);
@@ -57,13 +57,13 @@ describe("columnWidth pure function", () => {
 
   it("returns stored width when present in state", async () => {
     const { columnWidth } = await import("../board-columns");
-    const state = { widths: { title: 500 }, collapsed: {} };
+    const state = { widths: { title: 500 }, collapsed: {}, fieldMap: {} };
     expect(columnWidth(state, "title")).toBe(500);
   });
 
   it("returns COLLAPSED_WIDTH when column is collapsed", async () => {
     const { columnWidth, COLLAPSED_WIDTH } = await import("../board-columns");
-    const state = { widths: { title: 500 }, collapsed: { title: true } };
+    const state = { widths: { title: 500 }, collapsed: { title: true }, fieldMap: {} };
     expect(columnWidth(state, "title")).toBe(COLLAPSED_WIDTH);
   });
 
@@ -72,6 +72,7 @@ describe("columnWidth pure function", () => {
     const state = {
       widths: { assignee: 200 },
       collapsed: { assignee: true },
+      fieldMap: {},
     };
     expect(columnWidth(state, "assignee")).toBe(COLLAPSED_WIDTH);
   });

@@ -83,6 +83,7 @@ _GRID_FIELDS: Final[list[str]] = [
     "System.Tags",
     "System.IterationPath",
     "System.AreaPath",
+    "System.CreatedDate",
 ]
 
 
@@ -127,6 +128,7 @@ class WorkItemRow:
     tags: list[str] = field(default_factory=list)
     iteration_path: str = ""
     area_path: str = ""
+    created_date: str = ""
     # Count of linked Test Case work items (ADO "Tested By" relations). Filled
     # by a relations pass after the grid fetch; 0 when none/unavailable.
     test_case_count: int = 0
@@ -522,6 +524,7 @@ def _parse_row(
         tags=[t.strip() for t in tags_raw.split(";") if t.strip()],
         iteration_path=_i(str(f.get("System.IterationPath", "") or "").strip()),
         area_path=_i(str(f.get("System.AreaPath", "") or "").strip()),
+        created_date=str(f.get("System.CreatedDate", "") or "").strip(),
     )
 
 

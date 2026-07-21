@@ -48,20 +48,67 @@ export const BOARD_COLUMNS: readonly BoardColumnMeta[] = [
 /** Pixel width of a collapsed column (just enough for the expand caret). */
 export const COLLAPSED_WIDTH = 30;
 
+/** Available row fields that can be mapped to any column cell. */
+export type RowField =
+  | "wi_id"
+  | "title"
+  | "wi_type"
+  | "state"
+  | "board_column"
+  | "board_lane"
+  | "assigned_to"
+  | "tags"
+  | "iteration_path"
+  | "iteration_leaf"
+  | "area_path"
+  | "linked_test_case_count"
+  | "created_date";
+
+/** Default field each column shows when no user override exists. */
+export const DEFAULT_FIELD_MAP: Record<BoardColumnId, RowField> = {
+  id: "wi_id",
+  title: "title",
+  type: "wi_type",
+  state: "state",
+  assignee: "assigned_to",
+  sprint: "board_lane",
+  tests: "linked_test_case_count",
+};
+
+/** Human-friendly labels for row fields shown in the context menu. */
+export const FIELD_LABELS: Record<RowField, string> = {
+  wi_id: "ID",
+  title: "Title",
+  wi_type: "Type",
+  state: "State",
+  board_column: "Board Column",
+  board_lane: "Board Lane / Sprint",
+  assigned_to: "Assignee",
+  tags: "Tags",
+  iteration_path: "Iteration Path",
+  iteration_leaf: "Iteration (leaf)",
+  area_path: "Area Path",
+  linked_test_case_count: "Linked Test Cases",
+  created_date: "Created Date",
+};
+
 interface ColumnState {
   widths: Partial<Record<BoardColumnId, number>>;
   collapsed: Partial<Record<BoardColumnId, boolean>>;
+  fieldMap: Partial<Record<BoardColumnId, RowField>>;
 }
 
 const KEY = "tt.board.columns.v1";
 
-const DEFAULTS: ColumnState = { widths: {}, collapsed: {} };
+const DEFAULTS: ColumnState = { widths: {}, collapsed: {}, fieldMap: {} };
 
 let cache: ColumnState = DEFAULTS;
 let loaded = false;
 const listeners = new Set<() => void>();
 
 const VALID_IDS = new Set<string>(BOARD_COLUMNS.map((c) => c.id));
+
+const VALID_FIELDS = new Set<string>(Object.keys(FIELD_LABELS));
 
 function load(): ColumnState {
   if (typeof window === "undefined") return DEFAULTS;
@@ -71,6 +118,7 @@ function load(): ColumnState {
     const parsed = JSON.parse(raw) as Partial<ColumnState>;
     const widths: Partial<Record<BoardColumnId, number>> = {};
     const collapsed: Partial<Record<BoardColumnId, boolean>> = {};
+    const fieldMap: Partial<Record<BoardColumnId, RowField>> = {};
     for (const [k, v] of Object.entries(parsed.widths ?? {})) {
       if (VALID_IDS.has(k) && typeof v === "number" && v > 0)
         widths[k as BoardColumnId] = v;
@@ -78,7 +126,11 @@ function load(): ColumnState {
     for (const [k, v] of Object.entries(parsed.collapsed ?? {})) {
       if (VALID_IDS.has(k) && v === true) collapsed[k as BoardColumnId] = true;
     }
-    return { widths, collapsed };
+    for (const [k, v] of Object.entries(parsed.fieldMap ?? {})) {
+      if (VALID_IDS.has(k) && typeof v === "string" && VALID_FIELDS.has(v))
+        fieldMap[k as BoardColumnId] = v as RowField;
+    }
+    return { widths, collapsed, fieldMap };
   } catch {
     return DEFAULTS;
   }
@@ -130,24 +182,45 @@ export function columnWidth(state: ColumnState, id: BoardColumnId): number {
 }
 
 /**
- * Auto-fit column widths to fill the container on first launch (no persisted
- * widths). Distributes extra space proportionally across all columns so the
- * grid uses the full viewport width instead of leaving a gap on the right.
- * Only runs once -- after any manual resize, localStorage takes over.
+ * Responsive auto-fit: distribute available width proportionally across all
+ * non-collapsed columns. Runs on every container resize (nav, logs, detail
+ * pane open/close, window resize) so columns always fill the viewport.
+ *
+ * Manual drag-resize sets a "pinned" width for that column; pinned columns
+ * keep their width and remaining space distributes among unpinned columns.
+ * Calling resetBoardColumns() clears all pins.
  */
+let manuallyResized = new Set<BoardColumnId>();
+
 export function autofitColumns(containerWidth: number): void {
   ensureLoaded();
-  if (Object.keys(cache.widths).length > 0) return;
+  if (containerWidth <= 0) return;
   const CHECKBOX_COL = 32;
   const available = containerWidth - CHECKBOX_COL;
-  const defaultTotal = BOARD_COLUMNS.reduce((s, c) => s + c.width, 0);
-  if (available <= defaultTotal) return;
-  const scale = available / defaultTotal;
-  const widths: Partial<Record<BoardColumnId, number>> = {};
+
+  // Pinned columns (manually resized this session) keep their width.
+  let pinnedTotal = 0;
   for (const c of BOARD_COLUMNS) {
+    if (cache.collapsed[c.id]) {
+      pinnedTotal += COLLAPSED_WIDTH;
+    } else if (manuallyResized.has(c.id)) {
+      pinnedTotal += cache.widths[c.id] ?? c.width;
+    }
+  }
+
+  const unpinned = BOARD_COLUMNS.filter(
+    (c) => !cache.collapsed[c.id] && !manuallyResized.has(c.id)
+  );
+  const unpinnedDefault = unpinned.reduce((s, c) => s + c.width, 0);
+  const space = available - pinnedTotal;
+  if (space <= 0 || unpinnedDefault <= 0) return;
+
+  const scale = space / unpinnedDefault;
+  const widths: Partial<Record<BoardColumnId, number>> = { ...cache.widths };
+  for (const c of unpinned) {
     widths[c.id] = Math.max(c.min, Math.round(c.width * scale));
   }
-  persist({ ...cache, widths }, true);
+  persist({ ...cache, widths }, false);
 }
 
 /** Non-hook setter for a column width. Pass write=false during a live drag. */
@@ -155,10 +228,17 @@ function setColumnWidth(id: BoardColumnId, px: number, write = true) {
   ensureLoaded();
   const min = META_BY_ID.get(id)?.min ?? 60;
   const clamped = Math.max(min, Math.round(px));
+  if (write) manuallyResized.add(id);
   persist(
     { ...cache, widths: { ...cache.widths, [id]: clamped } },
     write
   );
+}
+
+/** Change which row field a column displays. */
+function setColumnField(id: BoardColumnId, field: RowField) {
+  ensureLoaded();
+  persist({ ...cache, fieldMap: { ...cache.fieldMap, [id]: field } });
 }
 
 /** Non-hook toggle for a column's collapsed flag (always persisted). */
@@ -171,9 +251,15 @@ function toggleColumnCollapsed(id: BoardColumnId) {
   });
 }
 
-/** Reset all columns to their default widths and expand every column. */
+/** Reset all columns to their default widths, expand, and clear field overrides. */
 export function resetBoardColumns() {
-  persist({ widths: {}, collapsed: {} });
+  manuallyResized = new Set();
+  persist({ widths: {}, collapsed: {}, fieldMap: {} });
+}
+
+/** Resolve which row field a column is currently displaying. */
+export function columnField(state: ColumnState, id: BoardColumnId): RowField {
+  return state.fieldMap[id] ?? DEFAULT_FIELD_MAP[id];
 }
 
 export function useBoardColumns() {
@@ -191,12 +277,18 @@ export function useBoardColumns() {
     (id: BoardColumnId) => !!state.collapsed[id],
     [state]
   );
+  const fieldFor = useCallback(
+    (id: BoardColumnId) => columnField(state, id),
+    [state]
+  );
 
   return {
     state,
     width,
     isCollapsed,
+    fieldFor,
     setWidth: setColumnWidth,
+    setField: setColumnField,
     toggleCollapsed: toggleColumnCollapsed,
     reset: resetBoardColumns,
     autofit: autofitColumns,

@@ -190,6 +190,10 @@ function sortRows(rows: WorkItemRow[]): WorkItemRow[] {
     if (aBottom !== bBottom) return aBottom - bBottom;
     const typeCompare = aType.localeCompare(bType);
     if (typeCompare !== 0) return typeCompare;
+    // Secondary: created date descending (newest first within same type)
+    const aDate = a.created_date || "";
+    const bDate = b.created_date || "";
+    if (aDate !== bDate) return bDate.localeCompare(aDate);
     const aId = typeof a.wi_id === "number" ? a.wi_id : parseInt(String(a.wi_id), 10) || 0;
     const bId = typeof b.wi_id === "number" ? b.wi_id : parseInt(String(b.wi_id), 10) || 0;
     return aId - bId;

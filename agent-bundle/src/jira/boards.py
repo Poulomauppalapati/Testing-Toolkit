@@ -60,6 +60,7 @@ class JiraIssue:
     priority: str
     sprint: str
     labels: list[str] = field(default_factory=list)
+    created_date: str = ""
     # Count of linked Test issues (issue links whose target is a Test/Test Case
     # issue type or whose link type mentions "test"). 0 when none/unavailable.
     test_case_count: int = 0
@@ -165,6 +166,7 @@ def _parse_issue(raw: dict[str, Any]) -> JiraIssue:
         priority=priority_name,
         sprint=sprint_name,
         labels=list(labels),
+        created_date=str(fields.get("created", "") or "").strip(),
         test_case_count=test_links,
     )
 

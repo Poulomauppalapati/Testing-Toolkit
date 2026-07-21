@@ -7,6 +7,7 @@ import {
   useState,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 import useSWR from "swr";
 import {
@@ -32,7 +33,10 @@ import {
   useBoardColumns,
   BOARD_COLUMNS,
   COLLAPSED_WIDTH,
+  DEFAULT_FIELD_MAP,
+  FIELD_LABELS,
   type BoardColumnId,
+  type RowField,
 } from "@/lib/board-columns";
 import { useCollapsedLanes } from "@/lib/board-lanes";
 import { ResizeHandle } from "@/components/ui/resizer";
@@ -81,14 +85,25 @@ export function BoardGrid() {
     state: colState,
     width: colWidth,
     isCollapsed: colCollapsed,
+    fieldFor: colField,
     setWidth: setColWidth,
+    setField: setColField,
     toggleCollapsed: toggleColCollapsed,
     autofit,
   } = useBoardColumns();
 
   const gridRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (gridRef.current) autofit(gridRef.current.clientWidth);
+    if (!gridRef.current) return;
+    const el = gridRef.current;
+    autofit(el.clientWidth);
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        autofit(entry.contentRect.width);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [autofit]);
 
   // Persisted collapsed state for row groups (swim lanes). Clicking a lane
@@ -127,6 +142,13 @@ export function BoardGrid() {
   const [fKpiBucket, setFKpiBucket] = useState(ALL);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState("");
+
+  // Column context menu state (right-click header to remap data source).
+  const [ctxMenu, setCtxMenu] = useState<{
+    col: BoardColumnId;
+    x: number;
+    y: number;
+  } | null>(null);
 
   // Column sort state: click a header to sort ASC, click again for DESC.
   const [sortCol, setSortCol] = useState<BoardColumnId | null>(null);
@@ -424,6 +446,7 @@ export function BoardGrid() {
                       key={c.id}
                       id={c.id}
                       label={c.label}
+                      field={colField(c.id)}
                       collapsed={colCollapsed(c.id)}
                       currentWidth={colWidth(c.id)}
                       sortDir={sortCol === c.id ? sortDir : null}
@@ -432,6 +455,10 @@ export function BoardGrid() {
                         setColWidth(c.id, px, commit)
                       }
                       onToggleCollapsed={() => toggleColCollapsed(c.id)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setCtxMenu({ col: c.id, x: e.clientX, y: e.clientY });
+                      }}
                     />
                   ))}
                 </tr>
@@ -455,6 +482,7 @@ export function BoardGrid() {
                       activeWiId={activeWiId}
                       testCounts={testCounts}
                       collapsedCols={colState.collapsed}
+                      fieldMap={colState.fieldMap}
                       hasCoverageData={hasCoverageData}
                       settings={settings}
                       onToggleCollapsed={() => toggleLaneCollapsed(lane)}
@@ -468,6 +496,19 @@ export function BoardGrid() {
             </table>
           )}
         </div>
+        {ctxMenu && (
+          <ColumnFieldMenu
+            col={ctxMenu.col}
+            x={ctxMenu.x}
+            y={ctxMenu.y}
+            currentField={colField(ctxMenu.col)}
+            onSelect={(field) => {
+              setColField(ctxMenu.col, field);
+              setCtxMenu(null);
+            }}
+            onClose={() => setCtxMenu(null)}
+          />
+        )}
         {boardView && (
           <p className="text-xs" style={{ color: COLOR_MUTED }}>
             {rows.length} work item(s) in {columns.length} column(s). Tick items
@@ -548,15 +589,18 @@ const TESTS_HINT =
 function ColumnHeader({
   id,
   label,
+  field,
   collapsed,
   currentWidth,
   sortDir,
   onSort,
   onResize,
   onToggleCollapsed,
+  onContextMenu,
 }: {
   id: BoardColumnId;
   label: string;
+  field: RowField;
   collapsed: boolean;
   currentWidth: number;
   sortDir: "asc" | "desc" | null;
@@ -564,7 +608,9 @@ function ColumnHeader({
   /** commit=false during a live drag, commit=true once on pointer-up. */
   onResize: (px: number, commit: boolean) => void;
   onToggleCollapsed: () => void;
+  onContextMenu: (e: MouseEvent) => void;
 }) {
+  const isRemapped = field !== DEFAULT_FIELD_MAP[id];
   const drag = useRef<{ x: number; w: number } | null>(null);
 
   const onPointerDown = (e: ReactPointerEvent<HTMLSpanElement>) => {
@@ -590,11 +636,14 @@ function ColumnHeader({
     onResize(finalW, true);
   };
 
+  const displayLabel = isRemapped ? FIELD_LABELS[field] : label;
+
   return (
     <th
       className="group/th relative border-b border-[var(--tt-outline)] px-2 py-2 font-semibold"
       style={collapsed ? { width: COLLAPSED_WIDTH, padding: 0 } : undefined}
-      title={collapsed ? `Expand ${label}` : id === "tests" ? TESTS_HINT : label}
+      title={collapsed ? `Expand ${label}` : isRemapped ? `${label} -> ${FIELD_LABELS[field]} (right-click to change)` : `${label} (right-click to change data source)`}
+      onContextMenu={onContextMenu}
     >
       {collapsed ? (
         <button
@@ -614,7 +663,7 @@ function ColumnHeader({
             aria-label={`Sort by ${label}${sortDir === "asc" ? " descending" : " ascending"}`}
             title={`Sort by ${label}`}
           >
-            <span className="truncate">{label}</span>
+            <span className={`truncate${isRemapped ? " italic" : ""}`}>{displayLabel}</span>
             {sortDir === "asc" ? (
               <ArrowUp className="h-3 w-3 shrink-0 text-[var(--tt-primary)]" />
             ) : sortDir === "desc" ? (
@@ -719,6 +768,127 @@ function wiStateBadgeClass(s: string): string {
   return "tt-badge-neutral";
 }
 
+// ---------------------------------------------------------------------------
+// Dynamic cell resolution — maps field IDs to row values for remappable columns
+// ---------------------------------------------------------------------------
+function resolveField(
+  r: WorkItemRow,
+  field: RowField,
+  testCounts: Map<string, number>
+): string | number {
+  switch (field) {
+    case "wi_id": return String(r.wi_id);
+    case "title": return r.title;
+    case "wi_type": return r.wi_type;
+    case "state": return r.state || "";
+    case "board_column": return r.board_column || "";
+    case "board_lane": return r.board_lane || "";
+    case "assigned_to": return r.assigned_to || "";
+    case "tags": return (r.tags || []).join(", ");
+    case "iteration_path": return r.iteration_path || "";
+    case "iteration_leaf": return (r as any).iteration_leaf || r.iteration_path || "";
+    case "area_path": return r.area_path || "";
+    case "linked_test_case_count": return testCounts.get(String(r.wi_id)) ?? 0;
+    default: return "";
+  }
+}
+
+function renderCell(
+  r: WorkItemRow,
+  colId: BoardColumnId,
+  field: RowField,
+  testCounts: Map<string, number>,
+  hasCoverageData: boolean,
+  settings: SettingsResponse | null
+): ReactNode {
+  // Special rendering for certain field+column combos
+  if (field === "wi_id") {
+    return <WiIdLink wiId={r.wi_id} settings={settings} />;
+  }
+  if (field === "title") {
+    return (
+      <span className="text-sm font-medium" style={{ color: titleTypeColor(r.wi_type) }}>
+        {r.title}
+      </span>
+    );
+  }
+  if (field === "wi_type") {
+    return <span className={`tt-badge ${wiTypeBadgeClass(r.wi_type)}`}>{r.wi_type}</span>;
+  }
+  if (field === "state") {
+    const val = r.state || "n/a";
+    return <span className={`tt-badge ${wiStateBadgeClass(val)}`}>{val}</span>;
+  }
+  if (field === "linked_test_case_count") {
+    return (
+      <CoverageCell
+        count={testCounts.get(String(r.wi_id)) ?? 0}
+        hasData={hasCoverageData}
+      />
+    );
+  }
+  // Generic text rendering for all other fields
+  const val = resolveField(r, field, testCounts);
+  return <span className="text-[var(--tt-text-secondary)]">{val || "—"}</span>;
+}
+
+// ---------------------------------------------------------------------------
+// Column field context menu — right-click a header to change its data source
+// ---------------------------------------------------------------------------
+function ColumnFieldMenu({
+  col,
+  x,
+  y,
+  currentField,
+  onSelect,
+  onClose,
+}: {
+  col: BoardColumnId;
+  x: number;
+  y: number;
+  currentField: RowField;
+  onSelect: (field: RowField) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handler = (e: globalThis.MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose]);
+
+  const fields = Object.entries(FIELD_LABELS) as [RowField, string][];
+  return (
+    <div
+      ref={ref}
+      className="fixed z-50 min-w-[180px] rounded-md border border-[var(--tt-outline)] bg-[var(--tt-surface-container)] py-1 shadow-lg"
+      style={{ left: x, top: y }}
+    >
+      <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-[var(--tt-text-muted)]">
+        Data source
+      </div>
+      {fields.map(([f, label]) => (
+        <button
+          key={f}
+          type="button"
+          onClick={() => onSelect(f)}
+          className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--tt-surface-base)] ${
+            f === currentField ? "font-bold text-[var(--tt-primary)]" : "text-[var(--tt-text-secondary)]"
+          }`}
+        >
+          {f === currentField && <span>*</span>}
+          <span>{label}</span>
+          {f === DEFAULT_FIELD_MAP[col] && f !== currentField && (
+            <span className="ml-auto text-[10px] text-[var(--tt-text-faint)]">default</span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function LaneGroup({
   lane,
   laneRows,
@@ -729,6 +899,7 @@ function LaneGroup({
   activeWiId,
   testCounts,
   collapsedCols,
+  fieldMap,
   hasCoverageData,
   settings,
   onToggleCollapsed,
@@ -745,6 +916,7 @@ function LaneGroup({
   activeWiId: WiId | null;
   testCounts: Map<string, number>;
   collapsedCols: Partial<Record<BoardColumnId, boolean>>;
+  fieldMap: Partial<Record<BoardColumnId, RowField>>;
   hasCoverageData: boolean;
   settings: SettingsResponse | null;
   onToggleCollapsed: () => void;
@@ -792,9 +964,7 @@ function LaneGroup({
       {!collapsed &&
         laneRows.map((r) => {
         const isActive = r.wi_id === activeWiId;
-        const typeBadgeClass = wiTypeBadgeClass(r.wi_type);
         const typeBorderClass = wiTypeBorderClass(r.wi_type);
-        const stateBadgeClass = wiStateBadgeClass(r.state);
         return (
           <tr
             key={r.wi_id}
@@ -825,61 +995,25 @@ function LaneGroup({
                 onChange={(e) => onToggleRow(r.wi_id, e.target.checked)}
               />
             </td>
-            {/* ID cell — clickable link to source system */}
-            <td className="truncate whitespace-nowrap px-2 py-1.5">
-              {collapsedCols.id ? (
-                dot(true)
-              ) : (
-                <WiIdLink wiId={r.wi_id} settings={settings} />
-              )}
-            </td>
-            {/* Title — colored by work-item type (desktop parity: green
-                stories, red bugs, blue test cases) */}
-            <td
-              className="truncate px-2 py-1.5 text-sm font-medium"
-              style={{ color: titleTypeColor(r.wi_type) }}
-              title={r.title}
-            >
-              {collapsedCols.title ? dot(true) : r.title}
-            </td>
-            {/* Type badge */}
-            <td className="truncate whitespace-nowrap px-2 py-1.5">
-              {collapsedCols.type ? (
-                dot(true)
-              ) : (
-                <span className={`tt-badge ${typeBadgeClass}`}>{r.wi_type}</span>
-              )}
-            </td>
-            {/* State badge */}
-            <td className="truncate whitespace-nowrap px-2 py-1.5">
-              {collapsedCols.state ? (
-                dot(true)
-              ) : (
-                <span className={`tt-badge ${stateBadgeClass}`}>
-                  {r.state || "n/a"}
-                </span>
-              )}
-            </td>
-            <td className="truncate whitespace-nowrap px-2 py-1.5 text-xs text-[var(--tt-text-secondary)]">
-              {collapsedCols.assignee ? dot(true) : r.assigned_to || "—"}
-            </td>
-            <td className="truncate whitespace-nowrap px-2 py-1.5 text-xs text-[var(--tt-text-muted)]">
-              {collapsedCols.sprint ? dot(true) : r.board_lane || "—"}
-            </td>
-            {/* Generated-test traceability, not implementation coverage. */}
-            <td
-              className="truncate whitespace-nowrap px-2 py-1.5 text-xs"
-              title="Runnable generated test cases traced to this work item"
-            >
-              {collapsedCols.tests ? (
-                dot(true)
-              ) : (
-                <CoverageCell
-                  count={testCounts.get(String(r.wi_id)) ?? 0}
-                  hasData={hasCoverageData}
-                />
-              )}
-            </td>
+            {BOARD_COLUMNS.map((col) => {
+              if (collapsedCols[col.id]) {
+                return (
+                  <td key={col.id} className="px-2 py-1.5">
+                    {dot(true)}
+                  </td>
+                );
+              }
+              const field = fieldMap[col.id] ?? DEFAULT_FIELD_MAP[col.id];
+              return (
+                <td
+                  key={col.id}
+                  className="truncate whitespace-nowrap px-2 py-1.5 text-xs"
+                  title={String(resolveField(r, field, testCounts) ?? "")}
+                >
+                  {renderCell(r, col.id, field, testCounts, hasCoverageData, settings)}
+                </td>
+              );
+            })}
           </tr>
         );
       })}
