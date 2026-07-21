@@ -162,7 +162,7 @@ async def run_agentic_test_case(
         "ai_instructions": getattr(credentials, "ai_instructions", ""),
     }
     system = build_system_prompt(
-        test_case, cred_dict, brief, project_context, login_done=True,
+        test_case, cred_dict, brief, project_context, login_done=False,
     )
 
     # Create tool executor

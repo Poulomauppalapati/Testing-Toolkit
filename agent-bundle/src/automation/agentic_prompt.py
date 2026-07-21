@@ -97,17 +97,30 @@ def _build_login_section(credentials: dict[str, str], login_done: bool) -> str:
             "application's home/landing page."
         )
     login_url = credentials.get("login_url", "")
-    ai_instructions = credentials.get("ai_instructions", "Standard login form")
-    return (
-        "LOGIN STATE: You must log in first.\n"
-        f"Login URL: {login_url}\n"
-        "Username: {{username}}\n"
-        "Password: {{password}}\n"
-        f"AI Instructions for login: {ai_instructions}\n\n"
-        'Use the fill tool with value "{{username}}" for the username field '
-        'and "{{password}}" for the password field.\n'
-        "The system will automatically substitute the real credentials."
-    )
+    ai_instructions = credentials.get("ai_instructions", "")
+    lines = [
+        "LOGIN STATE: You start on the login page and MUST log in before testing.",
+        f"Login URL: {login_url}",
+        "Username: {{username}}",
+        "Password: {{password}}",
+    ]
+    if ai_instructions:
+        lines.append(f"Login instructions: {ai_instructions}")
+    lines.extend([
+        "",
+        "PROCEDURE:",
+        "1. Observe the login page to identify the username/password fields",
+        "2. Fill the username field with {{username}}",
+        "3. Fill the password field with {{password}}",
+        "4. Click the sign-in/login button",
+        "5. Wait for the page to load and verify you are authenticated",
+        "6. ONLY THEN begin executing the test case steps",
+        "",
+        "The system substitutes real credentials for {{username}} and {{password}}.",
+        "If the login form is non-standard (SSO redirect, multi-step, provider selection),",
+        "observe carefully and adapt. Read buttons and links to find the correct login path.",
+    ])
+    return "\n".join(lines)
 
 
 def _build_test_case_section(test_case: dict[str, Any]) -> str:

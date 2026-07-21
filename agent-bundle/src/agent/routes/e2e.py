@@ -395,7 +395,6 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
         )
 
         try:
-            from automation.e2e_runner import _perform_login
             from automation.playwright_bridge import browser_session
             from automation.agentic_runner import run_agentic_suite, AgenticConfig
         except Exception as e:  # noqa: BLE001
@@ -419,17 +418,9 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
             context,
             page,
         ):
-            # Programmatic login (reuse proven login waterfall)
-            login_ok = await _perform_login(
-                page,
-                cred.login_url,
-                cred.user_id,
-                cred.password,
-                job.log,
-                cred.ai_instructions,
-            )
-            if not login_ok:
-                job.log("[WARN] Login may have failed. Agent will attempt recovery.")
+            # Agent handles login via agentic loop using credential vault
+            await page.goto(cred.login_url, timeout=30000)
+            await page.wait_for_load_state("domcontentloaded")
 
             results = await run_agentic_suite(
                 test_cases=prepared,
