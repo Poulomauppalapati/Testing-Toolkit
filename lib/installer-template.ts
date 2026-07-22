@@ -536,6 +536,47 @@ try {
   Add-Type -AssemblyName System.IO.Compression
   $destFull = [IO.Path]::GetFullPath($dest)
   $destRoot = $destFull.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+
+  # Extract a single entry, tolerating files that are transiently locked by
+  # another process (antivirus real-time scanning, or a lingering bundled
+  # python.exe / .pyd loaded from a previous run). Strategy:
+  #   1. Retry a few times with backoff - clears short-lived AV/indexer locks.
+  #   2. If still locked, move the old file aside (rename usually succeeds even
+  #      when the file is open, as long as it is on the same volume) and write
+  #      the new copy; the stale ".old" file is cleaned up on the next run.
+  #   3. If even the rename fails, surface a clear, actionable error.
+  function Expand-EntryToFile($entry, $target) {
+    $attempts = 0
+    while ($true) {
+      try {
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+        return
+      } catch [IO.IOException] {
+        $attempts++
+        if ($attempts -le 5) {
+          Trace 'WARN' ('locked, retrying (' + $attempts + '/5): ' + $entry.FullName)
+          Start-Sleep -Milliseconds (400 * $attempts)
+          continue
+        }
+        # Retries exhausted - try to move the locked file out of the way.
+        $aside = $target + '.old-' + ([Guid]::NewGuid().ToString('N').Substring(0,8))
+        try {
+          [IO.File]::Move($target, $aside)
+          Trace 'WARN' ('moved locked file aside: ' + $entry.FullName)
+          [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+          return
+        } catch {
+          throw ('Cannot update "' + $entry.FullName + '" because it is locked by another process. ' +
+                 'Close any running Testing-Toolkit or Python windows (or reboot to clear the lock) and re-run this installer. Original error: ' + $_.Exception.Message)
+        }
+      }
+    }
+  }
+
+  # Best-effort: remove leftover ".old-*" files from a previous locked run.
+  Get-ChildItem -LiteralPath $destFull -Recurse -Filter '*.old-*' -File -ErrorAction SilentlyContinue |
+    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+
   $zipArchive = [IO.Compression.ZipFile]::OpenRead($zip)
   try {
     $entryCount = $zipArchive.Entries.Count
@@ -554,7 +595,7 @@ try {
         if ($parent -and -not (Test-Path -LiteralPath $parent)) {
           New-Item -ItemType Directory -Force -Path $parent | Out-Null
         }
-        [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+        Expand-EntryToFile $entry $target
       }
       $doneCount++
       if (($doneCount % 50) -eq 0 -or $doneCount -eq $entryCount) {
