@@ -275,7 +275,8 @@ def generate_playwright_script(
     footer = [
         "        # Cleanup",
         "        await context.close()",
-        "        await browser.close()",
+        "        # NOTE: launch_persistent_context returns the context directly;",
+        "        # there is no separate browser object to close.",
         "        print('[SUCCESS] Test completed.')",
         "",
         "",

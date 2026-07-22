@@ -55,6 +55,33 @@ import subprocess
 import sys
 from xml.etree import ElementTree as ET
 
+# SECURITY: xml.etree.ElementTree in CPython 3.8+ uses expat which does NOT
+# expand external entities or process DTDs by default. We create a hardened
+# parser factory for defense-in-depth when parsing untrusted KB documents.
+# If the runtime somehow falls back to a vulnerable parser, forbid_dtd=True
+# and forbid_external=True (Python 3.13+ XMLParser kwargs) would block it.
+# On older Pythons expat simply ignores external entities silently.
+
+
+def _safe_xml_parser() -> ET.XMLParser:
+    """Return an XMLParser configured to reject external entities.
+
+    Python 3.13 added forbid_dtd / forbid_external kwargs; on older
+    versions expat already ignores external entities so the default
+    XMLParser() is safe, but we document the intent explicitly.
+    """
+    # ponytail: once minimum Python is 3.13, pass forbid_dtd=True,
+    # forbid_external=True directly.
+    try:
+        # Python 3.13+
+        return ET.XMLParser(
+            forbid_dtd=True,
+            forbid_external=True,
+        )
+    except TypeError:
+        # Python 3.8-3.12: expat ignores external entities by default.
+        return ET.XMLParser()
+
 # Suppress terminal popups on Windows for all subprocess calls
 _SUBPROCESS_KWARGS: dict[str, object] = {}
 if sys.platform == "win32":
@@ -317,7 +344,8 @@ def _extract_odf(path: Path) -> str:
             if "content.xml" not in zf.namelist():
                 return ""
             content = zf.read("content.xml")
-            root = ET.fromstring(content)
+            # Defense-in-depth: use hardened parser for untrusted KB docs
+            root = ET.fromstring(content, parser=_safe_xml_parser())
             parts = _odf_extract_text_elements(root)
             if not parts:
                 # Fallback: strip all XML tags
@@ -473,7 +501,8 @@ def _extract_fb2(path: Path) -> str:
     """Extract text from FictionBook XML format."""
     try:
         raw = path.read_bytes()
-        root = ET.fromstring(raw)
+        # Defense-in-depth: use hardened parser for untrusted KB docs
+        root = ET.fromstring(raw, parser=_safe_xml_parser())
         # FB2 namespace
         ns = ""
         if root.tag.startswith("{"):

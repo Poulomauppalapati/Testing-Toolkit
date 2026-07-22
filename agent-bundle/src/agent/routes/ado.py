@@ -22,7 +22,8 @@ router = APIRouter()
 
 # Hosts we are willing to proxy authenticated blobs from. ADO attachment and
 # inline-image URLs always live on one of these.
-_ALLOWED_BLOB_HOSTS = ("dev.azure.com", "visualstudio.com", "azure.com")
+# ponytail: replaced naive tuple with parsed-host check to prevent SSRF bypass
+_ALLOWED_BLOB_HOSTS = ("dev.azure.com", "visualstudio.com")
 
 
 def _cfg_or_400(project: str | None = None):

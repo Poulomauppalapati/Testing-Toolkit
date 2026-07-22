@@ -297,8 +297,18 @@ async def download_attachment(
 
 
 def _safe_filename(name: str) -> str:
-    bad = '<>:"/\\|?*'
-    cleaned = "".join("_" if c in bad else c for c in name)
+    """Sanitize a user-supplied string for use as a filename.
+
+    Prevents path traversal by removing separators and '..' sequences,
+    and strips characters illegal on Windows/POSIX filesystems.
+    """
+    # Replace path separators first
+    cleaned = name.replace("\\", "_").replace("/", "_")
+    # Collapse traversal sequences
+    cleaned = cleaned.replace("..", "_")
+    # Remove remaining dangerous characters
+    cleaned = re.sub(r'[<>:"|?*\x00-\x1f]', '_', cleaned)
+    # Strip leading/trailing dots and spaces
     cleaned = cleaned.strip(". ")
     return cleaned[:200] if cleaned else "unnamed_attachment"
 

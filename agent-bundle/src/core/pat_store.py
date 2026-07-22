@@ -149,8 +149,29 @@ def _derive_key() -> bytes:
     return hashlib.pbkdf2_hmac("sha256", salt, b"ttk-pat-store", 100_000)
 
 
+class _InsecureFallbackError(RuntimeError):
+    """Raised when the only available encryption is broken (XOR).
+
+    Fail closed: never silently degrade to trivially reversible crypto.
+    """
+
+
 def _xor_bytes(data: bytes, key: bytes) -> bytes:
-    """XOR data with key (repeating key if shorter)."""
+    """DISABLED: XOR is not encryption. Fail closed."""
+    raise _InsecureFallbackError(
+        "XOR fallback encryption is disabled (trivially reversible). "
+        "Use OS keyring or DPAPI. On non-Windows, install the 'keyring' package."
+    )
+
+
+def _xor_decrypt_legacy(data: bytes, key: bytes) -> bytes:
+    """Read-only XOR decode for one-time migration of legacy stored PATs.
+
+    New writes via _file_set refuse XOR (fail closed). This path exists
+    solely so load_pat() self-heal can migrate the value to the keyring,
+    after which the file is overwritten with DPAPI or removed.
+    """
+    # ponytail: remove after one release cycle when legacy files are gone.
     kl = len(key)
     return bytes(b ^ key[i % kl] for i, b in enumerate(data))
 
@@ -166,8 +187,8 @@ def _file_get() -> str | None:
         dec = _dpapi_decrypt(raw)
         if dec:
             return dec.decode("utf-8")
-        # Fallback: XOR with derived key
-        dec = _xor_bytes(raw, _derive_key())
+        # Legacy migration: decode existing XOR-stored value (read-only).
+        dec = _xor_decrypt_legacy(raw, _derive_key())
         return dec.decode("utf-8")
     except Exception:
         # Legacy base64 migration path
@@ -183,13 +204,15 @@ def _file_set(token: str) -> bool:
         # The stable config dir may not exist yet on a fresh machine.
         FALLBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
         data = token.encode("utf-8")
-        # Try DPAPI (Windows)
+        # Try DPAPI (Windows) -- the only acceptable file-based encryption.
         enc = _dpapi_encrypt(data)
         if enc:
             FALLBACK_PATH.write_bytes(enc)
         else:
-            # Non-Windows: XOR with derived key
-            FALLBACK_PATH.write_bytes(_xor_bytes(data, _derive_key()))
+            # Non-Windows: refuse to write with broken XOR crypto.
+            # The keyring path in save_pat() is the primary store; this
+            # file fallback only works on Windows (DPAPI).
+            return False
         try:
             os.chmod(FALLBACK_PATH, stat.S_IRUSR | stat.S_IWUSR)
         except Exception:

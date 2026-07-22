@@ -61,11 +61,23 @@ function upstreamBase(): string | null {
  * Enforce the optional shared proxy token. When LLM_PROXY_TOKEN is set on the
  * server, callers must present it (via `x-proxy-token`, or as the Bearer token
  * / x-api-key the agent already sends). This keeps the endpoint from being an
- * open relay to your gateway. When unset, the proxy is open (dev convenience).
+ * open relay to your gateway.
+ *
+ * AUDIT-014: In production, if no token is configured the endpoint rejects
+ * requests unless LLM_PROXY_ALLOW_UNAUTHENTICATED=true is explicitly set.
  */
 function callerAuthorized(req: NextRequest): boolean {
   const expected = process.env.LLM_PROXY_TOKEN?.trim();
-  if (!expected) return true; // no gate configured
+  if (!expected) {
+    // In production, require explicit opt-in to run without auth
+    if (
+      process.env.NODE_ENV === "production" &&
+      process.env.LLM_PROXY_ALLOW_UNAUTHENTICATED !== "true"
+    ) {
+      return false;
+    }
+    return true; // dev convenience
+  }
 
   const presented =
     req.headers.get("x-proxy-token")?.trim() ||
@@ -100,11 +112,30 @@ async function handle(
   }
 
   if (!callerAuthorized(req)) {
+    const tokenConfigured = !!process.env.LLM_PROXY_TOKEN?.trim();
+    if (!tokenConfigured) {
+      return Response.json(
+        {
+          error:
+            "LLM_PROXY_TOKEN must be set in production. Set LLM_PROXY_ALLOW_UNAUTHENTICATED=true to bypass (not recommended).",
+        },
+        { status: 503 }
+      );
+    }
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { path } = await ctx.params;
-  const suffix = (path ?? []).join("/");
+
+  // AUDIT-015: Reject path traversal / SSRF attempts.
+  const segments = path ?? [];
+  for (const seg of segments) {
+    if (!seg || seg === ".." || seg.includes("\\") || seg.includes("\0")) {
+      return Response.json({ error: "Invalid path segment" }, { status: 400 });
+    }
+  }
+
+  const suffix = segments.join("/");
   const search = req.nextUrl.search ?? "";
   const target = `${base}/${suffix}${search}`;
 

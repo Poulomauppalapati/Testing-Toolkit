@@ -16,12 +16,35 @@ rather than duplicating their HTTP logic.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from core.source_types import SourceType, append_source_suffix, strip_source_suffix
 from core.trace import trace
+
+
+def _is_trusted_host(url: str) -> bool:
+    """Validate URL host is a genuine Azure DevOps or JIRA instance.
+
+    Prevents SSRF via substring bypass (e.g. evil-azure.com or
+    attacker.com?q=azure.com) by parsing the URL and checking the
+    hostname exactly.
+    """
+    # ponytail: static allowlist; add cfg-driven custom hosts if orgs self-host
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        # Azure DevOps: dev.azure.com or *.visualstudio.com
+        if host == "dev.azure.com" or host.endswith(".visualstudio.com"):
+            return True
+        # JIRA: *.atlassian.net
+        if host.endswith(".atlassian.net"):
+            return True
+        return False
+    except Exception:
+        return False
 
 router = APIRouter()
 

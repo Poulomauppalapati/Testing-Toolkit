@@ -75,6 +75,9 @@ class KbBundleResult:
     error: str = ""
 
 
+# ponytail: configurable per-deployment if orgs have very large bundles
+MAX_COMBINED_PAGES: Final[int] = 2000
+
 # =====================================================================
 # Internal helpers
 # =====================================================================
@@ -87,21 +90,37 @@ def _safe_stem(stem: str) -> str:
     return s or "document"
 
 
-def _merge_pdfs_ordered(pdfs: list[Path], out_path: Path) -> int:
-    """Merge PDFs in given order. Returns total page count."""
+def _merge_pdfs_ordered(
+    pdfs: list[Path],
+    out_path: Path,
+    on_log: Callable[[str], None] | None = None,
+) -> int:
+    """Merge PDFs in given order with bounded memory. Returns total page count."""
     writer = PdfWriter()
-    total = 0
+    total: int = 0
+    capped: bool = False
     for p in pdfs:
         try:
             reader = PdfReader(str(p))
             for page in reader.pages:
+                if total >= MAX_COMBINED_PAGES:
+                    capped = True
+                    break
                 writer.add_page(page)
                 total += 1
+            del reader
         except Exception:
             pass
+        if capped:
+            break
+    if capped and on_log:
+        on_log(f"[WARN] Combined PDF capped at {MAX_COMBINED_PAGES} pages "
+               f"to prevent OOM; remaining pages skipped.")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("wb") as f:
         writer.write(f)
+    del writer
+    gc.collect()
     return total
 
 
@@ -521,7 +540,7 @@ def build_kb_bundle(
         result.error = "None of the WI PDFs exist on disk"
         return result
 
-    n_pages = _merge_pdfs_ordered(existing, combined_path)
+    n_pages = _merge_pdfs_ordered(existing, combined_path, on_log=on_log)
     result.combined_pdf = combined_path
     if on_log:
         on_log(

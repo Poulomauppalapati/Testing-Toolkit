@@ -859,8 +859,14 @@ class AgenticToolExecutor:
         try:
             self._pending_dialog.put_nowait(dialog)
         except asyncio.QueueFull:
-            # Auto-dismiss if queue full to prevent blocking
-            asyncio.ensure_future(dialog.dismiss())
+            # Auto-dismiss if queue full; safe wrapper prevents unhandled exception
+            # if the page navigated away before dismiss completes
+            async def _safe_dismiss() -> None:
+                try:
+                    await dialog.dismiss()
+                except Exception:
+                    pass
+            asyncio.ensure_future(_safe_dismiss())
 
     # --- Public API ---
 
@@ -878,6 +884,30 @@ class AgenticToolExecutor:
         locator_strategy: str = ""
         locator_history: list[str] | None = None
         screenshot_path: Path | None = None
+
+        # AUDIT-006: Claude may send multi_tool_use.parallel as a meta-tool;
+        # getattr cannot resolve the dot in the name. Return explicit error
+        # so the LLM retries sequentially.
+        if tool_name == "multi_tool_use.parallel":
+            observation = (
+                "[ERROR] Parallel tool use is not supported; "
+                "process tools sequentially."
+            )
+            status = "error"
+            duration_ms = int((time.perf_counter() - t0) * 1000)
+            result = StepResult(
+                step_num=step_num,
+                action=f"{tool_name}()",
+                expected="",
+                actual=observation[:500],
+                status=status,
+                locator_strategy="",
+                locator_history=None,
+                screenshot_path=None,
+                duration_ms=duration_ms,
+            )
+            self._on_log(f"[WARN] Step {step_num}: {tool_name} rejected (parallel not supported)")
+            return observation, result
 
         handler = getattr(self, f"_exec_{tool_name}", None)
         if handler is None:
@@ -939,6 +969,10 @@ class AgenticToolExecutor:
         if tab_index < 0 or tab_index >= len(pages):
             return f"[ERROR] Tab index {tab_index} out of range (0-{len(pages)-1})", "", None
         target = pages[tab_index]
+        # AUDIT-007: guard against None/invalid page reference
+        if target is None:
+            return f"[ERROR] Tab {tab_index} has no valid page reference.", "", None
+        await target.wait_for_load_state("domcontentloaded", timeout=5000)
         await target.bring_to_front()
         self._page = target
         self._locator_factory = LocatorFactory(target)
@@ -957,12 +991,9 @@ class AgenticToolExecutor:
     async def _exec_fill(self, inp: dict[str, Any]) -> tuple[str, str, list[str] | None]:
         element_desc: str = inp["element"]
         value: str = inp["value"]
-        is_password = "password" in element_desc.lower()
 
-        # Resolve actual value (use credential for password fields)
-        fill_value = value
-        if is_password and self._credentials and value in ("{{password}}", "***", "password"):
-            fill_value = self._credentials.password
+        # AUDIT-005: substitute credential placeholders before use
+        fill_value, is_sensitive = self._substitute_credentials(value)
 
         result = await self._locator_factory.find(element_desc)
         if not result.found:
@@ -973,8 +1004,8 @@ class AgenticToolExecutor:
         await result.locator.clear()
         await result.locator.fill(fill_value)
 
-        # SECURITY: never reveal password in observation
-        display_value = "***" if is_password else value
+        # SECURITY: never reveal credential values in observation
+        display_value = "[REDACTED]" if is_sensitive else value
         return (
             f"Filled {element_desc!r} with {display_value!r} (strategy={result.strategy_used})",
             result.strategy_used, result.alternatives
@@ -984,7 +1015,9 @@ class AgenticToolExecutor:
         element_desc: str = inp["element"]
         text: str = inp["text"]
         delay_ms: int = inp.get("delay_ms", 50)
-        is_password = "password" in element_desc.lower()
+
+        # AUDIT-005: substitute credential placeholders before use
+        type_value, is_sensitive = self._substitute_credentials(text)
 
         result = await self._locator_factory.find(element_desc)
         if not result.found:
@@ -992,12 +1025,10 @@ class AgenticToolExecutor:
                 f"[ERROR] Element not found: {element_desc}\nPage state:\n{result.context_snippet}",
                 "none", result.alternatives
             )
-        type_text = text
-        if is_password and self._credentials and text in ("{{password}}", "***", "password"):
-            type_text = self._credentials.password
 
-        await result.locator.press_sequentially(type_text, delay=delay_ms)
-        display_text = "***" if is_password else text
+        await result.locator.press_sequentially(type_value, delay=delay_ms)
+        # SECURITY: never reveal credential values in observation
+        display_text = "[REDACTED]" if is_sensitive else text
         return (
             f"Typed {display_text!r} into {element_desc!r} (strategy={result.strategy_used})",
             result.strategy_used, result.alternatives
@@ -1116,10 +1147,8 @@ class AgenticToolExecutor:
         for fld in fields:
             element_desc = fld["element"]
             value = fld["value"]
-            is_password = "password" in element_desc.lower()
-            fill_value = value
-            if is_password and self._credentials and value in ("{{password}}", "***", "password"):
-                fill_value = self._credentials.password
+            # AUDIT-005: substitute credential placeholders
+            fill_value, is_sensitive = self._substitute_credentials(value)
 
             loc_result = await self._locator_factory.find(element_desc)
             if not loc_result.found:
@@ -1127,7 +1156,7 @@ class AgenticToolExecutor:
                 continue
             await loc_result.locator.clear()
             await loc_result.locator.fill(fill_value)
-            display_value = "***" if is_password else value
+            display_value = "[REDACTED]" if is_sensitive else value
             results.append(f"  OK: {element_desc} = {display_value!r} ({loc_result.strategy_used})")
             strategies.append(loc_result.strategy_used)
 
@@ -1397,6 +1426,39 @@ class AgenticToolExecutor:
 
     # --- Internal helpers ---
 
+    def _substitute_credentials(self, value: str) -> tuple[str, bool]:
+        """Replace {{username}}/{{password}} placeholders with real credentials.
+
+        Returns (resolved_value, is_sensitive). When is_sensitive is True the
+        caller MUST use [REDACTED] in any observation/log output.
+
+        SECURITY: The returned resolved value is ONLY for passing to
+        page.fill() / page.type(). It must NEVER appear in logs, observations,
+        StepResult.actual, or any artifact.
+        """
+        if not self._credentials:
+            return value, False
+
+        # Determine credential accessors (dict or object with attributes)
+        if isinstance(self._credentials, dict):
+            username: str = self._credentials.get("username", "")
+            password: str = self._credentials.get("password", "")
+        else:
+            username = getattr(self._credentials, "username", "")
+            password = getattr(self._credentials, "password", "")
+
+        sensitive = False
+        result = value
+
+        if "{{username}}" in result and username:
+            result = result.replace("{{username}}", username)
+            sensitive = True
+        if "{{password}}" in result and password:
+            result = result.replace("{{password}}", password)
+            sensitive = True
+
+        return result, sensitive
+
     async def _take_screenshot_internal(self, *, full_page: bool = False) -> Path | None:
         """Capture screenshot and save to artifacts directory."""
         try:
@@ -1424,11 +1486,13 @@ class AgenticToolExecutor:
 # ---------------------------------------------------------------------------
 
 def _safe_summary(tool_input: dict[str, Any]) -> str:
-    """Create a safe summary of tool input for logging (redacts passwords)."""
+    """Create a safe summary of tool input for logging (redacts credentials)."""
     parts: list[str] = []
     for k, v in tool_input.items():
         if "password" in k.lower():
-            parts.append(f"{k}=***")
+            parts.append(f"{k}=[REDACTED]")
+        elif isinstance(v, str) and ("{{password}}" in v or "{{username}}" in v):
+            parts.append(f"{k}=[REDACTED]")
         elif isinstance(v, str) and len(v) > 80:
             parts.append(f"{k}={v[:77]!r}...")
         else:

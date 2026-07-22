@@ -355,11 +355,26 @@ class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
     of "I installed it but the site never connects" on corporate machines.
     """
 
+    _PNA_ALLOWED_ORIGINS: frozenset[str] = frozenset((
+        "http://localhost:3000",
+        "https://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://127.0.0.1:3000",
+    ))
+
+    def _is_origin_allowed(self, origin: str) -> bool:
+        if origin in self._PNA_ALLOWED_ORIGINS:
+            return True
+        import re
+        return bool(re.match(_CORS_ORIGIN_REGEX, origin))
+
     async def dispatch(self, request: Request, call_next):
         if request.method == "OPTIONS" and request.headers.get(
             "access-control-request-private-network"
         ):
-            origin = request.headers.get("origin", "*")
+            origin = request.headers.get("origin", "")
+            if not origin or not self._is_origin_allowed(origin):
+                return Response(status_code=403)
             req_headers = request.headers.get(
                 "access-control-request-headers", "*"
             )

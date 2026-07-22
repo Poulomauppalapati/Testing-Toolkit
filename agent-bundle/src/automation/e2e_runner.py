@@ -1064,12 +1064,23 @@ async def run_e2e_tests(
                     break
 
                 statuses = {item.status for item in step_results}
-                executed = sum(item.status in ("pass", "fail", "error") for item in step_results)
-                overall = (
-                    "error" if executed == 0 or "error" in statuses
-                    else "fail" if "fail" in statuses
-                    else "pass"
+                executed = sum(
+                    item.status in ("pass", "pass_fallback", "fail", "error")
+                    for item in step_results
                 )
+                # AUDIT-018 fix: honour pass_fallback flag on the test case
+                # and count pass_fallback steps as executed/passing.
+                tc_pass_fallback = bool(tc.get("pass_fallback"))
+                if executed == 0 or "error" in statuses:
+                    overall = "error"
+                elif "fail" in statuses:
+                    # If the test case declares pass_fallback, assertion
+                    # failures degrade to warning rather than hard fail.
+                    overall = "pass_fallback" if tc_pass_fallback else "fail"
+                elif "pass_fallback" in statuses:
+                    overall = "pass_fallback"
+                else:
+                    overall = "pass"
                 try:
                     final_path = collector.screenshot_dir / "final.png"
                     await page.screenshot(path=str(final_path), full_page=False)
@@ -1103,6 +1114,8 @@ async def run_e2e_tests(
 
     # Video is finalized only after the shared context closes. Rename to
     # title-based MKV (or webm fallback) and assign to each result.
+    # AUDIT-017 fix: append tc_id to prevent filename collisions when
+    # multiple test cases share the same title.
     try:
         from .artifact_collector import _remux_to_mkv, _safe_filename
         videos = sorted(
@@ -1113,11 +1126,13 @@ async def run_e2e_tests(
             for result in results:
                 src = videos[-1]
                 base_name = _safe_filename(result.title) if result.title else result.tc_id
-                mkv_dest = video_dir / f"{base_name}.mkv"
+                # Append tc_id to guarantee uniqueness across parallel runs
+                unique_name = f"{base_name}_{result.tc_id}"
+                mkv_dest = video_dir / f"{unique_name}.mkv"
                 if _remux_to_mkv(src, mkv_dest):
                     result.video_path = mkv_dest
                 else:
-                    renamed = video_dir / f"{base_name}.webm"
+                    renamed = video_dir / f"{unique_name}.webm"
                     if renamed != src and not renamed.exists():
                         import shutil
                         shutil.copy2(str(src), str(renamed))
@@ -1237,12 +1252,20 @@ async def run_e2e_slot(
                 break
 
             statuses = {item.status for item in step_results}
-            executed = sum(item.status in ("pass", "fail", "error") for item in step_results)
-            overall = (
-                "error" if executed == 0 or "error" in statuses
-                else "fail" if "fail" in statuses
-                else "pass"
+            executed = sum(
+                item.status in ("pass", "pass_fallback", "fail", "error")
+                for item in step_results
             )
+            # AUDIT-018 fix: same pass_fallback logic as run_e2e_tests
+            tc_pass_fallback = bool(tc.get("pass_fallback"))
+            if executed == 0 or "error" in statuses:
+                overall = "error"
+            elif "fail" in statuses:
+                overall = "pass_fallback" if tc_pass_fallback else "fail"
+            elif "pass_fallback" in statuses:
+                overall = "pass_fallback"
+            else:
+                overall = "pass"
             script = generate_playwright_script(
                 tc_id=tc_id, title=title, steps=steps,
                 login_url=login_url, username=username,

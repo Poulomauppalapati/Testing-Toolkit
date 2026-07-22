@@ -21,6 +21,8 @@ class SettingsResponse(BaseModel):
     jira_url: str = ""
     jira_user: str = ""
     jira_project_prefix: str = ""
+    # -- TLS --
+    tls_mode: str = ""
 
 
 class SaveSettingsRequest(BaseModel):
@@ -59,6 +61,7 @@ async def get_settings() -> SettingsResponse:
         KEY_JIRA_URL,
         KEY_JIRA_USER,
         KEY_JIRA_PREFIX,
+        KEY_TLS_MODE,
     )
     return SettingsResponse(
         ado_configured=is_configured(),
@@ -70,6 +73,7 @@ async def get_settings() -> SettingsResponse:
         jira_url=get_setting(KEY_JIRA_URL),
         jira_user=get_setting(KEY_JIRA_USER),
         jira_project_prefix=get_setting(KEY_JIRA_PREFIX),
+        tls_mode=get_setting(KEY_TLS_MODE) or "",
     )
 
 

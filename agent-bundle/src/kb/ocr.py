@@ -36,6 +36,9 @@ LogFn = Callable[[str], None]
 _MIN_CHARS_PER_PAGE: Final[int] = 100
 _PDF_SUFFIXES: Final[frozenset[str]] = frozenset({".pdf"})
 
+# ponytail: make configurable via env/config if orgs have huge docs
+MAX_OCR_PAGES: Final[int] = 100
+
 # Page render resolution for OCR. 300 DPI recovers small UI labels (left-nav
 # step names, field captions inside screenshot-style slide pages such as
 # "Enhancement - E28.pdf") that are garbled at 150-200 DPI. Pages are
@@ -204,6 +207,11 @@ def _ocr_pdf(path: Path, on_log: LogFn | None) -> str:
         doc.close()
         del doc
 
+        if total_pages > MAX_OCR_PAGES:
+            _log(on_log, f"[WARN] PDF has {total_pages} pages; capping OCR "
+                         f"at {MAX_OCR_PAGES} to prevent OOM.")
+            total_pages = MAX_OCR_PAGES
+
         _log(on_log, f"[INFO]   OCR (API) {total_pages} page(s), "
                      f"batch={batch_size}...")
 
@@ -257,29 +265,49 @@ def _ocr_pdf(path: Path, on_log: LogFn | None) -> str:
     except Exception:
         pass
 
-    # --- Fallback: pdf2image (loads all pages; less memory-efficient) ---
+    # --- Fallback: pdf2image (batched to avoid OOM on large PDFs) ---
     try:
         from pdf2image import convert_from_path  # type: ignore
-
-        images = convert_from_path(str(path), dpi=_OCR_DPI)
-        total_pages = len(images)
-        _log(on_log, f"[INFO]   OCR (pdf2image -> API) {total_pages} page(s)...")
+        from pdf2image.pdf2image import pdfinfo_from_path  # type: ignore
 
         import io as _io
+
+        # Get page count without loading images
+        try:
+            info = pdfinfo_from_path(str(path))
+            total_pages: int = int(info.get("Pages", 0))
+        except Exception:
+            # If pdfinfo unavailable, load first batch to discover count
+            # (capped by MAX_OCR_PAGES anyway)
+            total_pages = MAX_OCR_PAGES
+
+        if total_pages > MAX_OCR_PAGES:
+            _log(on_log, f"[WARN] PDF has {total_pages} pages; capping OCR "
+                         f"at {MAX_OCR_PAGES} to prevent OOM.")
+            total_pages = MAX_OCR_PAGES
+
+        _log(on_log, f"[INFO]   OCR (pdf2image -> API) {total_pages} page(s), "
+                     f"batch={batch_size}...")
 
         results_fb: list[tuple[int, str]] = []
         for batch_start in range(0, total_pages, batch_size):
             batch_end = min(batch_start + batch_size, total_pages)
-            batch_imgs = [(i, images[i]) for i in range(batch_start, batch_end)]
+            # pdf2image uses 1-based page numbering
+            images = convert_from_path(
+                str(path), dpi=_OCR_DPI,
+                first_page=batch_start + 1,
+                last_page=batch_end,
+            )
 
             with ThreadPoolExecutor(max_workers=api_workers) as pool:
                 futures = {}
-                for idx, img in batch_imgs:
+                for local_idx, img in enumerate(images):
+                    page_idx = batch_start + local_idx
                     buf = _io.BytesIO()
                     img.save(buf, format="PNG")
                     png_bytes = buf.getvalue()
                     del buf
-                    futures[pool.submit(_ocr_single_image, png_bytes, idx)] = idx
+                    futures[pool.submit(_ocr_single_image, png_bytes, page_idx)] = page_idx
                 for future in as_completed(futures):
                     try:
                         results_fb.append(future.result())
@@ -288,9 +316,9 @@ def _ocr_pdf(path: Path, on_log: LogFn | None) -> str:
 
             _log(on_log, f"[INFO]   OCR batch {batch_start+1}-"
                          f"{batch_end}/{total_pages} done")
+            del images
             gc.collect()
 
-        del images
         results_fb.sort(key=lambda x: x[0])
         parts = [text for _, text in results_fb if text.strip()]
         del results_fb

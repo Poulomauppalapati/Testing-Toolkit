@@ -19,6 +19,13 @@ from agent.jobs import Job, spawn_job_task
 router = APIRouter()
 _log = logging.getLogger(__name__)
 
+
+def _validate_project(project: str) -> str:
+    """Reject project names that could escape PROJECTS_DIR via path traversal."""
+    if not project or ".." in project or "/" in project or "\\" in project or "\x00" in project:
+        raise HTTPException(400, "Invalid project name")
+    return project
+
 _MAX_KB_UPLOAD_BYTES = 250 * 1024 * 1024
 _MAX_TEMPLATE_UPLOAD_BYTES = 25 * 1024 * 1024
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -53,6 +60,7 @@ class RetrieveResponse(BaseModel):
 @trace
 async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     """Run hybrid BM25 + dense + reranker search on the project KB."""
+    _validate_project(req.project)
     from kb.retrieval import HybridRetriever
 
     project_dir = PROJECTS_DIR / req.project
@@ -442,6 +450,7 @@ async def index_project(req: IndexRequest) -> dict:
     closed. If an index for this project is already running we return that same
     job id instead of starting a duplicate, so a reopened browser (or a second
     auto-index trigger) simply reattaches to the in-flight run."""
+    _validate_project(req.project)
     from agent.jobs import JOBS
 
     project_dir = PROJECTS_DIR / req.project
@@ -506,6 +515,7 @@ async def active_index_job(project: str) -> dict:
     """Return the id of an in-flight KB index job for ``project`` (if any) so a
     reopened browser can reattach to indexing that is still running in the agent
     after the web app was closed. ``job_id`` is null when nothing is running."""
+    _validate_project(project)
     from agent.jobs import JOBS
 
     job = JOBS.find_active("kb_index", project)
@@ -524,6 +534,7 @@ async def upload_document(
     then atomically replaces the destination. That keeps memory flat, prevents
     partial overwrites, and never blocks the event loop. No indexing happens
     here - that is deferred to the explicit rebuild/auto-index on dialog close."""
+    _validate_project(project)
     import tempfile
 
     project_dir = PROJECTS_DIR / project
@@ -565,6 +576,7 @@ async def upload_document(
 @trace
 async def kb_status(project: str) -> dict:
     """Return KB index status for a project."""
+    _validate_project(project)
     project_dir = PROJECTS_DIR / project
     kb_dir = project_dir / "kb"
     index_file = project_dir / "kb_index.json"
@@ -602,6 +614,7 @@ async def delete_document(project: str, name: str) -> dict:
     """Delete a single document from the project's kb/ folder and invalidate
     the stored index so the next rebuild reflects the change. Mirrors the
     desktop project KB dialog's "Remove selected" action."""
+    _validate_project(project)
     project_dir = PROJECTS_DIR / project
     kb_dir = (project_dir / "kb").resolve()
     target = (kb_dir / name).resolve()
@@ -631,6 +644,7 @@ async def clear_kb(project: str, keep_documents: bool = False) -> dict:
     ``keep_documents=true`` to keep the files and only drop the derived index.
 
     This is a hard terminate + wipe (a "force kill"), not a graceful rebuild."""
+    _validate_project(project)
     from agent.jobs import JOBS
     import core.project_store as ps
 
@@ -687,6 +701,7 @@ def _template_payload(project: str, phase: str) -> dict:
 @trace
 async def template_status(project: str, phase: str) -> dict:
     """Return the stored template status for a phase (implementation/sit/uat)."""
+    _validate_project(project)
     return _template_payload(project, phase)
 
 
@@ -701,6 +716,7 @@ async def upload_template(
     once into a reusable spec. Best-effort LLM column analysis is attempted
     when an API key is configured, exactly like the desktop dialog; otherwise
     the heuristic analyzer is used."""
+    _validate_project(project)
     import tempfile
 
     import core.project_store as ps
@@ -759,6 +775,7 @@ async def upload_template(
 @trace
 async def delete_template(project: str, phase: str) -> dict:
     """Remove the stored template (and its spec) for a phase."""
+    _validate_project(project)
     import core.project_store as ps
 
     paths = ps.ProjectPaths.for_name(project)
@@ -782,6 +799,7 @@ async def delete_template(project: str, phase: str) -> dict:
 async def download_template(project: str, phase: str):
     """Download the stored template workbook for a phase (web equivalent of
     the desktop dialog's "Open" button)."""
+    _validate_project(project)
     from fastapi.responses import FileResponse
 
     import core.project_store as ps
@@ -844,6 +862,7 @@ def _context_payload(project: str) -> dict:
 @trace
 async def active_context_job(project: str) -> dict:
     """Return live context progress so the UI can track it independently."""
+    _validate_project(project)
     from agent.jobs import JOBS
 
     job = JOBS.find_active("kb_context", project)
@@ -859,6 +878,7 @@ async def get_context(project: str) -> dict:
     """Return the auto-extracted project context summary (actors, entities,
     workflows, screens, ...). Web equivalent of the desktop dialog's
     "View" button + status label."""
+    _validate_project(project)
     return _context_payload(project)
 
 
@@ -870,6 +890,7 @@ class ContextSettingRequest(BaseModel):
 @trace
 async def set_context_setting(project: str, req: ContextSettingRequest) -> dict:
     """Enable or disable injecting the stored summary into generation."""
+    _validate_project(project)
     import core.project_store as ps
 
     context = await asyncio.to_thread(ps.read_context_summary, project)
@@ -892,6 +913,7 @@ async def edit_context(project: str, req: ContextEditRequest) -> dict:
     """Save a user-edited project context summary. The edited text is injected
     verbatim into generation (overriding the auto-rendered category sections).
     An empty summary clears the override and falls back to the extracted one."""
+    _validate_project(project)
     import core.project_store as ps
     from kb.context_summary import ProjectContext
 
@@ -909,6 +931,7 @@ async def edit_context(project: str, req: ContextEditRequest) -> dict:
 @trace
 async def clear_context(project: str) -> dict:
     """Delete the stored project context summary for this project."""
+    _validate_project(project)
     import core.project_store as ps
 
     await asyncio.to_thread(ps.clear_context_summary, project)
@@ -920,6 +943,7 @@ async def clear_context(project: str) -> dict:
 async def regenerate_context(project: str) -> dict:
     """Re-extract project context from the current KB index using the LLM and
     persist it. Mirrors the desktop dialog's "Regenerate" button."""
+    _validate_project(project)
     import hashlib
 
     import core.project_store as ps

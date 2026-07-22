@@ -1207,19 +1207,27 @@ def _windows_startup_dir() -> Path:
     return root / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
 
 
+def _vbs_escape(s: str) -> str:
+    """Escape a string for safe embedding in VBScript double-quoted strings."""
+    return s.replace('"', '""')
+
+
 def _windows_startup_vbs(pythonw: str, src_dir: str, pythonpath: str = "") -> str:
     """A .vbs that launches the agent fully hidden (window style 0, no console)
     and returns immediately so logon is never blocked. Sets cwd + PYTHONPATH so
     `-m agent` resolves for both venv and --target installs."""
+    safe_pythonw = _vbs_escape(pythonw)
+    safe_src_dir = _vbs_escape(src_dir)
+    safe_pythonpath = _vbs_escape(pythonpath)
     set_env = ""
     if pythonpath:
-        set_env = f'WshShell.Environment("PROCESS")("PYTHONPATH") = "{pythonpath}"\n'
+        set_env = f'WshShell.Environment("PROCESS")("PYTHONPATH") = "{safe_pythonpath}"\n'
     return (
         f"' Testing Toolkit agent autostart ({_STARTUP_MARKER})\n"
         'Set WshShell = CreateObject("WScript.Shell")\n'
-        f'WshShell.CurrentDirectory = "{src_dir}"\n'
+        f'WshShell.CurrentDirectory = "{safe_src_dir}"\n'
         f"{set_env}"
-        f'WshShell.Run """{pythonw}"" -m agent", 0, False\n'
+        f'WshShell.Run """{safe_pythonw}"" -m agent", 0, False\n'
     )
 
 
@@ -1883,6 +1891,16 @@ def _safe_extract_tar(archive, destination: Path) -> None:
         archive.extractall(destination)
 
 
+def _safe_extract_zip(zf: "zipfile.ZipFile", destination: Path) -> None:
+    """Extract a zip archive with path traversal protection."""
+    root = destination.resolve()
+    for info in zf.infolist():
+        target = (destination / info.filename).resolve()
+        if root != target and root not in target.parents:
+            raise RuntimeError(f"Unsafe zip member: {info.filename}")
+    zf.extractall(destination)
+
+
 def _extract_node_from_bundle() -> bool:
     """Reassemble and extract the bundled Node.js binary to _NODE_INSTALL_DIR.
 
@@ -1947,7 +1965,7 @@ def _extract_node_from_bundle() -> bool:
         extract_dir.mkdir()
         if archive_type == "zip":
             with zipfile.ZipFile(archive_path) as zf:
-                zf.extractall(extract_dir)
+                _safe_extract_zip(zf, extract_dir)
         else:
             with _tarfile.open(archive_path, "r:gz") as tf:
                 _safe_extract_tar(tf, extract_dir)

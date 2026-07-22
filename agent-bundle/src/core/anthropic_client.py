@@ -18,6 +18,7 @@ Public API:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import ssl as _ssl
@@ -65,6 +66,23 @@ def _is_temperature_deprecated(detail: str) -> bool:
         "deprecat" in d or "not supported" in d or "unsupported" in d
         or "not allowed" in d or "cannot be" in d
     )
+
+def _run_sync(coro: Any) -> Any:
+    """Run an async coroutine from sync context, safe when a loop is running.
+
+    When called from within an already-running event loop (e.g. inside a
+    FastAPI handler or Jupyter), spins up a background thread to avoid the
+    'cannot call asyncio.run() from a running event loop' crash.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(1) as pool:
+            return pool.submit(asyncio.run, coro).result(timeout=300)
+    return asyncio.run(coro)
+
 
 # Appended to the system prompt of the agentic chat so the assistant stays
 # on-topic (testing / QA / project work items). Mirrors the desktop client.
@@ -336,16 +354,17 @@ class AnthropicClient:
                     resp = await client.post(self._url(), json=body)
                 except RecursionError:
                     # truststore on Windows/Python 3.12 can infinite-recurse
-                    # in verify_mode.__set__. Fall back to default SSL context.
+                    # in verify_mode.__set__. Fall back to a fresh default
+                    # SSL context for this request only -- never mutate the
+                    # shared instance field from a concurrent coroutine.
                     self._log(
                         "[WARN] TLS recursion (truststore bug); retrying "
                         "with default SSL context."
                     )
-                    self.ssl_verify = _ssl.create_default_context()
-                    verify = self.ssl_verify
+                    _safe_ctx = _ssl.create_default_context()
                     async with httpx.AsyncClient(
                         headers=self._headers(),
-                        verify=verify,
+                        verify=_safe_ctx,
                         timeout=httpx.Timeout(effective_timeout),
                     ) as fallback_client:
                         resp = await fallback_client.post(
@@ -507,7 +526,7 @@ class AnthropicClient:
         return out
 
     def list_models(self, page_limit: int = 1000) -> list[ModelInfo]:
-        return asyncio.run(self.list_models_async(page_limit=page_limit))
+        return _run_sync(self.list_models_async(page_limit=page_limit))
 
     async def verify_async(self, model: str) -> tuple[bool, str]:
         """Validate the API key + base URL with a 1-token completion.
@@ -572,11 +591,13 @@ class AnthropicClient:
         )
 
     # Sync convenience wrappers (UI runs these on a worker thread).
+    # Use _run_sync to avoid crashing when called from within a running
+    # event loop (e.g. FastAPI handlers, Jupyter notebooks).
     def complete(self, **kwargs: Any) -> CompletionResult:
-        return asyncio.run(self.complete_async(**kwargs))
+        return _run_sync(self.complete_async(**kwargs))
 
     def verify(self, model: str) -> tuple[bool, str]:
-        return asyncio.run(self.verify_async(model))
+        return _run_sync(self.verify_async(model))
 
     def stream_message(
         self,
@@ -930,92 +951,164 @@ class AnthropicClient:
             if asyncio.iscoroutine(res):
                 await res
 
+        last_exc: Exception | None = None
         async with httpx.AsyncClient(
             headers=headers,
             verify=self.ssl_verify,
             timeout=httpx.Timeout(self.timeout_sec, read=300.0),
         ) as client:
-            async with client.stream(
-                "POST", self._url(), json=body
-            ) as resp:
-                if resp.status_code in (401, 403):
-                    await resp.aread()
-                    raise AnthropicAuthError(
-                        f"HTTP {resp.status_code}: API key rejected."
-                    )
-                if resp.status_code != 200:
-                    await resp.aread()
-                    raise AnthropicAPIError(
-                        f"HTTP {resp.status_code}: {self._error_detail(resp)}"
-                    )
+            for attempt in range(self.retry_count + 1):
+                try:
+                    async with client.stream(
+                        "POST", self._url(), json=body
+                    ) as resp:
+                        if resp.status_code in (401, 403):
+                            await resp.aread()
+                            raise AnthropicAuthError(
+                                f"HTTP {resp.status_code}: API key rejected."
+                            )
+                        if resp.status_code in _RETRY_STATUS:
+                            await resp.aread()
+                            self._report_nw_failure()
+                            last_exc = AnthropicAPIError(
+                                f"HTTP {resp.status_code}: "
+                                f"{self._error_detail(resp)}"
+                            )
+                            retry_after = self._retry_after(resp, attempt)
+                            self._log(
+                                f"[WARN] Stream HTTP {resp.status_code}; "
+                                f"retrying in {retry_after:.1f}s "
+                                f"({attempt + 1}/{self.retry_count})"
+                            )
+                            await asyncio.sleep(retry_after)
+                            continue
+                        if resp.status_code != 200:
+                            await resp.aread()
+                            raise AnthropicAPIError(
+                                f"HTTP {resp.status_code}: "
+                                f"{self._error_detail(resp)}"
+                            )
 
-                async for line in resp.aiter_lines():
-                    if not line or not line.startswith("data: "):
-                        continue
-                    payload = line[6:]
-                    if payload.strip() == "[DONE]":
-                        break
-                    try:
-                        event = json.loads(payload)
-                    except Exception as e:
-                        _log.debug("stream_message_with_tools_async SSE JSON parse failed: %s", e)
-                        continue
-                    etype = event.get("type", "")
+                        self._report_nw_success()
+                        async for line in resp.aiter_lines():
+                            if not line or not line.startswith("data: "):
+                                continue
+                            payload = line[6:]
+                            if payload.strip() == "[DONE]":
+                                break
+                            try:
+                                event = json.loads(payload)
+                            except Exception as e:
+                                _log.debug(
+                                    "stream_message_with_tools_async SSE "
+                                    "JSON parse failed: %s", e
+                                )
+                                continue
+                            etype = event.get("type", "")
 
-                    if etype == "content_block_start":
-                        cb = event.get("content_block", {})
-                        cb_type = cb.get("type", "")
-                        if cb_type == "text":
-                            current_block = {"type": "text", "text": ""}
-                            text_accum = ""
-                        elif cb_type == "tool_use":
-                            current_block = {
-                                "type": "tool_use",
-                                "id": cb.get("id", ""),
-                                "name": cb.get("name", ""),
-                                "input": {},
-                            }
-                            tool_input_json = ""
+                            if etype == "content_block_start":
+                                cb = event.get("content_block", {})
+                                cb_type = cb.get("type", "")
+                                if cb_type == "text":
+                                    current_block = {
+                                        "type": "text", "text": "",
+                                    }
+                                    text_accum = ""
+                                elif cb_type == "tool_use":
+                                    current_block = {
+                                        "type": "tool_use",
+                                        "id": cb.get("id", ""),
+                                        "name": cb.get("name", ""),
+                                        "input": {},
+                                    }
+                                    tool_input_json = ""
 
-                    elif etype == "content_block_delta":
-                        delta = event.get("delta", {})
-                        dtype = delta.get("type", "")
-                        if dtype == "text_delta" and current_block:
-                            chunk = delta.get("text", "")
-                            text_accum += chunk
-                            await _emit(chunk)
-                        elif dtype == "input_json_delta" and current_block:
-                            tool_input_json += delta.get("partial_json", "")
-
-                    elif etype == "content_block_stop":
-                        if current_block:
-                            if current_block["type"] == "text":
-                                current_block["text"] = text_accum
-                            elif current_block["type"] == "tool_use":
-                                try:
-                                    current_block["input"] = (
-                                        json.loads(tool_input_json)
-                                        if tool_input_json else {}
+                            elif etype == "content_block_delta":
+                                delta = event.get("delta", {})
+                                dtype = delta.get("type", "")
+                                if dtype == "text_delta" and current_block:
+                                    chunk = delta.get("text", "")
+                                    text_accum += chunk
+                                    await _emit(chunk)
+                                elif (
+                                    dtype == "input_json_delta"
+                                    and current_block
+                                ):
+                                    tool_input_json += delta.get(
+                                        "partial_json", ""
                                     )
-                                except json.JSONDecodeError:
-                                    current_block["input"] = {}
-                            content_blocks.append(current_block)
-                            current_block = None
 
-                    elif etype == "message_delta":
-                        delta = event.get("delta", {})
-                        stop_reason = delta.get("stop_reason", stop_reason)
+                            elif etype == "content_block_stop":
+                                if current_block:
+                                    if current_block["type"] == "text":
+                                        current_block["text"] = text_accum
+                                    elif current_block["type"] == "tool_use":
+                                        try:
+                                            current_block["input"] = (
+                                                json.loads(tool_input_json)
+                                                if tool_input_json else {}
+                                            )
+                                        except json.JSONDecodeError:
+                                            current_block["input"] = {}
+                                    content_blocks.append(current_block)
+                                    current_block = None
 
-                    elif etype == "message_stop":
-                        break
-                    elif etype == "error":
-                        err_msg = (
-                            event.get("error", {}).get("message", "")
-                            or "Stream error"
+                            elif etype == "message_delta":
+                                delta = event.get("delta", {})
+                                stop_reason = delta.get(
+                                    "stop_reason", stop_reason
+                                )
+
+                            elif etype == "message_stop":
+                                break
+                            elif etype == "error":
+                                err_msg = (
+                                    event.get("error", {}).get("message", "")
+                                    or "Stream error"
+                                )
+                                raise AnthropicAPIError(
+                                    f"Stream error: {err_msg}"
+                                )
+
+                        # Stream completed successfully
+                        return StreamResult(
+                            content=content_blocks, stop_reason=stop_reason
                         )
-                        raise AnthropicAPIError(f"Stream error: {err_msg}")
 
-        return StreamResult(content=content_blocks, stop_reason=stop_reason)
+                except AnthropicAuthError:
+                    raise
+                except AnthropicAPIError:
+                    raise
+                except httpx.ConnectError as e:
+                    self._report_nw_failure()
+                    raise AnthropicConnectionError(
+                        f"Cannot reach {self._url()} (DNS/firewall): {e!r}"
+                    ) from e
+                except (_ssl.SSLError, _ssl.SSLCertVerificationError) as e:
+                    self._report_nw_failure()
+                    raise AnthropicConnectionError(
+                        f"TLS error reaching the API (proxy interception?): "
+                        f"{e!r}. Try Rebuild TLS in Settings."
+                    ) from e
+                except httpx.TimeoutException as e:
+                    last_exc = e
+                    self._report_nw_failure()
+                    self._log(
+                        f"[WARN] Stream timeout (attempt "
+                        f"{attempt + 1}/{self.retry_count + 1})"
+                    )
+                    await asyncio.sleep(
+                        self.retry_backoff_sec * (attempt + 1)
+                    )
+                    continue
+
+        # Exhausted retries
+        if isinstance(last_exc, AnthropicAPIError) and "429" in str(last_exc):
+            raise AnthropicRateLimitError(str(last_exc)) from last_exc
+        raise AnthropicAPIError(
+            f"Stream request failed after {self.retry_count} attempts: "
+            f"{last_exc!r}"
+        )
 
     # -----------------------------------------------------------------
     # OpenAI /chat/completions transport (used when provider_format ==
@@ -1050,14 +1143,16 @@ class AnthropicClient:
             try:
                 resp = await client.post(self._chat_url(), json=body)
             except RecursionError:
+                # Thread-safe: use a local context, do not mutate shared
+                # self.ssl_verify from a concurrent coroutine.
                 self._log(
                     "[WARN] TLS recursion (truststore bug); retrying "
                     "with default SSL context."
                 )
-                self.ssl_verify = _ssl.create_default_context()
+                _safe_ctx = _ssl.create_default_context()
                 async with httpx.AsyncClient(
                     headers=self._headers(),
-                    verify=self.ssl_verify,
+                    verify=_safe_ctx,
                     timeout=httpx.Timeout(self.timeout_sec),
                 ) as fb:
                     resp = await fb.post(self._chat_url(), json=body)
@@ -1223,7 +1318,7 @@ class AnthropicClient:
     def list_working_models(
         self, on_progress: Callable[[int, int], None] | None = None,
     ) -> list[ModelInfo]:
-        return asyncio.run(self.list_working_models_async(on_progress))
+        return _run_sync(self.list_working_models_async(on_progress))
 
 
 # Generic aliases (provider-neutral public API)

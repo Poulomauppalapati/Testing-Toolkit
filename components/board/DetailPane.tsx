@@ -34,6 +34,25 @@ import {
 import { useAppState } from "@/lib/app-state";
 import { COLOR_MUTED, workItemUrl } from "@/lib/board-utils";
 
+/** Strip dangerous elements and event-handler attributes from untrusted HTML. */
+function sanitizeHtml(dirty: string): string {
+  if (!dirty) return "";
+  const doc = new DOMParser().parseFromString(dirty, "text/html");
+  const dangerous = doc.querySelectorAll(
+    "script, iframe, object, embed, form, link[rel=import], base, meta"
+  );
+  dangerous.forEach((el) => el.remove());
+  const allEls = doc.querySelectorAll("*");
+  allEls.forEach((el) => {
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.name.startsWith("on") || attr.value.startsWith("javascript:")) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+  return doc.body.innerHTML;
+}
+
 interface DetailPaneProps {
   activeWiId: WiId | null;
 }
@@ -383,7 +402,7 @@ function DetailContent({
               </div>
               <div
                 className="tt-html text-sm leading-relaxed text-[var(--tt-text-bright)] [&_a]:text-[var(--tt-primary)] [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded-md [&_img]:border [&_img]:border-[var(--tt-outline)]"
-                dangerouslySetInnerHTML={{ __html: html }}
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }}
               />
             </div>
           ))}
@@ -604,7 +623,7 @@ function Section({ title, html }: { title: string; html: string }) {
       <h4 className="text-sm font-bold text-[var(--tt-text-primary)]">{title}</h4>
       <div
         className="tt-html text-sm leading-relaxed text-[var(--tt-text-secondary)] [&_a]:text-[var(--tt-primary)] [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded-md [&_img]:border [&_img]:border-[var(--tt-outline)]"
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }}
       />
     </div>
   );

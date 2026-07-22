@@ -128,11 +128,24 @@ def contextualize_document(
     on_log: LogFn | None = None,
     stop_event: Any | None = None,
 ) -> int:
-    """Sync wrapper for one document's chunks."""
+    """Sync wrapper for one document's chunks.
+
+    Safe to call from within a running event loop (e.g. FastAPI handler).
+    """
+    import concurrent.futures
+
+    coro = contextualize_document_async(
+        client, model, doc_text, chunks, on_log=on_log,
+        stop_event=stop_event,
+    )
     try:
-        return asyncio.run(contextualize_document_async(
-            client, model, doc_text, chunks, on_log=on_log,
-            stop_event=stop_event,
-        ))
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    try:
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor(1) as pool:
+                return pool.submit(asyncio.run, coro).result(timeout=300)
+        return asyncio.run(coro)
     except Exception:
         return 0

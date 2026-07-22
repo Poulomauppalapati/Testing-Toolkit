@@ -33,8 +33,28 @@ import time
 from dataclasses import dataclass, field, replace as _dc_replace
 from pathlib import Path
 from typing import Any, Callable, Final
+from urllib.parse import urlparse
 
 _log = logging.getLogger(__name__)
+
+# -- SSRF guard: only send PAT to genuine Azure DevOps hosts ---------------
+# ponytail: static allowlist; add cfg-driven custom hosts if orgs self-host
+
+
+def _is_trusted_host(url: str) -> bool:
+    """Validate URL host is a genuine Azure DevOps instance before sending PAT."""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if host == "dev.azure.com" or host.endswith(".visualstudio.com"):
+            return True
+        return False
+    except Exception:
+        return False
+
+
+# -- Relation fetch cap to prevent unbounded N+1 loops ---------------------
+MAX_RELATION_FETCHES: int = 200  # ponytail: raise if orgs have deeper trees
 
 import httpx
 
@@ -715,18 +735,34 @@ async def _fetch_relations_per_item(
     ids: list[int], cfg: RuntimeConfig,
 ) -> dict[int, list[dict[str, Any]]]:
     """Fetch relations one work item at a time via the single-item GET
-    (?$expand=relations). Bounded concurrency keeps this from hammering ADO."""
+    (?$expand=relations). Bounded concurrency keeps this from hammering ADO.
+    Capped at MAX_RELATION_FETCHES to prevent unbounded N+1 loops."""
     out: dict[int, list[dict[str, Any]]] = {}
     if not ids:
         return out
     sem = asyncio.Semaphore(8)
+    fetch_count: int = 0
+    cap_hit = asyncio.Event()
 
     async def _one(wid: int) -> None:
+        nonlocal fetch_count
+        if cap_hit.is_set():
+            return
         url = (
             f"https://dev.azure.com/{org}/{project}/_apis/wit/workitems/{wid}"
             f"?$expand=relations&api-version={API_VER_WI}"
         )
         async with sem:
+            if cap_hit.is_set():
+                return
+            fetch_count += 1
+            if fetch_count >= MAX_RELATION_FETCHES:
+                _log.warning(
+                    "[WARN] Relation fetch cap (%d) reached; results truncated",
+                    MAX_RELATION_FETCHES,
+                )
+                cap_hit.set()
+                return
             try:
                 data = await _get_json(client, url, cfg)
                 out[wid] = data.get("relations") or []
@@ -1035,8 +1071,19 @@ _INLINE_DATA_URI_RE: Final[re.Pattern[str]] = re.compile(
 
 
 def _safe_name(name: str) -> str:
-    bad = '<>:"/\\|?*'
-    cleaned = "".join("_" if c in bad else c for c in (name or "")).strip(". ")
+    """Sanitize a user-supplied string for use as a filename.
+
+    Prevents path traversal by removing separators and '..' sequences,
+    and strips characters illegal on Windows/POSIX filesystems.
+    """
+    # Replace path separators first
+    cleaned = (name or "").replace("\\", "_").replace("/", "_")
+    # Collapse traversal sequences
+    cleaned = cleaned.replace("..", "_")
+    # Remove remaining dangerous characters
+    cleaned = re.sub(r'[<>:"|?*\x00-\x1f]', '_', cleaned)
+    # Strip leading/trailing dots and spaces (Windows restrictions)
+    cleaned = cleaned.strip(". ")
     return (cleaned or "file")[:180]
 
 
@@ -1184,6 +1231,8 @@ async def download_attachment_async(
 ) -> str:
     """Download an attachment (or any auth'd ADO blob) to dest. Returns the
     local path string."""
+    if not _is_trusted_host(url):
+        raise ValueError("URL host not in allowlist")
     dcfg = _detail_cfg(org, project, cfg)
     dest.parent.mkdir(parents=True, exist_ok=True)
     async with _client(cfg) as client:
@@ -1289,6 +1338,12 @@ async def fetch_ado_blob_async(
     """Fetch an authenticated ADO blob (inline image or attachment) fully into
     memory using the stored PAT. Returns (data, content_type). Used by the web
     proxy so the browser can render/download media it cannot authenticate to."""
+    if not _is_trusted_host(url):
+        raise httpx.HTTPStatusError(
+            "URL host not in allowlist",
+            request=httpx.Request("GET", url),
+            response=httpx.Response(400),
+        )
     dcfg = _detail_cfg(org, project, cfg)
     async with _client(cfg) as client:
         r = await client.get(

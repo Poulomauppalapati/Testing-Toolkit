@@ -660,6 +660,7 @@ async def push_test_cases_from_xlsx(req: PushXlsxRequest) -> dict[str, str]:
     review spreadsheet (so Skip=Yes rows and manual title/step edits are
     honored) instead of pushing the originally generated payload.
     """
+    from core.app_config import WORKSPACE
     from core.source_resolver import resolve
     from testgen.testcase_excel import ExcelParseError, xlsx_to_payload
 
@@ -667,7 +668,10 @@ async def push_test_cases_from_xlsx(req: PushXlsxRequest) -> dict[str, str]:
         resolve(req.project)  # validates the resolved source is configured
     except ValueError as e:
         raise HTTPException(400, str(e))
-    path = Path(req.xlsx_path)
+    path = Path(req.xlsx_path).resolve()
+    root = Path(WORKSPACE).resolve()
+    if root not in path.parents and path != root:
+        raise HTTPException(403, "Path outside workspace")
     if not path.exists():
         raise HTTPException(404, f"Reviewed Excel not found: {req.xlsx_path}")
     try:

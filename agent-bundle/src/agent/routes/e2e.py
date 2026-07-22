@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -26,6 +27,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agent.jobs import JOBS, Job, spawn_job_task
+
+# Lock protecting Job.result dict mutations from concurrent threads
+_jobs_lock = threading.Lock()
 from automation.credential_vault import CredentialVault
 from core.app_config import EXPORTS_DIR, OUTPUTS_DIR
 from core.trace import trace
@@ -410,8 +414,9 @@ async def _run_e2e(job: Job, req: E2EStartRequest) -> None:
         tc_statuses: dict[str, str] = {}
 
         def _on_tc_done(result: Any) -> None:
-            tc_statuses[result.tc_id] = result.overall_status
-            job.result = {**(job.result or {}), "tc_statuses": dict(tc_statuses)}
+            with _jobs_lock:
+                tc_statuses[result.tc_id] = result.overall_status
+                job.result = {**(job.result or {}), "tc_statuses": dict(tc_statuses)}
 
         # --- Launch browser and run agentic suite ---
         async with browser_session(output_dir=output_dir, maximized=True) as (
@@ -565,6 +570,10 @@ async def start_e2e(req: E2EStartRequest) -> dict[str, str]:
         raise HTTPException(400, "No project specified")
     if not req.env:
         raise HTTPException(400, "No environment specified")
+    # AUDIT-030: reject if an E2E job is already running
+    existing = JOBS.find_active("e2e", req.project)
+    if existing is not None:
+        raise HTTPException(409, "An E2E run is already in progress for this project.")
     job = JOBS.create("e2e", project=req.project)
     job.log("[INFO] Starting E2E automation...")
     spawn_job_task(_run_e2e(job, req), job)
@@ -588,8 +597,9 @@ def stop_e2e(job_id: str, wi_id: str = "") -> dict[str, Any]:
     # Per-WI cancellation: signal the specific slot's stop_event
     # The parallel runner's slots check their own stop_event.
     # We store per-WI stop signals in the job's result dict.
-    wi_stops: dict[str, bool] = (job.result or {}).get("_wi_stops", {})
-    wi_stops[wi_id] = True
-    job.result = {**(job.result or {}), "_wi_stops": wi_stops}
+    with _jobs_lock:
+        wi_stops: dict[str, bool] = (job.result or {}).get("_wi_stops", {})
+        wi_stops[wi_id] = True
+        job.result = {**(job.result or {}), "_wi_stops": wi_stops}
     job.log(f"[INFO] Stop requested for WI {wi_id}.")
     return {"stopped": True, "scope": "wi", "wi_id": wi_id}

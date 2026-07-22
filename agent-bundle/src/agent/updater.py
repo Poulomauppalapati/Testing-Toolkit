@@ -227,6 +227,10 @@ def apply_patch() -> dict[str, Any]:
             continue
 
         target = src_dir / rel_path
+        # Guard against path traversal in manifest entries
+        if not target.resolve().is_relative_to(src_dir.resolve()):
+            errors.append(f"{rel_path}: path traversal blocked")
+            continue
         if not target.exists():
             continue
 

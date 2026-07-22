@@ -70,18 +70,31 @@ def _machine_key() -> bytes:
     return hashlib.pbkdf2_hmac("sha256", seed.encode(), b"tt_salt_v2", 100000)
 
 
+class _InsecureFallbackError(RuntimeError):
+    """Raised when the only available encryption is broken (XOR).
+
+    Fail closed: never silently degrade to trivially reversible crypto.
+    """
+
+
 def _fallback_encrypt(data: bytes) -> bytes:
-    """XOR-based encryption with machine-derived key (portable fallback)."""
-    key = _machine_key()
-    # Simple repeating-key XOR with HMAC integrity tag
-    extended_key = (key * ((len(data) // len(key)) + 1))[:len(data)]
-    encrypted = bytes(a ^ b for a, b in zip(data, extended_key))
-    tag = hashlib.sha256(key + data).digest()[:16]
-    return tag + encrypted
+    """DISABLED: XOR is not encryption. Fail closed."""
+    raise _InsecureFallbackError(
+        "XOR fallback encryption is disabled (trivially reversible). "
+        "Use OS keyring or DPAPI. On non-Windows, install the 'keyring' package."
+    )
 
 
 def _fallback_decrypt(data: bytes) -> bytes | None:
-    """Decrypt XOR-based encryption with machine-derived key."""
+    """Decrypt legacy XOR-encrypted data for one-time migration only.
+
+    New writes are blocked by _fallback_encrypt raising. This read path
+    remains so existing stored values can be migrated to the keyring on
+    next load_pat() / load_jira_pat() self-heal cycle, after which the
+    encrypted file is overwritten via DPAPI or deleted.
+    """
+    # ponytail: migration shim; remove after one release cycle when all
+    # active installs have self-healed to keyring/DPAPI.
     if len(data) < 16:
         return None
     key = _machine_key()
