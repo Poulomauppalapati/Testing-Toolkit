@@ -1440,11 +1440,18 @@ class AgenticToolExecutor:
             return value, False
 
         # Determine credential accessors (dict or object with attributes)
+        # TestCredential uses "user_id"; dict callers may use "username"
         if isinstance(self._credentials, dict):
-            username: str = self._credentials.get("username", "")
+            username: str = (
+                self._credentials.get("username", "")
+                or self._credentials.get("user_id", "")
+            )
             password: str = self._credentials.get("password", "")
         else:
-            username = getattr(self._credentials, "username", "")
+            username = (
+                getattr(self._credentials, "username", "")
+                or getattr(self._credentials, "user_id", "")
+            )
             password = getattr(self._credentials, "password", "")
 
         sensitive = False
