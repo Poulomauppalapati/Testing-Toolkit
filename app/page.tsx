@@ -12,13 +12,12 @@ import type { ReinstallReason } from "@/lib/reinstall";
 
 export default function Home() {
   const { status } = useAgent();
-  const [reinstalling, setReinstalling] = useState(false);
-  const [reason, setReason] = useState<ReinstallReason>("reinstall");
-  useEffect(() => {
-    const prefs = getPreferences();
-    setReinstalling(prefs.pendingReinstall);
-    if (prefs.pendingReinstall) setReason(getReinstallReason());
-  }, []);
+  // Read synchronously on first render so the reinstall screen wins the race
+  // against <ConnectedApp> when the agent is already up.
+  const [reinstalling, setReinstalling] = useState(() => getPreferences().pendingReinstall);
+  const [reason, setReason] = useState<ReinstallReason>(
+    () => (getPreferences().pendingReinstall ? getReinstallReason() : "reinstall"),
+  );
 
   // No page-level auto-dismiss — the OnboardingScreen owns the full
   // lifecycle (download → sawDrop → reconnect → onReinstallComplete). The
