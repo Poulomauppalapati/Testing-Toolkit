@@ -522,7 +522,49 @@ try {
   Write-Step "Extracting"
   $dest = Join-Path $scriptDir $manifest.extractTo
   if (Test-Path $dest) { Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction SilentlyContinue }
-  Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
+  New-Item -ItemType Directory -Force -Path $dest | Out-Null
+  # Extract with the .NET ZipFile API directly instead of Expand-Archive.
+  # Windows PowerShell 5.1's Expand-Archive has a well-known bug: after a
+  # successful extraction it runs an internal cleanup pass
+  # ($expandedItems | Remove-Item -Recurse at Microsoft.PowerShell.Archive.psm1
+  # line ~411) that can remove a parent directory before a child and then fail
+  # with "Cannot find path ...\\models\\README.txt because it does not exist",
+  # aborting an install whose files were already extracted correctly. Iterating
+  # the entries ourselves avoids that cleanup path entirely and also correctly
+  # handles empty directories, deep nesting, and overwriting the destination.
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  Add-Type -AssemblyName System.IO.Compression
+  $destFull = [IO.Path]::GetFullPath($dest)
+  $destRoot = $destFull.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+  $zipArchive = [IO.Compression.ZipFile]::OpenRead($zip)
+  try {
+    $entryCount = $zipArchive.Entries.Count
+    $doneCount = 0
+    foreach ($entry in $zipArchive.Entries) {
+      $target = [IO.Path]::GetFullPath((Join-Path $destFull $entry.FullName))
+      # Zip-Slip guard: never write outside the destination root.
+      if (-not $target.StartsWith($destRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw ('zip entry escapes destination: ' + $entry.FullName)
+      }
+      if ($entry.FullName.EndsWith('/') -or [string]::IsNullOrEmpty($entry.Name)) {
+        # Directory entry - just ensure it exists.
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+      } else {
+        $parent = [IO.Path]::GetDirectoryName($target)
+        if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+          New-Item -ItemType Directory -Force -Path $parent | Out-Null
+        }
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+      }
+      $doneCount++
+      if (($doneCount % 50) -eq 0 -or $doneCount -eq $entryCount) {
+        $pct = if ($entryCount -gt 0) { [int](($doneCount / $entryCount) * 100) } else { 100 }
+        Show-StepBar $pct 'Extracting bundle'
+      }
+    }
+  } finally {
+    $zipArchive.Dispose()
+  }
   Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
   Show-StepBar 100 "Bundle extracted"
 
