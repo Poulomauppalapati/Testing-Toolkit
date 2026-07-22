@@ -67,9 +67,10 @@ export function OnboardingScreen({
   }, [reinstall, retry]);
 
   // Reinstall completion: watch for the agent going offline then coming back.
+  // Only "offline" counts as a drop — "connecting" on initial page load does NOT.
   useEffect(() => {
     if (!reinstall) return;
-    if (status === "offline" || status === "connecting") {
+    if (status === "offline") {
       sawDrop.current = true;
     } else if (status === "connected" && sawDrop.current) {
       if (!isAgentOutdated(agentVersion)) {
