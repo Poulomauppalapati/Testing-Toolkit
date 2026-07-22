@@ -833,21 +833,79 @@ try {
       try { $null = $proc.Handle } catch {}
       $sw = [System.Diagnostics.Stopwatch]::StartNew()
       # Render ONE progress bar in the exact same style as every other step
-      # (Show-StepBar: [####----] NN% label). This step is an opaque child
-      # process, so the fill is an ETA-based estimate (Est. ~2 min) that eases
-      # toward 99% and snaps to 100% on success - a single clean bar, not a
-      # flickering line of nested installer output. The child's real output
-      # still streams to $pythonLog for support.
-      $estSeconds = 120.0
-      $lastPct = -1
+      # (Show-StepBar: [####----] NN% label). This step legitimately takes
+      # several minutes: an offline pip install of many wheels, a REQUIRED
+      # Playwright + ~200 MB Chromium download over the corporate proxy, MCP
+      # server setup, then the agent launch + health check. A blind ETA bar hit
+      # 99% after 2 min and then sat there for minutes, which users reported as
+      # frozen. Instead we tail the child's own log ($pythonLog): install.py
+      # writes real "[PROGRESS] NN% phase: message" markers and
+      # "... <label> (Ns elapsed)" heartbeats. We drive the bar from those, show
+      # the current activity, and - when the log goes quiet on a long download -
+      # say "still working" instead of implying a hang. The bar is capped at 99%
+      # until the process actually exits so only success snaps it to 100%.
+      $estSeconds = 240.0
+      $shownPct = -1
+      $maxPct = 0
+      $shownLabel = ''
+      $lastLen = -1
+      $lastChange = $sw.Elapsed.TotalSeconds
+      $progressRe = [regex]'\[PROGRESS\]\s+(\d+)%\s+[^:]+:\s+(.*)$'
       while (-not $proc.HasExited) {
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds 750
         $elapsed = $sw.Elapsed.TotalSeconds
-        $pct = [int][Math]::Floor(($elapsed / $estSeconds) * 100)
+
+        # Pull the child's latest reported progress + activity from its log.
+        $realPct = $null
+        $label = 'Installing and verifying the agent'
+        try {
+          $len = 0
+          if (Test-Path -LiteralPath $pythonLog) { $len = (Get-Item -LiteralPath $pythonLog).Length }
+          if ($len -ne $lastLen) { $lastLen = $len; $lastChange = $elapsed }
+          # Only the tail of the log matters for the current state.
+          $tail = Get-Content -LiteralPath $pythonLog -Tail 40 -ErrorAction SilentlyContinue
+          if ($tail) {
+            foreach ($line in $tail) {
+              $m = $progressRe.Match($line)
+              if ($m.Success) {
+                $realPct = [int]$m.Groups[1].Value
+                $label = $m.Groups[2].Value.Trim()
+              }
+            }
+            if (-not $m -or -not $m.Success) {
+              # No percent marker in the tail yet - surface the last meaningful
+              # line (e.g. a "... installing dependencies (45s elapsed)" beat).
+              $lastLine = ($tail | Where-Object { $_ -and $_.Trim() -ne '' } | Select-Object -Last 1)
+              if ($lastLine) {
+                $clean = ($lastLine -replace '^\s*(\.\.\.|==>|\[[A-Z]+\])\s*', '').Trim()
+                if ($clean) { $label = $clean }
+              }
+            }
+          }
+        } catch {}
+
+        # Prefer the child's real percentage; otherwise ease on elapsed time.
+        if ($null -ne $realPct) {
+          $pct = $realPct
+        } else {
+          $pct = [int][Math]::Floor(($elapsed / $estSeconds) * 100)
+        }
+        # Monotonic and capped at 99 until the process exits.
+        if ($pct -gt $maxPct) { $maxPct = $pct }
+        $pct = $maxPct
         if ($pct -gt 99) { $pct = 99 }
-        if ($pct -ne $lastPct) {
-          $lastPct = $pct
-          Show-StepBar $pct 'Installing and verifying the agent'
+
+        # If the log has been quiet for a while, reassure rather than look hung.
+        $quiet = [int]($elapsed - $lastChange)
+        if ($quiet -ge 45) {
+          $label = $label + (' (still working, {0}s quiet)' -f $quiet)
+        }
+        if ($label.Length -gt 58) { $label = $label.Substring(0, 55) + '...' }
+
+        if ($pct -ne $shownPct -or $label -ne $shownLabel) {
+          $shownPct = $pct
+          $shownLabel = $label
+          Show-StepBar $pct $label
         }
       }
       try { $proc.WaitForExit() } catch {}
