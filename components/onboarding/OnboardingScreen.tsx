@@ -79,15 +79,14 @@ export function OnboardingScreen({
     }
   }, [reinstall, status, agentVersion, onReinstallComplete]);
 
-  // Version-aware fallback: dismiss when the agent is healthy after the user
-  // downloaded the installer. Without the download gate this fires immediately
-  // on mount (agent is already connected + valid version) and the screen
-  // disappears before the user can act.
+  // Fallback dismiss: if we never caught the agent going offline (fast restart
+  // between polls), dismiss once the user has downloaded AND the agent is
+  // connected with a valid version. The download gate prevents instant dismiss.
   useEffect(() => {
     if (!reinstall) return;
     if (!downloaded) return;
     if (status !== "connected" || !agentVersion) return;
-    if (sawDrop.current && !isAgentOutdated(agentVersion)) {
+    if (!isAgentOutdated(agentVersion)) {
       onReinstallComplete?.();
     }
   }, [reinstall, downloaded, status, agentVersion, onReinstallComplete]);
